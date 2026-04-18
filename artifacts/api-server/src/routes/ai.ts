@@ -35,7 +35,9 @@ router.post(
       res.status(404).json({ error: "Not found" });
       return;
     }
-    const out = await suggestInterviewTagsAi(iv.notes);
+    const out = await suggestInterviewTagsAi(iv.notes, {
+      requestId: (req as typeof req & { id?: string }).id,
+    });
     res.json(out);
   },
 );

@@ -1,5 +1,13 @@
 import type { Dimension } from "./rubric";
 import { assertSafeUrlResolved } from "./util";
+import { logger } from "./logger";
+
+/**
+ * Per-request context passed into connector calls so subcall-level logging
+ * can be correlated with the originating API call. Routes pass `req.id`
+ * here; the connector emits start/end log lines tagged with that id.
+ */
+export type ConnectorCtx = { requestId?: string };
 
 // Defense-in-depth: even though connector create/patch validates baseUrl
 // syntactically, we re-check at fetch time *and* resolve DNS so an
@@ -423,23 +431,40 @@ export async function verifyConnector(
   provider: string,
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorVerifyResult> {
   const cfg = { ...config, provider };
-  switch (kind) {
-    case "github":
-      return verifyGithub(token, cfg);
-    case "gitlab":
-      return verifyGitlab(token, cfg);
-    case "jira":
-      return verifyJira(token, cfg);
-    case "linear":
-      return verifyLinear(token);
-    case "cicd":
-      return verifyCicd(token, cfg);
-    case "ai_tooling":
-      return verifyAiTooling(token, cfg);
-    default:
-      return { ok: false, message: `Unknown connector kind: ${kind}` };
+  const child = logger.child({ requestId: ctx.requestId, op: "verifyConnector", kind, provider });
+  child.info("connector verify start");
+  try {
+    let result: ConnectorVerifyResult;
+    switch (kind) {
+      case "github":
+        result = await verifyGithub(token, cfg);
+        break;
+      case "gitlab":
+        result = await verifyGitlab(token, cfg);
+        break;
+      case "jira":
+        result = await verifyJira(token, cfg);
+        break;
+      case "linear":
+        result = await verifyLinear(token);
+        break;
+      case "cicd":
+        result = await verifyCicd(token, cfg);
+        break;
+      case "ai_tooling":
+        result = await verifyAiTooling(token, cfg);
+        break;
+      default:
+        result = { ok: false, message: `Unknown connector kind: ${kind}` };
+    }
+    child.info({ ok: result.ok }, "connector verify end");
+    return result;
+  } catch (err) {
+    child.error({ err }, "connector verify error");
+    throw err;
   }
 }
 
@@ -448,22 +473,39 @@ export async function runConnector(
   provider: string,
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const cfg = { ...config, provider };
-  switch (kind) {
-    case "github":
-      return runGithub(token, cfg);
-    case "gitlab":
-      return runGitlab(token, cfg);
-    case "jira":
-      return runJira(token, cfg);
-    case "linear":
-      return runLinear(token);
-    case "cicd":
-      return runCicd(token, cfg);
-    case "ai_tooling":
-      return runAiTooling(token, cfg);
-    default:
-      throw new Error(`Unknown connector kind: ${kind}`);
+  const child = logger.child({ requestId: ctx.requestId, op: "runConnector", kind, provider });
+  child.info("connector run start");
+  try {
+    let result: ConnectorRunResult;
+    switch (kind) {
+      case "github":
+        result = await runGithub(token, cfg);
+        break;
+      case "gitlab":
+        result = await runGitlab(token, cfg);
+        break;
+      case "jira":
+        result = await runJira(token, cfg);
+        break;
+      case "linear":
+        result = await runLinear(token);
+        break;
+      case "cicd":
+        result = await runCicd(token, cfg);
+        break;
+      case "ai_tooling":
+        result = await runAiTooling(token, cfg);
+        break;
+      default:
+        throw new Error(`Unknown connector kind: ${kind}`);
+    }
+    child.info({ recordsCollected: result.recordsCollected }, "connector run end");
+    return result;
+  } catch (err) {
+    child.error({ err }, "connector run error");
+    throw err;
   }
 }

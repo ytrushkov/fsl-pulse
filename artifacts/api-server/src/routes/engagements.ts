@@ -462,6 +462,29 @@ router.get(
           .join(","),
       );
     }
+    // Critical audit: someone (admin) just downloaded the engagement's full
+    // activity log as CSV. Capture which filters they used and how many rows
+    // they pulled so a compliance reviewer can see exactly what left the
+    // system. The download itself is the sensitive action — we record it
+    // before sending the body so a network failure mid-stream still leaves a
+    // trace.
+    const q = req.query as Record<string, unknown>;
+    await recordActivity(req, {
+      engagementId: id,
+      kind: "audit_export_downloaded",
+      severity: "critical",
+      message: `Activity CSV exported (${rows.length} rows)`,
+      payload: {
+        rowCount: rows.length,
+        filters: {
+          kind: q.kind ?? null,
+          severity: q.severity ?? null,
+          actor: q.actor ?? null,
+          from: q.from ?? null,
+          to: q.to ?? null,
+        },
+      },
+    });
     res
       .status(200)
       .setHeader("content-type", "text/csv; charset=utf-8")

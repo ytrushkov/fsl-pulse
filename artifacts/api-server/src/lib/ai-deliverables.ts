@@ -135,7 +135,9 @@ function fallbackEntryPoint(overallStage: number, evidenceIds: string[]) {
   };
 }
 
-export async function draftDeliverablesAi(input: DraftInput) {
+export type AiCtx = { requestId?: string };
+
+export async function draftDeliverablesAi(input: DraftInput, ctx: AiCtx = {}) {
   const { scoring, evidence, previousNpv } = input;
   const heatmap = buildHeatmap(scoring.byDimension);
 
@@ -223,8 +225,12 @@ Return ONE valid JSON object. Do not wrap in markdown fences. Do not include any
     if (parsed.actionPlan && Array.isArray(parsed.actionPlan)) actionPlan = parsed.actionPlan;
     if (parsed.entryPoint) entryPoint = parsed.entryPoint;
   } catch (e) {
-    // Keep fallbacks
-    console.error("AI deliverables draft failed:", e);
+    // Keep fallbacks. Tag with requestId so the failure can be correlated to
+    // the originating API call in centralized logs.
+    console.error(
+      `[requestId=${ctx.requestId ?? "n/a"}] AI deliverables draft failed:`,
+      e,
+    );
   }
 
   const npv = defaultNpv(previousNpv);
@@ -241,7 +247,7 @@ function extractJson(s: string): string {
   return candidate.slice(start, end + 1);
 }
 
-export async function suggestInterviewTagsAi(notes: string) {
+export async function suggestInterviewTagsAi(notes: string, ctx: AiCtx = {}) {
   if (!notes || notes.trim().length === 0) {
     return { suggestions: [] };
   }
@@ -283,7 +289,10 @@ ${notes.slice(0, 6000)}`;
     );
     return { suggestions: valid };
   } catch (e) {
-    console.error("AI tag suggest failed:", e);
+    console.error(
+      `[requestId=${ctx.requestId ?? "n/a"}] AI tag suggest failed:`,
+      e,
+    );
     return { suggestions: [] };
   }
 }

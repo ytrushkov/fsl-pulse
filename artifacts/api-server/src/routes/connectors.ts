@@ -227,7 +227,13 @@ router.post("/connectors/:connectorId/verify", requireConnectorMember, async (re
     message: `Token used to verify ${c.label}`,
     payload: { connectorId: c.id, op: "verify", provider: c.provider },
   });
-  const result = await verifyConnectorImpl(c.kind, c.provider, token, c.config as Record<string, unknown>);
+  const result = await verifyConnectorImpl(
+    c.kind,
+    c.provider,
+    token,
+    c.config as Record<string, unknown>,
+    { requestId: (req as typeof req & { id?: string }).id },
+  );
   res.json(result);
 });
 
@@ -267,6 +273,7 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
       c.provider,
       token,
       c.config as Record<string, unknown>,
+      { requestId: (req as typeof req & { id?: string }).id },
     );
 
     // Persist evidence rows derived from connector summary

@@ -147,7 +147,7 @@ router.post("/engagements/:id/deliverables/draft", async (req, res): Promise<voi
       text: e.text,
     })),
     previousNpv: (existing?.npv as Record<string, unknown> | null) ?? null,
-  });
+  }, { requestId: (req as typeof req & { id?: string }).id });
   const [d] = await db
     .update(deliverablesTable)
     .set({
