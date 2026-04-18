@@ -752,6 +752,13 @@ async function verifyCicd(
     });
     return r.ok ? { ok: true, message: "CircleCI authenticated" } : { ok: false, message: `CircleCI ${r.status}` };
   }
+  if (provider === "gitlab_ci") {
+    // gitlab_ci CI/CD connectors share semantics with the GitLab connector
+    // (token + baseUrl + group). Reuse verifyGitlab so verify and run stay
+    // consistent — without this delegation a connector configured for
+    // gitlab_ci would Run successfully but Verify would always fail.
+    return verifyGitlab(token, config);
+  }
   return { ok: false, message: `Unknown CI/CD provider: ${provider}` };
 }
 
