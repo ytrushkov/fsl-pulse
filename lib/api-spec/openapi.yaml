@@ -443,6 +443,52 @@ paths:
         "204":
           description: Submitted
 
+  /survey/respond/{token}/draft:
+    post:
+      operationId: saveSurveyDraft
+      tags: [survey]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveSurveyDraftInput" }
+      responses:
+        "204":
+          description: Saved
+
+  /engagements/{id}/survey/close:
+    post:
+      operationId: closeSurvey
+      tags: [survey]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Survey" }
+
+  /engagements/{id}/survey/invites/preview:
+    post:
+      operationId: previewSurveyInvites
+      tags: [survey]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PreviewInvitesInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitePreview" }
+
   /engagements/{id}/interviews:
     get:
       operationId: listInterviews
@@ -1062,6 +1108,7 @@ components:
         nudgeSchedule:
           type: array
           items: { type: integer }
+        closedAt: { type: string, nullable: true }
 
     UpdateSurveyInput:
       type: object
@@ -1083,6 +1130,7 @@ components:
         id: { type: string }
         engagementId: { type: string }
         team: { type: string }
+        role: { type: string, nullable: true }
         emailHash: { type: string, nullable: true }
         token: { type: string }
         status:
@@ -1090,6 +1138,10 @@ components:
           enum: [sent, opened, started, completed]
         createdAt: { type: string }
         completedAt: { type: string, nullable: true }
+        nudgesSent:
+          type: array
+          items: { type: integer }
+        magicLinkToken: { type: string }
 
     CreateSurveyInvitesInput:
       type: object
@@ -1103,6 +1155,32 @@ components:
             properties:
               team: { type: string }
               email: { type: string }
+              role: { type: string }
+
+    PreviewInvitesInput:
+      type: object
+      required: [csv]
+      properties:
+        csv: { type: string }
+
+    InvitePreview:
+      type: object
+      required: [rows, validCount, invalidCount]
+      properties:
+        validCount: { type: integer }
+        invalidCount: { type: integer }
+        rows:
+          type: array
+          items:
+            type: object
+            required: [line, valid]
+            properties:
+              line: { type: integer }
+              valid: { type: boolean }
+              team: { type: string, nullable: true }
+              email: { type: string, nullable: true }
+              role: { type: string, nullable: true }
+              error: { type: string, nullable: true }
 
     PublicSurvey:
       type: object
@@ -1111,10 +1189,39 @@ components:
         engagementClient: { type: string }
         status:
           type: string
-          enum: [open, completed, expired]
+          enum: [open, completed, expired, closed]
         questions:
           type: array
           items: { $ref: "#/components/schemas/SurveyQuestion" }
+        savedAnswers:
+          type: array
+          items:
+            type: object
+            required: [questionId, value]
+            properties:
+              questionId: { type: string }
+              value:
+                oneOf:
+                  - { type: string }
+                  - { type: number }
+                  - { type: array, items: { type: string } }
+
+    SaveSurveyDraftInput:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items:
+            type: object
+            required: [questionId, value]
+            properties:
+              questionId: { type: string }
+              value:
+                oneOf:
+                  - { type: string }
+                  - { type: number }
+                  - { type: array, items: { type: string } }
 
     SubmitSurveyResponseInput:
       type: object
@@ -1138,11 +1245,21 @@ components:
 
     SurveyAggregates:
       type: object
-      required: [responseRate, totalSent, totalCompleted, byQuestion, byTeam]
+      required:
+        [responseRate, totalSent, totalCompleted, byQuestion, byTeam, byRole, funnel, aggregateSuppressed]
       properties:
         responseRate: { type: number }
         totalSent: { type: integer }
         totalCompleted: { type: integer }
+        aggregateSuppressed: { type: boolean }
+        funnel:
+          type: object
+          required: [sent, opened, started, completed]
+          properties:
+            sent: { type: integer }
+            opened: { type: integer }
+            started: { type: integer }
+            completed: { type: integer }
         byQuestion:
           type: array
           items:
@@ -1163,14 +1280,25 @@ components:
           type: array
           items:
             type: object
-            required: [team, completedCount, suppressed]
+            required: [team, suppressed]
             properties:
               team: { type: string }
-              completedCount: { type: integer }
+              # Null when `suppressed` is true — the exact sub-floor count is
+              # itself an anonymity leak and is intentionally hidden.
+              completedCount: { type: integer, nullable: true }
               suppressed: { type: boolean }
               dimensionAverages:
                 type: object
                 additionalProperties: { type: number }
+        byRole:
+          type: array
+          items:
+            type: object
+            required: [role, suppressed]
+            properties:
+              role: { type: string }
+              completedCount: { type: integer, nullable: true }
+              suppressed: { type: boolean }
 
     Interview:
       type: object

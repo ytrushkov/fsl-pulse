@@ -11,9 +11,12 @@ export interface SurveyInvite {
   id: string;
   engagementId: string;
   team: string;
+  role?: string | null;
   emailHash?: string | null;
   token?: string;
   status: SurveyInviteStatus;
   createdAt: string;
   completedAt?: string | null;
+  nudgesSent?: number[];
+  magicLinkToken?: string;
 }

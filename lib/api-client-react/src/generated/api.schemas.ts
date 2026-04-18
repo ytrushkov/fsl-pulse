@@ -411,6 +411,7 @@ export interface Survey {
   modules: SurveyModulesItem[];
   questions: SurveyQuestion[];
   nudgeSchedule?: number[];
+  closedAt?: string | null;
 }
 
 export type UpdateSurveyInputModulesItem =
@@ -443,20 +444,43 @@ export interface SurveyInvite {
   id: string;
   engagementId: string;
   team: string;
+  role?: string | null;
   emailHash?: string | null;
   token?: string;
   status: SurveyInviteStatus;
   createdAt: string;
   completedAt?: string | null;
+  nudgesSent?: number[];
+  magicLinkToken?: string;
 }
 
 export type CreateSurveyInvitesInputInvitesItem = {
   team: string;
   email?: string;
+  role?: string;
 };
 
 export interface CreateSurveyInvitesInput {
   invites: CreateSurveyInvitesInputInvitesItem[];
+}
+
+export interface PreviewInvitesInput {
+  csv: string;
+}
+
+export type InvitePreviewRowsItem = {
+  line: number;
+  valid: boolean;
+  team?: string | null;
+  email?: string | null;
+  role?: string | null;
+  error?: string | null;
+};
+
+export interface InvitePreview {
+  validCount: number;
+  invalidCount: number;
+  rows: InvitePreviewRowsItem[];
 }
 
 export type PublicSurveyStatus =
@@ -466,12 +490,28 @@ export const PublicSurveyStatus = {
   open: "open",
   completed: "completed",
   expired: "expired",
+  closed: "closed",
 } as const;
+
+export type PublicSurveySavedAnswersItem = {
+  questionId: string;
+  value: string | number | string[];
+};
 
 export interface PublicSurvey {
   engagementClient: string;
   status: PublicSurveyStatus;
   questions: SurveyQuestion[];
+  savedAnswers?: PublicSurveySavedAnswersItem[];
+}
+
+export type SaveSurveyDraftInputAnswersItem = {
+  questionId: string;
+  value: string | number | string[];
+};
+
+export interface SaveSurveyDraftInput {
+  answers: SaveSurveyDraftInputAnswersItem[];
 }
 
 export type SubmitSurveyResponseInputAnswersItem = {
@@ -485,6 +525,13 @@ export interface SubmitSurveyResponseInput {
   answers: SubmitSurveyResponseInputAnswersItem[];
   demographics: SubmitSurveyResponseInputDemographics;
 }
+
+export type SurveyAggregatesFunnel = {
+  sent: number;
+  opened: number;
+  started: number;
+  completed: number;
+};
 
 export type SurveyAggregatesByQuestionItemDistributionItem = {
   value: string;
@@ -503,17 +550,26 @@ export type SurveyAggregatesByTeamItemDimensionAverages = {
 
 export type SurveyAggregatesByTeamItem = {
   team: string;
-  completedCount: number;
+  completedCount?: number | null;
   suppressed: boolean;
   dimensionAverages?: SurveyAggregatesByTeamItemDimensionAverages;
+};
+
+export type SurveyAggregatesByRoleItem = {
+  role: string;
+  completedCount?: number | null;
+  suppressed: boolean;
 };
 
 export interface SurveyAggregates {
   responseRate: number;
   totalSent: number;
   totalCompleted: number;
+  aggregateSuppressed: boolean;
+  funnel: SurveyAggregatesFunnel;
   byQuestion: SurveyAggregatesByQuestionItem[];
   byTeam: SurveyAggregatesByTeamItem[];
+  byRole: SurveyAggregatesByRoleItem[];
 }
 
 export type InterviewStatus =

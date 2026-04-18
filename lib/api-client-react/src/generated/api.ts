@@ -42,8 +42,11 @@ import type {
   HealthStatus,
   Interview,
   InterviewTagSuggestions,
+  InvitePreview,
   ListConnectorRunsParams,
+  PreviewInvitesInput,
   PublicSurvey,
+  SaveSurveyDraftInput,
   ScoreOverrideInput,
   Scoring,
   SubmitSurveyResponseInput,
@@ -2297,6 +2300,246 @@ export const useSubmitSurveyResponse = <
   TContext
 > => {
   return useMutation(getSubmitSurveyResponseMutationOptions(options));
+};
+
+export const getSaveSurveyDraftUrl = (token: string) => {
+  return `/api/survey/respond/${token}/draft`;
+};
+
+export const saveSurveyDraft = async (
+  token: string,
+  saveSurveyDraftInput: SaveSurveyDraftInput,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getSaveSurveyDraftUrl(token), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(saveSurveyDraftInput),
+  });
+};
+
+export const getSaveSurveyDraftMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSurveyDraft>>,
+    TError,
+    { token: string; data: BodyType<SaveSurveyDraftInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveSurveyDraft>>,
+  TError,
+  { token: string; data: BodyType<SaveSurveyDraftInput> },
+  TContext
+> => {
+  const mutationKey = ["saveSurveyDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveSurveyDraft>>,
+    { token: string; data: BodyType<SaveSurveyDraftInput> }
+  > = (props) => {
+    const { token, data } = props ?? {};
+
+    return saveSurveyDraft(token, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveSurveyDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveSurveyDraft>>
+>;
+export type SaveSurveyDraftMutationBody = BodyType<SaveSurveyDraftInput>;
+export type SaveSurveyDraftMutationError = ErrorType<unknown>;
+
+export const useSaveSurveyDraft = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSurveyDraft>>,
+    TError,
+    { token: string; data: BodyType<SaveSurveyDraftInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveSurveyDraft>>,
+  TError,
+  { token: string; data: BodyType<SaveSurveyDraftInput> },
+  TContext
+> => {
+  return useMutation(getSaveSurveyDraftMutationOptions(options));
+};
+
+export const getCloseSurveyUrl = (id: string) => {
+  return `/api/engagements/${id}/survey/close`;
+};
+
+export const closeSurvey = async (
+  id: string,
+  options?: RequestInit,
+): Promise<Survey> => {
+  return customFetch<Survey>(getCloseSurveyUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getCloseSurveyMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof closeSurvey>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof closeSurvey>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["closeSurvey"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof closeSurvey>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return closeSurvey(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CloseSurveyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof closeSurvey>>
+>;
+
+export type CloseSurveyMutationError = ErrorType<unknown>;
+
+export const useCloseSurvey = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof closeSurvey>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof closeSurvey>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getCloseSurveyMutationOptions(options));
+};
+
+export const getPreviewSurveyInvitesUrl = (id: string) => {
+  return `/api/engagements/${id}/survey/invites/preview`;
+};
+
+export const previewSurveyInvites = async (
+  id: string,
+  previewInvitesInput: PreviewInvitesInput,
+  options?: RequestInit,
+): Promise<InvitePreview> => {
+  return customFetch<InvitePreview>(getPreviewSurveyInvitesUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(previewInvitesInput),
+  });
+};
+
+export const getPreviewSurveyInvitesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewSurveyInvites>>,
+    TError,
+    { id: string; data: BodyType<PreviewInvitesInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof previewSurveyInvites>>,
+  TError,
+  { id: string; data: BodyType<PreviewInvitesInput> },
+  TContext
+> => {
+  const mutationKey = ["previewSurveyInvites"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof previewSurveyInvites>>,
+    { id: string; data: BodyType<PreviewInvitesInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return previewSurveyInvites(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PreviewSurveyInvitesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof previewSurveyInvites>>
+>;
+export type PreviewSurveyInvitesMutationBody = BodyType<PreviewInvitesInput>;
+export type PreviewSurveyInvitesMutationError = ErrorType<unknown>;
+
+export const usePreviewSurveyInvites = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewSurveyInvites>>,
+    TError,
+    { id: string; data: BodyType<PreviewInvitesInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof previewSurveyInvites>>,
+  TError,
+  { id: string; data: BodyType<PreviewInvitesInput> },
+  TContext
+> => {
+  return useMutation(getPreviewSurveyInvitesMutationOptions(options));
 };
 
 export const getListInterviewsUrl = (id: string) => {

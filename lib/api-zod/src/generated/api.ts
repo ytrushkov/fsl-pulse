@@ -501,6 +501,7 @@ export const GetSurveyResponse = zod.object({
     }),
   ),
   nudgeSchedule: zod.array(zod.number()).optional(),
+  closedAt: zod.string().nullish(),
 });
 
 export const UpdateSurveyParams = zod.object({
@@ -567,6 +568,7 @@ export const UpdateSurveyResponse = zod.object({
     }),
   ),
   nudgeSchedule: zod.array(zod.number()).optional(),
+  closedAt: zod.string().nullish(),
 });
 
 export const ListSurveyInvitesParams = zod.object({
@@ -577,11 +579,14 @@ export const ListSurveyInvitesResponseItem = zod.object({
   id: zod.string(),
   engagementId: zod.string(),
   team: zod.string(),
+  role: zod.string().nullish(),
   emailHash: zod.string().nullish(),
   token: zod.string().optional(),
   status: zod.enum(["sent", "opened", "started", "completed"]),
   createdAt: zod.string(),
   completedAt: zod.string().nullish(),
+  nudgesSent: zod.array(zod.number()).optional(),
+  magicLinkToken: zod.string().optional(),
 });
 export const ListSurveyInvitesResponse = zod.array(
   ListSurveyInvitesResponseItem,
@@ -596,6 +601,7 @@ export const CreateSurveyInvitesBody = zod.object({
     zod.object({
       team: zod.string(),
       email: zod.string().optional(),
+      role: zod.string().optional(),
     }),
   ),
 });
@@ -608,6 +614,13 @@ export const GetSurveyAggregatesResponse = zod.object({
   responseRate: zod.number(),
   totalSent: zod.number(),
   totalCompleted: zod.number(),
+  aggregateSuppressed: zod.boolean(),
+  funnel: zod.object({
+    sent: zod.number(),
+    opened: zod.number(),
+    started: zod.number(),
+    completed: zod.number(),
+  }),
   byQuestion: zod.array(
     zod.object({
       questionId: zod.string(),
@@ -623,9 +636,16 @@ export const GetSurveyAggregatesResponse = zod.object({
   byTeam: zod.array(
     zod.object({
       team: zod.string(),
-      completedCount: zod.number(),
+      completedCount: zod.number().nullish(),
       suppressed: zod.boolean(),
       dimensionAverages: zod.record(zod.string(), zod.number()).optional(),
+    }),
+  ),
+  byRole: zod.array(
+    zod.object({
+      role: zod.string(),
+      completedCount: zod.number().nullish(),
+      suppressed: zod.boolean(),
     }),
   ),
 });
@@ -636,7 +656,7 @@ export const GetSurveyByTokenParams = zod.object({
 
 export const GetSurveyByTokenResponse = zod.object({
   engagementClient: zod.string(),
-  status: zod.enum(["open", "completed", "expired"]),
+  status: zod.enum(["open", "completed", "expired", "closed"]),
   questions: zod.array(
     zod.object({
       id: zod.string(),
@@ -660,6 +680,14 @@ export const GetSurveyByTokenResponse = zod.object({
       conditionalOn: zod.string().nullish(),
     }),
   ),
+  savedAnswers: zod
+    .array(
+      zod.object({
+        questionId: zod.string(),
+        value: zod.union([zod.string(), zod.number(), zod.array(zod.string())]),
+      }),
+    )
+    .optional(),
 });
 
 export const SubmitSurveyResponseParams = zod.object({
@@ -674,6 +702,77 @@ export const SubmitSurveyResponseBody = zod.object({
     }),
   ),
   demographics: zod.record(zod.string(), zod.string()),
+});
+
+export const SaveSurveyDraftParams = zod.object({
+  token: zod.coerce.string(),
+});
+
+export const SaveSurveyDraftBody = zod.object({
+  answers: zod.array(
+    zod.object({
+      questionId: zod.string(),
+      value: zod.union([zod.string(), zod.number(), zod.array(zod.string())]),
+    }),
+  ),
+});
+
+export const CloseSurveyParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const CloseSurveyResponse = zod.object({
+  engagementId: zod.string(),
+  templateVersion: zod.string(),
+  modules: zod.array(zod.enum(["security", "data", "platform", "design"])),
+  questions: zod.array(
+    zod.object({
+      id: zod.string(),
+      section: zod.string(),
+      dimension: zod.string().nullable(),
+      type: zod.enum([
+        "single_select",
+        "multi_select",
+        "likert",
+        "rank",
+        "demographic",
+      ]),
+      prompt: zod.string(),
+      options: zod.array(zod.string()).optional(),
+      likertMin: zod.number().nullish(),
+      likertMax: zod.number().nullish(),
+      likertMinLabel: zod.string().nullish(),
+      likertMaxLabel: zod.string().nullish(),
+      rankCount: zod.number().nullish(),
+      moduleKey: zod.string().nullish(),
+      conditionalOn: zod.string().nullish(),
+    }),
+  ),
+  nudgeSchedule: zod.array(zod.number()).optional(),
+  closedAt: zod.string().nullish(),
+});
+
+export const PreviewSurveyInvitesParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PreviewSurveyInvitesBody = zod.object({
+  csv: zod.string(),
+});
+
+export const PreviewSurveyInvitesResponse = zod.object({
+  validCount: zod.number(),
+  invalidCount: zod.number(),
+  rows: zod.array(
+    zod.object({
+      line: zod.number(),
+      valid: zod.boolean(),
+      team: zod.string().nullish(),
+      email: zod.string().nullish(),
+      role: zod.string().nullish(),
+      error: zod.string().nullish(),
+    }),
+  ),
 });
 
 export const ListInterviewsParams = zod.object({

@@ -6,8 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type CreateSurveyInvitesInputInvitesItem = {
-  team: string;
-  email?: string;
-  role?: string;
+export type SaveSurveyDraftInputAnswersItem = {
+  questionId: string;
+  value: string | number | string[];
 };

@@ -59,7 +59,7 @@ export async function recordActivity(
  */
 export async function recordSystemActivity(
   input: RecordActivityInput & { requestId?: string },
-): Promise<void> {
+): Promise<boolean> {
   try {
     await db.insert(activityEventsTable).values({
       engagementId: input.engagementId,
@@ -72,11 +72,13 @@ export async function recordSystemActivity(
       severity: input.severity ?? "info",
       requestId: input.requestId ?? null,
     });
+    return true;
   } catch (err) {
     logger.error(
       { err, kind: input.kind, engagementId: input.engagementId },
       "Failed to record system activity event",
     );
+    return false;
   }
 }
 

@@ -9,7 +9,7 @@ import type { SurveyAggregatesByTeamItemDimensionAverages } from "./surveyAggreg
 
 export type SurveyAggregatesByTeamItem = {
   team: string;
-  completedCount: number;
+  completedCount?: number | null;
   suppressed: boolean;
   dimensionAverages?: SurveyAggregatesByTeamItemDimensionAverages;
 };

@@ -147,6 +147,10 @@ export const surveysTable = pgTable("surveys", {
   modules: text("modules").array().notNull().default([]),
   questions: jsonb("questions").notNull().default([]),
   nudgeSchedule: jsonb("nudge_schedule").notNull().default([3, 7]),
+  // Once set, the survey is locked: no new responses, no new invites, no
+  // partial drafts saved. Used by the "Close survey" action so assessors can
+  // freeze the dataset before scoring without deleting magic links.
+  closedAt: timestamp("closed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
@@ -161,6 +165,10 @@ export const surveyInvitesTable = pgTable(
       .notNull()
       .references(() => engagementsTable.id, { onDelete: "cascade" }),
     team: text("team").notNull(),
+    // Optional role coarse-bucket captured at invite time (e.g. "Engineer",
+    // "Manager"). Used for the demographic mix breakdown — never paired with
+    // the token or response, only counted against the anonymity floor.
+    role: text("role"),
     emailHash: text("email_hash"),
     // Stored value is HMAC-SHA256(plaintext, EXPORT_KEY). The plaintext token
     // is returned to the assessor exactly once at creation time (POST response)
@@ -168,6 +176,15 @@ export const surveyInvitesTable = pgTable(
     token: text("token").notNull().unique(),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     status: text("status").notNull().default("sent"),
+    // Days (relative to createdAt) on which a reminder has already been
+    // emitted, e.g. [3] means the day-3 nudge fired. Prevents the scheduler
+    // from re-nudging on every tick.
+    nudgesSent: jsonb("nudges_sent").notNull().default([]),
+    // Server-side autosave for save-and-resume. Stores the same shape as a
+    // submitted answers payload but never moves into surveyResponsesTable
+    // until the respondent submits.
+    partialAnswers: jsonb("partial_answers").notNull().default([]),
+    lastSavedAt: timestamp("last_saved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
   },

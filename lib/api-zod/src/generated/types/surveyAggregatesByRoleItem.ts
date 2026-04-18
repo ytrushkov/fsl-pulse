@@ -6,8 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type CreateSurveyInvitesInputInvitesItem = {
-  team: string;
-  email?: string;
-  role?: string;
+export type SurveyAggregatesByRoleItem = {
+  role: string;
+  completedCount?: number | null;
+  suppressed: boolean;
 };

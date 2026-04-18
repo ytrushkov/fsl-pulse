@@ -6,8 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type CreateSurveyInvitesInputInvitesItem = {
-  team: string;
-  email?: string;
-  role?: string;
-};
+export interface PreviewInvitesInput {
+  csv: string;
+}

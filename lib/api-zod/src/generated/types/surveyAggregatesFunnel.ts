@@ -6,8 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type CreateSurveyInvitesInputInvitesItem = {
-  team: string;
-  email?: string;
-  role?: string;
+export type SurveyAggregatesFunnel = {
+  sent: number;
+  opened: number;
+  started: number;
+  completed: number;
 };

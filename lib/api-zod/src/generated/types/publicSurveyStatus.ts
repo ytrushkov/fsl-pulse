@@ -13,4 +13,5 @@ export const PublicSurveyStatus = {
   open: "open",
   completed: "completed",
   expired: "expired",
+  closed: "closed",
 } as const;

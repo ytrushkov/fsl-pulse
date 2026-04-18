@@ -10,20 +10,19 @@ import {
 } from "@workspace/db";
 import { paramId, newToken, hashInviteToken } from "../lib/util";
 import { recordActivity, recordAnonymousActivity } from "../lib/audit";
+import { DEFAULT_SURVEY_QUESTIONS } from "../lib/survey-template";
 
 // Magic-link invite TTL. Configurable via env so ops can shorten for sensitive
 // engagements without a code change.
 const INVITE_TTL_MS = Number(
   process.env.PULSE_INVITE_TTL_MS ?? 30 * 24 * 3600 * 1000,
 );
-import { DEFAULT_SURVEY_QUESTIONS } from "../lib/survey-template";
 
 const ANONYMITY_FLOOR = 5;
 
 const router: IRouter = Router();
 
 // Single source of truth: serve live PRD template, filtered by enabled optional modules.
-// Persisted snapshot is preserved for audit but not authoritative for v1.
 function questionsForEngagement(modules: string[] | null | undefined) {
   const enabled = new Set((modules ?? []) as string[]);
   return DEFAULT_SURVEY_QUESTIONS.filter(
@@ -49,6 +48,7 @@ router.get("/engagements/:id/survey", async (req, res): Promise<void> => {
     modules: s.modules,
     questions,
     nudgeSchedule: s.nudgeSchedule,
+    closedAt: s.closedAt,
   });
 });
 
@@ -62,7 +62,23 @@ router.patch("/engagements/:id/survey", async (req, res): Promise<void> => {
   const set: Record<string, unknown> = {};
   if (b.modules) set.modules = b.modules;
   if (b.questions) set.questions = b.questions;
-  if (b.nudgeSchedule) set.nudgeSchedule = b.nudgeSchedule;
+  if (b.nudgeSchedule) {
+    // Validate: array of positive integers, dedup + sort ascending so the
+    // scheduler always receives a clean shape. Cap at 30 days so a bad UI
+    // entry can't queue runaway reminders.
+    if (!Array.isArray(b.nudgeSchedule)) {
+      res.status(400).json({ error: "nudgeSchedule must be an array of days" });
+      return;
+    }
+    const cleaned = Array.from(
+      new Set(
+        (b.nudgeSchedule as unknown[])
+          .map((n) => Math.floor(Number(n)))
+          .filter((n) => Number.isFinite(n) && n >= 1 && n <= 30),
+      ),
+    ).sort((a, b) => a - b);
+    set.nudgeSchedule = cleaned;
+  }
   const [s] = await db
     .update(surveysTable)
     .set(set)
@@ -84,6 +100,39 @@ router.patch("/engagements/:id/survey", async (req, res): Promise<void> => {
     modules: s.modules,
     questions: s.questions,
     nudgeSchedule: s.nudgeSchedule,
+    closedAt: s.closedAt,
+  });
+});
+
+router.post("/engagements/:id/survey/close", async (req, res): Promise<void> => {
+  const id = paramId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const [s] = await db
+    .update(surveysTable)
+    .set({ closedAt: new Date() })
+    .where(eq(surveysTable.engagementId, id))
+    .returning();
+  if (!s) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  await recordActivity(req, {
+    engagementId: id,
+    kind: "survey_closed",
+    severity: "critical",
+    message: "Survey closed — dataset locked for scoring",
+    payload: { closedAt: s.closedAt?.toISOString() },
+  });
+  res.json({
+    engagementId: s.engagementId,
+    templateVersion: s.templateVersion,
+    modules: s.modules,
+    questions: s.questions,
+    nudgeSchedule: s.nudgeSchedule,
+    closedAt: s.closedAt,
   });
 });
 
@@ -102,6 +151,26 @@ router.get("/engagements/:id/survey/invites", async (req, res): Promise<void> =>
   res.json(rows.map(({ token: _omit, ...rest }) => rest));
 });
 
+// CSV preview / dry-run. Validates each row and reports per-row errors so
+// assessors can review before committing. Never writes to the DB.
+router.post(
+  "/engagements/:id/survey/invites/preview",
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const csv = String(req.body?.csv ?? "");
+    const parsed = parseInviteCsv(csv);
+    res.json({
+      validCount: parsed.filter((r) => r.valid).length,
+      invalidCount: parsed.filter((r) => !r.valid).length,
+      rows: parsed,
+    });
+  },
+);
+
 router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> => {
   const id = paramId(req.params.id);
   if (!id) {
@@ -113,6 +182,15 @@ router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> =
     res.status(400).json({ error: "invites array required" });
     return;
   }
+  // Block invite creation when the survey is locked.
+  const [survey] = await db
+    .select({ closedAt: surveysTable.closedAt })
+    .from(surveysTable)
+    .where(eq(surveysTable.engagementId, id));
+  if (survey?.closedAt) {
+    res.status(409).json({ error: "Survey is closed" });
+    return;
+  }
   // Generate plaintext tokens, persist only their hash + expiry, return the
   // plaintext to the assessor exactly once so they can mail the magic links.
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
@@ -121,18 +199,20 @@ router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> =
     values: {
       engagementId: string;
       team: string;
+      role: string | null;
       emailHash: string | null;
       token: string;
       expiresAt: Date;
       status: string;
     };
-  }> = b.invites.map((i: { team: string; email?: string }) => {
+  }> = b.invites.map((i: { team: string; email?: string; role?: string }) => {
     const plain = newToken();
     return {
       plain,
       values: {
         engagementId: id,
         team: i.team,
+        role: i.role ?? null,
         emailHash: i.email
           ? createHash("sha256").update(i.email.toLowerCase()).digest("hex")
           : null,
@@ -156,8 +236,6 @@ router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> =
       expiresAt: expiresAt.toISOString(),
     },
   });
-  // Return rows joined with the plaintext token so the UI can build the magic
-  // link URL. Do NOT echo the stored hash back.
   res.status(201).json(
     rows.map((r, i) => {
       const { token: _omit, ...rest } = r;
@@ -183,6 +261,12 @@ router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> 
 
   const totalSent = invites.length;
   const totalCompleted = invites.filter((i) => i.status === "completed").length;
+  const totalOpened = invites.filter((i) =>
+    ["opened", "started", "completed"].includes(i.status),
+  ).length;
+  const totalStarted = invites.filter((i) =>
+    ["started", "completed"].includes(i.status),
+  ).length;
   const responseRate = totalSent > 0 ? totalCompleted / totalSent : 0;
 
   // By question distribution
@@ -224,9 +308,13 @@ router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> 
     const completedCount = rs.length;
     const suppressed = completedCount < ANONYMITY_FLOOR;
     if (suppressed) {
-      return { team, completedCount, suppressed: true };
+      // Omit `completedCount` for suppressed cells. Returning the exact
+      // sub-floor count is itself an anonymity leak (it tells the assessor
+      // a team has "3 respondents" rather than "fewer than 5"). The cell is
+      // still listed so the assessor knows which teams exist, but no
+      // metric is attached.
+      return { team, completedCount: null, suppressed: true };
     }
-    // dimension averages
     const dimSums: Record<string, { sum: number; n: number }> = {};
     for (const r of rs) {
       const ans = r.answers as Array<{ questionId: string; value: unknown }>;
@@ -248,7 +336,37 @@ router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> 
     return { team, completedCount, suppressed: false, dimensionAverages };
   });
 
-  // Anonymity floor: suppress per-question aggregates when total responses < 5
+  // By role — derived from invite-time role on completed invites. Each cell
+  // honors the anonymity floor independently of the per-team breakdown.
+  const inviteById = new Map(invites.map((i) => [i.id, i]));
+  const roleMap = new Map<string, number>();
+  for (const r of responses) {
+    const inv = inviteById.get(r.inviteId);
+    const role = inv?.role ?? "Unknown";
+    roleMap.set(role, (roleMap.get(role) ?? 0) + 1);
+  }
+  const byRole = Array.from(roleMap.entries()).map(([role, completedCount]) => {
+    const suppressed = completedCount < ANONYMITY_FLOOR;
+    return {
+      role,
+      // Same suppression discipline as byTeam: never expose the exact
+      // sub-floor count. The cell is shown so the assessor knows the role
+      // exists; the metric is hidden.
+      completedCount: suppressed ? null : completedCount,
+      suppressed,
+    };
+  });
+
+  // Funnel (counts; ratio computed client-side). Anonymity floor does not
+  // apply at the engagement level, only at per-segment cells.
+  const funnel = {
+    sent: totalSent,
+    opened: totalOpened,
+    started: totalStarted,
+    completed: totalCompleted,
+  };
+
+  // Suppress per-question aggregates when total responses < 5.
   const aggregateSuppressed = totalCompleted < ANONYMITY_FLOOR;
   res.json({
     responseRate,
@@ -257,6 +375,8 @@ router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> 
     aggregateSuppressed,
     byQuestion: aggregateSuppressed ? [] : byQuestion,
     byTeam,
+    byRole,
+    funnel,
   });
 });
 
@@ -271,14 +391,11 @@ router.get("/survey/respond/:token", async (req, res): Promise<void> => {
     .from(surveyInvitesTable)
     .where(eq(surveyInvitesTable.token, hashInviteToken(token)));
   if (!inv) {
-    // Generic message — do not reveal whether the token is unknown vs revoked.
     res.status(404).json({ error: "Link is invalid or has expired" });
     return;
   }
-  if (inv.expiresAt && inv.expiresAt.getTime() < Date.now()) {
-    res.status(404).json({ error: "Link is invalid or has expired" });
-    return;
-  }
+  const expired =
+    !!inv.expiresAt && inv.expiresAt.getTime() < Date.now();
   const [eng] = await db
     .select()
     .from(engagementsTable)
@@ -287,13 +404,11 @@ router.get("/survey/respond/:token", async (req, res): Promise<void> => {
     .select()
     .from(surveysTable)
     .where(eq(surveysTable.engagementId, inv.engagementId));
-  if (inv.status !== "completed" && inv.status === "sent") {
+  if (!expired && inv.status !== "completed" && inv.status === "sent") {
     await db
       .update(surveyInvitesTable)
       .set({ status: "opened" })
       .where(eq(surveyInvitesTable.id, inv.id));
-    // Anonymous open: record team only, never the magic-link token or invitee
-    // email/identifier. The aggregate count is what assessors care about.
     await recordAnonymousActivity(req, {
       engagementId: inv.engagementId,
       kind: "survey_invite_opened",
@@ -303,11 +418,71 @@ router.get("/survey/respond/:token", async (req, res): Promise<void> => {
     });
   }
   const questions = questionsForEngagement(survey?.modules as string[]);
+  // Status precedence: completed > closed > expired > open. The respondent
+  // sees a friendly state for each branch instead of a generic 404 — the
+  // "completed" path is checked first so a completed-then-expired link
+  // still shows the thank-you screen rather than nagging about expiry.
+  let status: "open" | "completed" | "expired" | "closed" = "open";
+  if (inv.status === "completed") status = "completed";
+  else if (survey?.closedAt) status = "closed";
+  else if (expired) status = "expired";
   res.json({
     engagementClient: eng?.clientName ?? "",
-    status: inv.status === "completed" ? "completed" : "open",
+    status,
     questions,
+    savedAnswers: status === "open" ? (inv.partialAnswers ?? []) : [],
   });
+});
+
+router.post("/survey/respond/:token/draft", async (req, res): Promise<void> => {
+  const token = paramId(req.params.token);
+  if (!token) {
+    res.status(400).json({ error: "Link is invalid or has expired" });
+    return;
+  }
+  const b = req.body ?? {};
+  if (!Array.isArray(b.answers)) {
+    res.status(400).json({ error: "answers required" });
+    return;
+  }
+  const [inv] = await db
+    .select()
+    .from(surveyInvitesTable)
+    .where(eq(surveyInvitesTable.token, hashInviteToken(token)));
+  if (!inv) {
+    res.status(404).json({ error: "Link is invalid or has expired" });
+    return;
+  }
+  if (inv.expiresAt && inv.expiresAt.getTime() < Date.now()) {
+    res.status(404).json({ error: "Link is invalid or has expired" });
+    return;
+  }
+  if (inv.status === "completed") {
+    res.status(409).json({ error: "Already submitted" });
+    return;
+  }
+  const [survey] = await db
+    .select({ closedAt: surveysTable.closedAt })
+    .from(surveysTable)
+    .where(eq(surveysTable.engagementId, inv.engagementId));
+  if (survey?.closedAt) {
+    res.status(410).json({ error: "Survey is closed" });
+    return;
+  }
+  // Don't fire activity events on every keystroke — autosave is high-volume
+  // and would flood the feed. We only mark status `started` once on first save.
+  const updates: Record<string, unknown> = {
+    partialAnswers: b.answers,
+    lastSavedAt: new Date(),
+  };
+  if (inv.status === "sent" || inv.status === "opened") {
+    updates.status = "started";
+  }
+  await db
+    .update(surveyInvitesTable)
+    .set(updates)
+    .where(eq(surveyInvitesTable.id, inv.id));
+  res.sendStatus(204);
 });
 
 router.post("/survey/respond/:token", async (req, res): Promise<void> => {
@@ -337,6 +512,14 @@ router.post("/survey/respond/:token", async (req, res): Promise<void> => {
     res.status(409).json({ error: "Already submitted" });
     return;
   }
+  const [survey] = await db
+    .select({ closedAt: surveysTable.closedAt })
+    .from(surveysTable)
+    .where(eq(surveysTable.engagementId, inv.engagementId));
+  if (survey?.closedAt) {
+    res.status(410).json({ error: "Survey is closed" });
+    return;
+  }
   await db.insert(surveyResponsesTable).values({
     inviteId: inv.id,
     engagementId: inv.engagementId,
@@ -346,11 +529,14 @@ router.post("/survey/respond/:token", async (req, res): Promise<void> => {
   });
   await db
     .update(surveyInvitesTable)
-    .set({ status: "completed", completedAt: new Date() })
+    .set({
+      status: "completed",
+      completedAt: new Date(),
+      // Clear partial answers once submitted so we never retain redundant
+      // copies of the response payload.
+      partialAnswers: [],
+    })
     .where(eq(surveyInvitesTable.id, inv.id));
-  // Anonymous event — magic-link respondents have no authed user. We record
-  // the team but never the email so the activity feed can show response
-  // velocity without breaking the anonymity floor.
   await recordAnonymousActivity(req, {
     engagementId: inv.engagementId,
     kind: "survey_response_submitted",
@@ -360,5 +546,91 @@ router.post("/survey/respond/:token", async (req, res): Promise<void> => {
   });
   res.sendStatus(204);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CSV parser for invite preview. Tolerant of header rows and stray
+// whitespace. Schema: team[, email[, role]]. We deliberately avoid a full
+// CSV library for v1 — the input is assessor-pasted text, not arbitrary
+// uploads, and rows that fail parsing are reported with `valid: false`.
+// Quoted fields containing commas are NOT supported; if a value needs a
+// comma the assessor should rename it before pasting.
+// ─────────────────────────────────────────────────────────────────────────────
+function parseInviteCsv(csv: string): Array<{
+  line: number;
+  valid: boolean;
+  team: string | null;
+  email: string | null;
+  role: string | null;
+  error: string | null;
+}> {
+  const lines = csv.split(/\r?\n/);
+  const out: ReturnType<typeof parseInviteCsv> = [];
+  const seenEmails = new Set<string>();
+  let isFirst = true;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]!.trim();
+    if (!raw) continue;
+    const cols = raw.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+    // Skip a header row of "team,email,role" or similar — only on the first
+    // non-empty line, so a literal team named "team" later in the file is
+    // still treated as data.
+    if (
+      isFirst &&
+      cols[0] &&
+      ["team", "teams"].includes(cols[0].toLowerCase())
+    ) {
+      isFirst = false;
+      continue;
+    }
+    isFirst = false;
+    const [team, email, role] = cols;
+    if (!team) {
+      out.push({
+        line: i + 1,
+        valid: false,
+        team: null,
+        email: email ?? null,
+        role: role ?? null,
+        error: "Missing team",
+      });
+      continue;
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      out.push({
+        line: i + 1,
+        valid: false,
+        team,
+        email,
+        role: role ?? null,
+        error: "Invalid email",
+      });
+      continue;
+    }
+    if (email) {
+      const lower = email.toLowerCase();
+      if (seenEmails.has(lower)) {
+        out.push({
+          line: i + 1,
+          valid: false,
+          team,
+          email,
+          role: role ?? null,
+          error: "Duplicate email in batch",
+        });
+        continue;
+      }
+      seenEmails.add(lower);
+    }
+    out.push({
+      line: i + 1,
+      valid: true,
+      team,
+      email: email ?? null,
+      role: role ?? null,
+      error: null,
+    });
+  }
+  return out;
+}
 
 export default router;

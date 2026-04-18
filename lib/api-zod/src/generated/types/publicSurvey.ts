@@ -5,6 +5,7 @@
  * Pulse — Agentic Maturity Assessment Platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { PublicSurveySavedAnswersItem } from "./publicSurveySavedAnswersItem";
 import type { PublicSurveyStatus } from "./publicSurveyStatus";
 import type { SurveyQuestion } from "./surveyQuestion";
 
@@ -12,4 +13,5 @@ export interface PublicSurvey {
   engagementClient: string;
   status: PublicSurveyStatus;
   questions: SurveyQuestion[];
+  savedAnswers?: PublicSurveySavedAnswersItem[];
 }

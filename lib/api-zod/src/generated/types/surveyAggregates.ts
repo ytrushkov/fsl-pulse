@@ -6,12 +6,17 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { SurveyAggregatesByQuestionItem } from "./surveyAggregatesByQuestionItem";
+import type { SurveyAggregatesByRoleItem } from "./surveyAggregatesByRoleItem";
 import type { SurveyAggregatesByTeamItem } from "./surveyAggregatesByTeamItem";
+import type { SurveyAggregatesFunnel } from "./surveyAggregatesFunnel";
 
 export interface SurveyAggregates {
   responseRate: number;
   totalSent: number;
   totalCompleted: number;
+  aggregateSuppressed: boolean;
+  funnel: SurveyAggregatesFunnel;
   byQuestion: SurveyAggregatesByQuestionItem[];
   byTeam: SurveyAggregatesByTeamItem[];
+  byRole: SurveyAggregatesByRoleItem[];
 }

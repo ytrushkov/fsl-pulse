@@ -14,4 +14,5 @@ export interface Survey {
   modules: SurveyModulesItem[];
   questions: SurveyQuestion[];
   nudgeSchedule?: number[];
+  closedAt?: string | null;
 }
