@@ -1,0 +1,14 @@
+{
+  "engagement_id": "00000000-0000-0000-0000-000000000001",
+  "client_name": "fixture-client",
+  "dimensions": {
+    "strategy_governance": {"score": 1, "evidence": []},
+    "tooling_infrastructure": {"score": 1, "evidence": []},
+    "team_practices": {"score": 1, "evidence": []},
+    "data_quality": {"score": 1, "evidence": []},
+    "security_compliance": {"score": 1, "evidence": []},
+    "change_management": {"score": 1, "evidence": []}
+  },
+  "overall_score": 1,
+  "assessed_at": "2026-04-17T00:00:00Z"
+}

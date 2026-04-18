@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pulse-llm-gateway"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.28,<0.29",
+    "structlog>=24.2,<25.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

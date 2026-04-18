@@ -1,0 +1,776 @@
+# PRD — Pulse: Agentic Maturity Assessment Platform
+
+**Product name:** Pulse
+**Author:** Yury Trushkov (CTO, FullStack)
+**Date:** 2026-04-13
+**Status:** Draft v1 — ready for Claude Code implementation
+**Target audience:** Claude Code (implementation); FullStack Engineering leadership (review)
+
+---
+
+## 1. Summary
+
+FullStack's **Agentic Development Maturity Assessment** is the gateway offering to the AI PDLC engagement. Today, data collection for each assessment (systems pulls, developer survey, interview notes, AI-tooling telemetry) is manual — tokens handed over via email, scripts run ad hoc per engagement, survey sent via Google Forms, interview notes stored in Docs. This does not scale past a handful of concurrent engagements and creates inconsistent data quality across assessments.
+
+This PRD defines an internal, FullStack-hosted web app used by assessors to **standardize, automate, and accelerate** data collection across the full assessment pipeline: system integrations, developer survey orchestration, and structured interview note capture. The output is a normalized assessment dataset (`assessment.json` + evidence artifacts) that feeds the existing scoring, reporting, and AI-PDLC recommendation engines.
+
+**Primary goal:** Reduce assessor effort per engagement from ~25 hours of data-wrangling to under 4 hours, while improving data consistency and enabling benchmarking across clients. In v1, the tool also produces the five client deliverables — maturity heatmap, gap analysis, 90-day action plan, PDLC entry-point recommendation, and NPV business case — so a single workspace takes the engagement from kickoff to board-ready readout.
+
+---
+
+## 2. Background & Context
+
+The Maturity Assessment is a 1–2 week diagnostic with five deliverables: maturity heatmap, gap analysis, 90-day action plan, PDLC entry-point recommendation, and NPV business case. It evaluates six dimensions — Tooling, Measurement, Process, People, Governance, Culture — against a five-stage model (Legacy → AI-Assisted → AI-Enabled → AI-Native → Dark Factory / Agentic Development).
+
+Assessment inputs today:
+
+- **System telemetry** — GitHub/GitLab, Jira/Linear, CI/CD (GitHub Actions, CircleCI, Jenkins, GitLab CI), and AI tooling (GitHub Copilot admin API, Cursor org dashboard, Claude Code usage, Windsurf).
+- **Out of scope for v1:** third-party productivity platforms (DX, Jellyfish, LinearB, Swarmia). Future adapter layer — see Open Questions.
+- **Developer survey** — 15-min anonymous survey, ~25 questions, adaptive to stack and tooling.
+- **Interviews** — 1 executive sponsor, 2–3 EMs, 1–2 staff/principal engineers. Semi-structured.
+- **Artifacts** — architecture docs, governance policies, tool license counts, org charts.
+
+Why now:
+
+- Bregal Sagemount portfolio engagements are ramping (complimentary through Q2 2026).
+- SaaS-to-Agentic transformation and enterprise offerings will reuse the same diagnostic engine.
+- Without automation, throughput caps the offering at ~4 concurrent assessments. With automation, target is 15+.
+
+---
+
+## 3. Goals & Non-Goals
+
+### Goals
+
+1. One engagement = one workspace containing all integrations, survey, interview notes, and exported dataset.
+2. Connector library for the common source systems; each connector is read-only and client-revocable.
+3. Survey engine that handles distribution, anonymity enforcement, reminders, and aggregation.
+4. Interview capture that turns free-form notes into structured, dimension-tagged evidence.
+5. Exportable normalized dataset (`assessment.json` + supporting CSVs + raw evidence zip) that is the single source of truth for downstream scoring and reporting.
+6. Audit trail — every data point traceable to its source (connector run, survey response ID, interview note span).
+
+7. **Scoring, heatmap, report, and NPV generation** — turn the normalized dataset into the five client deliverables (maturity heatmap, gap analysis, 90-day action plan, PDLC entry-point recommendation, NPV business case) directly inside the tool.
+
+### Non-Goals (v1)
+
+- Client-facing self-serve setup — admins do not log in (assessors manage tokens and configuration).
+- Long-term continuous monitoring — v1 is point-in-time collection for a defined engagement window.
+- Multi-language survey support (English only in v1).
+- On-prem / client-hosted deployment — v1 is FullStack-hosted SaaS.
+
+---
+
+## 4. Users & Roles
+
+To keep v1 simple, the tool has exactly **two roles**:
+
+| Role | Capabilities |
+|---|---|
+| **Assessor** | Sees all active engagements. Can create a new engagement from a template. Can configure and modify data-pull (connector) settings per engagement. Can modify the survey structure and questions per engagement. Can run collection, capture interviews, review scoring, edit deliverables, and export. Full read/write on every engagement. |
+| **Admin** | Everything an Assessor can do, plus: manage users, manage engagement templates, manage connector templates and default survey templates, manage rubric and report template versions, view audit logs, archive/delete engagements. |
+
+**No per-engagement access control in v1** — any Assessor can open any engagement. This matches the small, trusted FullStack assessment team (expected <15 users at GA) and removes a class of setup friction.
+
+All users authenticate via FullStack SSO (Google Workspace). MFA enforced. Role assignment is managed by Admins in the user list.
+
+*Client-side stakeholders (Engineering Sponsor, EMs, engineers taking the survey) are not users of the tool.* They interact only via one-off artifacts — magic-link survey URLs and the exported report.
+
+---
+
+## 5. Scope Overview
+
+```
+┌────────────────────────── Pulse (web app) ──────────────────────────┐
+│                                                                              │
+│   Engagement workspace                                                       │
+│   ├── Connectors      → GitHub/GitLab · Jira/Linear · CI/CD · AI tooling   │
+│   ├── Survey engine   → build · distribute · collect · aggregate            │
+│   ├── Interview hub   → notes → structured evidence (dimension-tagged)      │
+│   ├── Artifact vault  → uploaded docs (arch, policies, org charts)          │
+│   ├── Scoring engine  → 6 dimensions × 5-stage model · evidence-weighted    │
+│   ├── Deliverables    → heatmap · gap analysis · 90-day plan · entry-point ·│
+│   │                     NPV business case                                   │
+│   └── Export          → assessment.json · report.pdf/.pptx · evidence.zip  │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 6. Functional Requirements
+
+### 6.1 Engagement Workspace
+
+- Assessor creates a new engagement with: client name, sponsor, team count, scope definition (repos, projects, teams), kickoff date, target delivery date.
+- Workspace UI shows a **collection progress dashboard**: per-data-source status (Not configured / Configured / Collecting / Collected / Failed), survey response rate, interview completion count, artifact count, days to target.
+- Lifecycle states: `draft → active → collecting → ready-for-analysis → exported → archived`.
+- Each workspace is isolated (logical tenancy, row-level scoping).
+
+### 6.2 Connectors
+
+Each connector is a pluggable module with a common contract:
+
+```
+Connector
+  .authenticate(credentials) -> OAuth/PAT/API-key flow
+  .discover(scope) -> returns available resources (repos, projects, etc.)
+  .collect(scope, window) -> writes normalized records to workspace store
+  .health() -> status + last run + error summary
+  .revoke() -> invalidates tokens and wipes cached creds
+```
+
+**v1 connectors (in priority order):**
+
+1. **GitHub** (Cloud + Enterprise) — repos, PRs, reviews, commits, workflows, Copilot admin metrics (acceptance rate, active users, seat utilization).
+2. **GitLab** (SaaS + Self-managed) — projects, MRs, pipelines, code suggestions metrics where available.
+3. **Jira** (Cloud + DC) — projects, issues, sprints, cycle time, flow efficiency.
+4. **Linear** — teams, issues, cycles, throughput.
+5. **CI/CD** — GitHub Actions, CircleCI, Jenkins, GitLab CI — build duration, frequency, failure rate, MTTR.
+6. **AI tooling** — GitHub Copilot (admin API), Cursor (org export), Claude Code (usage API), Windsurf (where API available), Amazon Q (where API available).
+
+**Deferred to a later version** — adapters for third-party productivity platforms (DX Core 4, Jellyfish, LinearB, Swarmia, Pluralsight Flow). The connector SDK contract should be forward-compatible with these so they can be added without schema changes. See offering doc's measurement-flexibility thesis for the rationale when we bring them in.
+
+**Connector requirements:**
+
+- Read-only scopes only. No write scopes on any connector.
+- Incremental collection with resumable windows (default lookback 90 days, configurable).
+- Rate-limit aware (exponential backoff, respect `X-RateLimit-*` headers).
+- All credentials stored in a KMS-backed secrets vault (AWS KMS + Parameter Store). Never in plaintext at rest. Never logged.
+- Per-connector feature flag — allow assessors to toggle collection granularity (e.g., fetch PR review comments or not).
+- Connector test harness — "Verify access" button runs a minimal call and surfaces clear error messages for insufficient scope / revoked tokens.
+
+### 6.3 Survey Engine
+
+- **Template library** — baseline 30-question survey with 4 optional modules (Security, Data & Analytics, Platform Engineering, Product Design — 3 questions each, up to 42 total). Assessor selects modules at engagement setup. Full v1 template below.
+- **Question types** — Likert (1–5), multi-select, single-select, rank-order, conditional (show-if-previous-answer).
+- **Distribution** — assessor uploads a CSV of engineer emails (or pulls from GitHub org) and sends a one-per-respondent magic link. No account creation required by respondents.
+- **Anonymity enforcement** — magic links are single-use and detach from identity at submission time. Individual responses **must** never be re-identifiable in the UI. Aggregations only at team-level minimums (≥5 respondents per team to display).
+- **Reminders** — configurable nudge schedule (Day 3, Day 6, final Day 8). Assessor sees open-rate metrics, not response content tied to identity.
+- **Response storage** — normalized responses keyed by anonymized respondent ID; demographic metadata (team, tenure band, role) only.
+- **Benchmarking hooks** — response aggregates tagged with engagement metadata so we can build cross-client benchmarks over time (opt-in per client at contract).
+
+#### v1 Survey Template
+
+Target completion time: 12–15 minutes (core), ~18 minutes with all modules enabled.
+
+**Section 0 — Demographics** *(4 questions, not scored — used for team-level aggregation only)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| Q1 | Which team are you on? | single-select | *(populated from engagement config)* |
+| Q2 | What is your role? | single-select | IC Engineer / Senior or Staff Engineer / Tech Lead / Engineering Manager / Architect / Other |
+| Q3 | How long have you been at this company? | single-select | <6 months / 6–12 months / 1–3 years / 3+ years |
+| Q4 | What best describes your primary work? | single-select | Backend / Frontend / Full-stack / Mobile / Data-ML / DevOps-Platform / QA-SDET / Other |
+
+**Section 1 — Tooling** *(6 questions)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| Q5 | Which AI coding tools do you use at least weekly? | multi-select | GitHub Copilot / Cursor / Claude Code / Windsurf / Amazon Q / ChatGPT / Gemini / Internal tool / None / Other |
+| Q6 | How did you start using AI coding tools? | single-select | Company provided and mandated / Company provided, optional / I set it up myself / I don't use any |
+| Q7 | What percentage of your code is AI-assisted (generated or substantially edited by AI)? | single-select | 0% / 1–10% / 11–25% / 26–50% / 51–75% / 76%+ |
+| Q8 | How often do you accept AI-generated suggestions without significant edits? | Likert 1–5 | Never → Almost always |
+| Q9 | In which parts of your workflow do AI tools save you the most time? | multi-select | Writing new code / Writing tests / Code review / Debugging / Documentation / Refactoring / Architecture-design / CI-CD configuration / None — no meaningful time savings |
+| Q10 | Are any of your team's workflows fully automated end-to-end by AI agents (e.g., auto-generated PRs, autonomous test suites, self-healing pipelines)? | single-select | Yes, multiple workflows / Yes, one or two / Experimenting / No / Don't know |
+
+**Section 2 — Measurement** *(4 questions)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| Q11 | Does your team track developer productivity metrics today? | single-select | Yes, and I see the data regularly / Yes, but I rarely see results / I think so, but I'm not sure / No / Don't know |
+| Q12 | Which metrics does your team use? | multi-select | Deployment frequency / Lead time for changes / Change failure rate / MTTR / Cycle time / Velocity-story points / Developer experience surveys / Code review turnaround / None that I'm aware of / Other |
+| Q13 | How useful are the productivity metrics you see in improving your day-to-day work? | Likert 1–5 | Not useful at all → Extremely useful *(conditional: shown only if Q11 ≠ "No" or "Don't know")* |
+| Q14 | How comfortable are you that productivity metrics are used fairly (not punitively) at your company? | Likert 1–5 | Very uncomfortable → Very comfortable |
+
+**Section 3 — Process** *(6 questions)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| Q15 | Where in your delivery process does work get stuck most often? | rank top 3 | Requirements-spec / Design / Coding / Code review / Testing / Deployment / Incident response / None — work flows smoothly |
+| Q16 | How well-defined are your team's engineering standards (coding conventions, PR templates, architecture decision records)? | Likert 1–5 | No standards → Comprehensive and enforced |
+| Q17 | When you pick up a new task, how often do you have all the context you need to start without chasing people? | Likert 1–5 | Rarely → Almost always |
+| Q18 | How frequently does your team deploy to a QA/UAT environment? | single-select | Multiple times per day / Daily / A few times per week / Weekly / Biweekly or less / We don't have a pre-production environment / I don't know |
+| Q19 | How frequently does your team ship to production? | single-select | Multiple times per day / Daily / A few times per week / Weekly / Biweekly / Monthly / Quarterly or less / I don't know |
+| Q20 | How much rework (fixing things that should have been caught earlier) does your team do? | Likert 1–5 | Almost none → A significant amount |
+
+**Section 4 — People** *(4 questions)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| Q21 | How confident are you in using AI tools effectively in your daily engineering work? | Likert 1–5 | Not confident at all → Very confident |
+| Q22 | Has your company provided training or guidance on using AI in engineering? | single-select | Yes, structured program / Yes, informal guidance / No, but I'd want it / No, and I don't feel I need it |
+| Q23 | How often do you and your teammates share AI tips, prompts, or workflows with each other? | Likert 1–5 | Never → Daily |
+| Q24 | If AI tools handle more routine coding, which skills do you think become most important for your role? | multi-select | System design-architecture / Prompt engineering / Code review-quality judgment / Product thinking / Testing strategy / Security awareness / Communication / I'm not sure |
+
+**Section 5 — Governance** *(3 questions)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| Q25 | Does your organization have clear policies on when and how AI-generated code can be used? | single-select | Yes, well-documented / Yes, but vague / No formal policy / I don't know |
+| Q26 | How is AI-generated code reviewed before it reaches production? | single-select | Same review process as human code / Extra scrutiny for AI code / No special process / We don't track which code is AI-generated |
+| Q27 | How concerned are you about security, IP, or quality risks from AI-generated code? | Likert 1–5 | Not concerned at all → Very concerned |
+
+**Section 6 — Culture** *(3 questions)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| Q28 | How supportive is your leadership of adopting AI in engineering workflows? | Likert 1–5 | Not supportive → Strongly supportive |
+| Q29 | How would you describe your team's attitude toward AI tools? | single-select | Enthusiastic — we actively experiment / Cautiously optimistic / Neutral — we use what's provided / Skeptical — most people don't see the value / Resistant — people actively avoid AI tools |
+| Q30 | Do you feel safe experimenting with AI tools at work, even if an experiment fails or produces a bad result? | Likert 1–5 | Not at all safe → Completely safe |
+
+**Optional Module A — Security** *(3 questions, shown if enabled by assessor)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| A1 | How often does AI-generated code in your team go through a security-focused review (SAST, DAST, manual security review)? | single-select | Always / Usually / Sometimes / Rarely / Never / Don't know |
+| A2 | Has your team experienced a security issue (vulnerability, secret leak, dependency risk) traced to AI-generated code? | single-select | Yes / No / Don't know |
+| A3 | How confident are you that your current security tooling catches risks specific to AI-generated code? | Likert 1–5 | Not confident at all → Very confident |
+
+**Optional Module B — Data & Analytics** *(3 questions, shown if enabled by assessor)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| B1 | Does your team use AI/ML for data pipelines, analytics, or business intelligence (beyond coding tools)? | single-select | Yes, in production / Experimenting / No / Not applicable |
+| B2 | How accessible is production data for engineers building AI features? | Likert 1–5 | Very restricted → Self-serve access with guardrails |
+| B3 | Does your organization have a data governance framework that covers AI model training and inference data? | single-select | Yes / Partially / No / Don't know |
+
+**Optional Module C — Platform Engineering** *(3 questions, shown if enabled by assessor)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| C1 | Does your organization have an internal developer platform (IDP) or golden paths for common workflows? | single-select | Yes, mature / Yes, early stage / No, but planned / No |
+| C2 | How much of your CI/CD pipeline is self-service (you can configure without waiting on another team)? | Likert 1–5 | None → Fully self-service |
+| C3 | Are AI tools integrated into your platform (e.g., AI-assisted incident triage, auto-generated runbooks, intelligent deployment gates)? | single-select | Yes, multiple integrations / One or two / No / Don't know |
+
+**Optional Module D — Product Design** *(3 questions, shown if enabled by assessor)*
+
+| # | Question | Type | Options |
+|---|----------|------|---------|
+| D1 | How well do design specs and requirements translate into implementable work by the time engineering picks them up? | Likert 1–5 | Poorly → Excellently |
+| D2 | Are AI tools used in your design-to-code handover (e.g., design-to-component generation, spec-to-ticket automation)? | single-select | Yes / Experimenting / No / Not applicable |
+| D3 | How closely do product, design, and engineering collaborate on AI feature decisions? | Likert 1–5 | Siloed → Deeply integrated |
+
+#### Survey Template — Implementation Notes
+
+- **Dimension mapping:** Q5–Q10 → Tooling; Q11–Q14 → Measurement; Q15–Q20 → Process; Q21–Q24 → People; Q25–Q27 → Governance; Q28–Q30 → Culture. Optional modules contribute supplemental evidence to their respective dimensions.
+- **Stage signal:** Q7 + Q8 + Q10 are the strongest stage discriminators in the survey. Q7 <10% and Q10 = "No" strongly suggests Stage 1–2; Q10 = "Yes, multiple workflows" is Stage 4–5 signal.
+- **Cross-question triangulation:** Q18 vs. Q19 (QA deploy cadence vs. production deploy cadence) — the delta is a process-maturity signal. Q6 vs. Q25 (adoption mode vs. governance) — bottom-up adoption without governance flags a gap. Q28 vs. Q30 (leadership support vs. psychological safety) — divergence signals a say-do gap in culture.
+- **Seed file location:** `/seeds/survey_template_v1.yaml` — assessors can modify questions per engagement but the seed is the starting point for all new engagements.
+
+### 6.4 Interview Hub
+
+- **Interview record** — assessor creates a record per interview with: date, interviewee role, consent flag, audio upload (optional), notes (rich text).
+- **Structured tagging** — as the assessor writes/pastes notes, they can highlight spans and tag them with:
+  - Dimension (Tooling / Measurement / Process / People / Governance / Culture)
+  - Signal type (Strength / Gap / Risk / Quote)
+  - Maturity stage hint (1/2/3/4/5)
+- **AI-assisted extraction** — an LLM pass proposes dimension tags and candidate quotes from the notes. Assessor reviews and accepts/edits. Model calls are routed via Anthropic API (Claude) with a strict system prompt — no raw notes ever leave FullStack infrastructure except to the model provider under the existing DPA.
+- **Quote ledger** — every tagged span becomes an `Evidence` record with a stable ID, appears in the export, and is reusable in the final report.
+
+### 6.5 Artifact Vault
+
+- Assessors upload supporting docs (architecture decision records, AI governance policies, org charts, tool inventories) per engagement.
+- Documents are scanned (ClamAV), text-extracted (PDF/DOCX/MD/TXT), and indexed for search within the workspace.
+- Size cap per engagement: 2 GB v1.
+
+### 6.6 Scoring Engine
+
+- **Framework:** 6 dimensions (Tooling / Measurement / Process / People / Governance / Culture) × 5 maturity stages (Legacy → AI-Assisted → AI-Enabled → AI-Native → Dark Factory / Agentic Development).
+- **Inputs:** normalized dataset (system metrics, survey aggregates, interview evidence, artifact signals).
+- **Scoring method:** each dimension receives a numeric score (0–100) and a stage classification. Scores are computed by a dimension-specific rubric defined in `/scoring/rubrics/<dimension>.yaml` — a versioned, declarative rubric so assessors can tune without code changes.
+- **Evidence weighting:** every score is backed by a set of `Evidence` IDs. The UI shows which evidence drove each score; the assessor can accept, reweight, or override any score with a required justification note (captured in provenance).
+- **Confidence level:** per-dimension confidence (Low / Medium / High) based on evidence coverage and triangulation across sources (system + survey + interview).
+- **Benchmarks:** each score is shown against the internal FullStack benchmark distribution (when ≥10 past engagements available); otherwise against public DORA/DX benchmarks where applicable.
+- **Versioned rubrics:** rubric version is stamped on every score so older engagements remain reproducible when the rubric evolves.
+
+### 6.7 Deliverables Builder
+
+The tool generates the five canonical deliverables for every engagement. Each is a first-class entity with an editable draft state, assessor review, and a final locked version before export.
+
+1. **Maturity Heatmap** — 6×5 grid (dimensions × stages) with current-state cell highlighted per dimension and confidence shading. Rendered as interactive HTML in-app and as a static SVG/PNG for the report.
+2. **Gap Analysis** — per-dimension narrative: current state, target state (default: one stage up, editable), gaps, and supporting evidence. AI-drafted from the scored dataset, assessor-edited.
+3. **90-Day Action Plan** — prioritized backlog of initiatives with effort/impact, owner role, dependency, and success metric. Generated from gap analysis using a playbook library keyed to dimension + gap pattern; assessor adjusts before lock.
+4. **PDLC Entry-Point Recommendation** — which PDLC stage (Strategy / Design / Build / Ship / Run) to start with, which Hypr agents are most applicable, and rationale. Uses a recommendation rule set tied to the scoring output and the client's tech-stack profile.
+5. **NPV Business Case** — configurable financial model. Inputs: fully-loaded engineering cost, team count in scope, baseline cycle time, acceptance rate, rework rate. Outputs: 3-year NPV, payback period, IRR, sensitivity analysis (low/base/high), and breakdown by improvement lever (coding, review, testing, deploy, ops). Model lives as a versioned spreadsheet template (`/npv/model_v<n>.xlsx`) so finance can iterate without code changes; the app wraps it with a form UI and writes results back into the engagement.
+
+**Report generation:** the five deliverables compile into a single board-ready report in two formats:
+
+- **PPTX** — generated via `python-pptx` from a FullStack-branded template (`/templates/assessment_report.pptx`).
+- **PDF** — generated from the PPTX, plus an optional long-form PDF appendix built from markdown via WeasyPrint.
+
+Report builds are reproducible from the `assessment.json` + rubric version + template version — same inputs always produce the same report.
+
+**AI assistance:** the gap-analysis narratives, action-plan wording, and recommendation rationale are drafted by Claude with strict grounding to the evidence set (every paragraph must cite at least one `Evidence` ID). Assessor sign-off required before export.
+
+### 6.8 Export & Data Model
+
+Exports produced on demand and on engagement close:
+
+- `assessment.json` — the canonical normalized dataset plus scores and deliverables (schema in §8).
+- `report.pptx` and `report.pdf` — board-ready client deliverable compiled from the five sections.
+- `npv_model.xlsx` — filled NPV spreadsheet with the engagement's inputs and scenario analysis.
+- `evidence.zip` — raw connector outputs (JSON), interview notes (markdown), survey CSV, uploaded artifacts.
+- `summary.csv` — per-dimension scores and key metrics.
+
+Exports are signed (SHA-256) and versioned. Re-exports create new versions; prior versions are retained for audit.
+
+### 6.9 Progress & Notifications
+
+- Dashboard widgets: survey response rate, connector collection %, interview completion %, artifact count, days-to-target.
+- Slack integration (FullStack workspace) — per-engagement channel auto-created with connector status updates, survey milestones, and daily progress summary.
+- Email nudges to assessors when a connector fails or survey rate stalls.
+
+---
+
+## 7. Non-Functional Requirements
+
+| Area | Requirement |
+|---|---|
+| **Security** | SOC 2 Type II controls; FullStack SSO; MFA enforced; per-engagement row-level isolation; all secrets in KMS; read-only client tokens; audit log of all access and export events (90-day retention min). |
+| **Privacy** | Anonymity floor of ≥5 survey respondents per team before display. Interviewee consent tracked. Data deleted within 30 days of engagement close unless client requests retention. |
+| **Reliability** | 99.5% availability during business hours (assessor-facing). Connector runs retryable and idempotent. |
+| **Performance** | Workspace dashboard load <2s p95. Survey submission <1s. Largest connector run (big-org GitHub pull) completes <6 hours. |
+| **Scalability** | Support 20 concurrent engagements and 50 concurrent connector jobs in v1. |
+| **Observability** | Structured logs (JSON), OpenTelemetry traces on connector jobs, Sentry for front-end errors, Datadog dashboards for connector success rates and survey funnel. |
+| **Compliance** | Data residency: US region only (v1). Per-connector DPA templates maintained in `/docs/dpa/`. |
+
+---
+
+## 8. Data Model (normalized)
+
+Top-level `assessment.json`:
+
+```jsonc
+{
+  "engagement": { "id", "client", "sponsor", "teamsInScope", "kickoffDate", "targetDeliveryDate", "window": { "start", "end" } },
+  "dimensions": {
+    "tooling": { "evidence": [...], "metrics": {...}, "stageHints": [...] },
+    "measurement": { ... },
+    "process": { ... },
+    "people": { ... },
+    "governance": { ... },
+    "culture": { ... }
+  },
+  "systems": {
+    "vcs":      [{ "provider", "org", "repos": [...], "metrics": {...} }],
+    "issueTracker": [{ "provider", "workspace", "projects": [...], "metrics": {...} }],
+    "ci":       [{ "provider", "pipelines": [...], "metrics": {...} }],
+    "aiTooling":[{ "provider", "seats", "activeUsers", "acceptanceRate", "editDistance", "pdlcCoverage": [...] }]
+  },
+  "survey": { "templateVersion", "modules": [...], "responsesByTeam": [...], "aggregateScores": {...} },
+  "interviews": [{ "id", "roleCategory", "date", "evidenceIds": [...] }],
+  "artifacts": [{ "id", "filename", "kind", "extractedSummary" }],
+  "scores": {
+    "rubricVersion": "1.0.0",
+    "byDimension": {
+      "tooling":     { "score": 0-100, "stage": 1-5, "confidence": "L|M|H", "evidenceIds": [...], "overrides": [...] },
+      "measurement": { ... }, "process": { ... }, "people": { ... },
+      "governance":  { ... }, "culture": { ... }
+    },
+    "overall": { "score", "stage", "confidence" }
+  },
+  "deliverables": {
+    "heatmap":       { "cells": [...], "svg": "…" },
+    "gapAnalysis":   [{ "dimension", "current", "target", "gaps": [...], "narrativeMd", "evidenceIds": [...] }],
+    "actionPlan":    [{ "initiative", "dimension", "priority", "effort", "impact", "owner", "successMetric", "dependencies": [...] }],
+    "pdlcEntryPoint":{ "recommendedStage", "hyprAgents": [...], "rationaleMd", "evidenceIds": [...] },
+    "npv":           { "modelVersion", "inputs": {...}, "scenarios": { "low": {...}, "base": {...}, "high": {...} }, "npv3yr", "paybackMonths", "irr" }
+  },
+  "provenance": { "connectorRuns": [...], "rubricVersion", "reportTemplateVersion", "exportVersion", "exportedAt", "signatures": {...} }
+}
+```
+
+Each `Evidence` record: `{ id, sourceType, sourceRef, dimension, signalType, stageHint, text, createdBy, createdAt }`.
+
+---
+
+## 9. UX Sketch
+
+### Navigation Model
+
+Top-level: left sidebar with engagement list + global nav. Selecting an engagement opens its workspace. The workspace is organized into a horizontal tab bar with the sections below. The **Results** section is the primary destination for reviewing and presenting findings — it is the first tab an assessor goes to once collection is complete, and can be shared on-screen during a client readout without needing to open the PPTX.
+
+### Screen-by-Screen Specification
+
+**1. Engagements List** (`/engagements`)
+- Card grid showing all active engagements. Each card: client name, status pill (draft / collecting / scoring / review / exported / archived), days-to-target, survey response rate sparkline.
+- "New engagement" CTA → template picker → pre-populated workspace.
+- Filter/sort by status, client, date.
+
+**2. Workspace Overview** (`/engagements/[id]`)
+- Collection progress dashboard. Six tiles in a 2×3 grid: Connectors, Survey, Interviews, Artifacts, Scoring, Deliverables. Each tile shows status (not started / in progress / complete), key metric (e.g., "4/6 connectors healthy", "72% survey response rate"), and a drill-in link.
+- Top bar: engagement name, client, target date countdown, quick actions (Run all connectors, Export).
+
+**3. Connector Detail** (`/engagements/[id]/connectors`)
+- Table of configured connectors with: name, status, last run timestamp, health indicator, row actions (Verify / Run / Configure / Revoke).
+- "Add connector" opens a picker scoped to the engagement's stack profile.
+- Per-connector detail drawer: auth state, scope selector, collection window config, health log, raw run history.
+
+**4. Survey Manager** (`/engagements/[id]/survey`)
+- Two sub-tabs: **Builder** and **Responses**.
+- Builder: drag-and-drop question editor. Module toggle panel on the right. Question preview. "Distribute" action opens magic-link configuration (email CSV upload or GitHub org pull, nudge schedule).
+- Responses: aggregate dashboard. Per-question bar/distribution charts. Team-level breakdowns (hidden below ≥5 floor). No individual response drill-down. Response rate funnel (sent → opened → started → completed).
+
+**5. Interview Hub** (`/engagements/[id]/interviews`)
+- Interview list with: date, role category, evidence count, status (draft / tagged / reviewed).
+- Interview editor: split pane — rich-text notes (left), tagged evidence sidebar (right). Highlight-to-tag interaction. AI extraction button with diff-style accept/reject per proposed tag.
+
+**6. Artifact Vault** (`/engagements/[id]/artifacts`)
+- Upload area with drag-and-drop. File list with: name, type, upload date, extracted-text status.
+- Per-artifact detail: metadata, extracted text preview, full-text search within the engagement.
+
+**7. Scoring Review** (`/engagements/[id]/scoring`)
+- Six dimension cards in a 2×3 grid. Each card: dimension name, score (0–100), stage badge (1–4), confidence indicator (L/M/H).
+- Click into a dimension → drill-down view: score breakdown, the evidence items that drove the score (with source-type icons: system / survey / interview / artifact), override control with justification text field.
+- "Score all" action: runs the rubric engine across the full dataset; shows a before/after diff if scores already exist.
+
+**8. Results Dashboard** (`/engagements/[id]/results`)
+
+This is the primary in-app view of the five deliverables. It is designed to be **presentable on-screen during a client readout** — clean, narrative-first, no assessor-internal chrome.
+
+Sub-navigation across five tabs, one per deliverable:
+
+**8a. Maturity Heatmap** (`/results/heatmap`)
+- Interactive 6×5 grid (dimensions × stages). Current-state cell per dimension is highlighted with confidence-based shading (solid = high confidence, hatched = medium, outline = low).
+- Click a cell → popover showing the evidence that placed the dimension at that stage and the key metrics.
+- Toggle: "Presentation mode" — hides navigation chrome, enlarges the grid to fill the viewport, suitable for screen-sharing or projector.
+
+**8b. Gap Analysis** (`/results/gap-analysis`)
+- Accordion or vertical card layout, one per dimension.
+- Each dimension section: current stage, target stage (editable inline), gap narrative (rich text, AI-drafted, assessor-editable), supporting evidence citations (clickable links to the evidence item), and a confidence badge.
+- Inline edit: assessor clicks into the narrative to refine wording; changes are tracked with author + timestamp. Status badge: Draft → Reviewed → Locked.
+- Evidence sidebar: shows all cited evidence for the visible dimension; assessor can add/remove citations.
+
+**8c. 90-Day Action Plan** (`/results/action-plan`)
+- Kanban-style board or prioritized table (assessor toggles view). Columns: Initiative, Dimension, Priority (P0/P1/P2), Effort (T-shirt), Impact (T-shirt), Owner Role, Success Metric, Dependencies.
+- Drag-and-drop to re-prioritize. Inline editing on all fields.
+- "Generate from gaps" action seeds the plan from the playbook library; assessor adjusts before locking.
+- Timeline view toggle: Gantt-style 90-day view showing initiative sequencing.
+
+**8d. PDLC Entry-Point** (`/results/entry-point`)
+- Visual PDLC pipeline diagram (Strategy → Design → Build → Ship → Run) with the recommended entry stage highlighted.
+- Below the diagram: recommended Hypr agents with descriptions and relevance rationale.
+- Narrative rationale section (AI-drafted, assessor-editable) explaining why this entry point was selected, grounded in evidence citations.
+- "What if" toggle: assessor can select a different entry point and see how the action plan and agent recommendations would shift.
+
+**8e. NPV Business Case** (`/results/npv`)
+- Input form (left): fully-loaded engineering cost, team count, baseline cycle time, acceptance rate, rework rate, discount rate. Pre-populated from system metrics where available; assessor overrides as needed.
+- Output panel (right): 3-year NPV headline, payback period, IRR, breakdown by improvement lever (coding, review, testing, deploy, ops) as a stacked bar chart.
+- Sensitivity analysis: three-scenario table (low / base / high) with adjustable assumptions. Tornado chart showing which input variables have the most impact.
+- "Download model" exports the filled `npv_model.xlsx`.
+
+**Results — cross-cutting features:**
+- **Presentation mode** (global toggle at the Results level): hides sidebar, top nav, and assessor-internal controls. Displays only the deliverable content in a clean, branded layout optimized for screen-sharing or projector. Keyboard navigation (arrow keys) moves between the five deliverable tabs.
+- **Status bar** across the top of Results showing per-deliverable status: Draft / Reviewed / Locked. All five must be Locked before export is enabled.
+- **Evidence trace**: every narrative paragraph, score, and recommendation is clickable to reveal its source evidence in a popover. This enables the assessor to answer "where did this come from?" during a live readout.
+
+**9. Export** (`/engagements/[id]/export`)
+- Pre-flight checklist: all five deliverables locked, all connectors complete, survey closed. Blocks export with clear messages if prerequisites are unmet.
+- One-click export producing: `report.pptx`, `report.pdf`, `assessment.json`, `npv_model.xlsx`, `evidence.zip`, `summary.csv`.
+- Export history table with version, timestamp, SHA-256 signature, download links.
+
+Design language: FullStack brand; clean, minimal (consistent with CLAUDE.md preferences). shadcn/ui component library. Light mode default, dark mode optional.
+
+---
+
+## 10. Architecture (recommended)
+
+- **Frontend:** Next.js 14 (App Router) + TypeScript + Tailwind + shadcn/ui. Deployed on Vercel or AWS Amplify.
+- **Backend:** Node.js (NestJS) or Python (FastAPI) — assessor's preference; recommend **Python/FastAPI** to reuse existing FullStack AI tooling ecosystem and connector libraries.
+- **Connector workers:** separate worker service (Celery or Temporal). Temporal recommended for long-running, resumable connector workflows.
+- **Datastore:** PostgreSQL (primary), S3 (raw evidence + exports), Redis (cache + rate-limit counters).
+- **Secrets:** AWS KMS + Parameter Store.
+- **LLM calls:** Anthropic API (Claude Sonnet 4.6 for structured extraction and narrative drafting, Opus 4.6 for deliverables requiring strongest reasoning, Haiku for cheap classification). All calls routed through a policy gateway that strips PII before sending.
+- **Report generation:** `python-pptx` for the PPTX (from branded template), WeasyPrint for long-form PDF appendices, LibreOffice headless for PPTX→PDF conversion.
+- **NPV model:** `openpyxl` round-tripping a versioned `.xlsx` template so finance can edit the model in Excel and the app re-reads it.
+- **Auth:** Google Workspace SSO via OIDC; app-level RBAC.
+- **Hosting:** AWS (us-east-1). IaC via Terraform.
+
+---
+
+## 11. Build Plan (for AI code generation)
+
+The build is decomposed into ordered phases. Each phase is independently shippable and verifiable. Complete each phase fully — including its acceptance criteria and tests — before starting the next. Do **not** parallelize phases unless explicitly noted; later phases depend on contracts established earlier.
+
+For every phase, produce: implementation code, unit tests, integration tests against the listed acceptance criteria, an updated OpenAPI spec, an updated `README.md` for the affected module, and a short `PHASE_<n>_NOTES.md` capturing decisions, deviations from this PRD, and any new open questions.
+
+### Phase 0 — Repository & Toolchain Bootstrap
+
+**Goal:** A reproducible dev environment another agent can clone and run.
+
+Deliverables:
+- Monorepo layout: `/apps/api` (FastAPI), `/apps/web` (Next.js 14 App Router + TS + Tailwind + shadcn/ui), `/packages/connector-sdk`, `/packages/scoring`, `/packages/deliverables`, `/infra` (Terraform), `/scripts`.
+- `docker compose` brings up Postgres 16, Redis 7, MinIO (S3), Temporal dev server, API, web. `make dev` and `make test` work end-to-end.
+- Pre-commit hooks: `ruff`, `mypy --strict` (Python), `eslint`, `prettier`, `tsc --noEmit`. CI workflow runs lint + test on every PR.
+- Secrets via `.env.example`; never committed.
+
+Acceptance criteria:
+- Fresh clone → `make dev` → all services healthy in <90s.
+- `make test` passes with placeholder tests.
+
+### Phase 1 — Domain Model & Persistence
+
+**Goal:** Schema and ORM coverage for the entire `assessment.json` data model in §8, even though only some fields will be populated until later phases.
+
+Deliverables:
+- SQLAlchemy 2.0 models + Alembic migrations for: `User`, `Engagement`, `EngagementTemplate`, `Connector`, `ConnectorRun`, `Survey`, `SurveyResponse`, `Interview`, `Evidence`, `Artifact`, `Score`, `Deliverable`, `Export`, `AuditLog`.
+- Row-level scoping by `engagement_id` enforced at the repository layer.
+- Pydantic v2 schemas mirroring `assessment.json`. A round-trip serializer test asserts that any valid `assessment.json` survives `parse → persist → load → serialize` byte-equivalent (modulo ordering).
+
+Acceptance criteria:
+- `pytest tests/test_assessment_schema_roundtrip.py` passes against ≥3 fixture files in `/fixtures/assessments/`.
+
+### Phase 2 — Auth, Roles, Engagement Lifecycle
+
+**Goal:** Two-role auth (Assessor, Admin) and engagement CRUD.
+
+Deliverables:
+- Google Workspace OIDC login. Session via signed HTTP-only cookies. MFA enforced at the IdP (no app-level MFA needed).
+- Role enforcement decorator on every API route; default deny.
+- `Engagement` REST endpoints: list, create-from-template, read, update, archive, delete (Admin only).
+- Web pages: `/login`, `/engagements`, `/engagements/new`, `/engagements/[id]`.
+- Audit log writes for every mutating action.
+
+Acceptance criteria:
+- An Assessor can create, list, and open all engagements but cannot delete or manage users.
+- An Admin can do everything an Assessor can, plus user CRUD and template CRUD.
+- All mutating routes appear in the `audit_log` table.
+
+### Phase 3 — Connector SDK & First Connector (GitHub)
+
+**Goal:** Pluggable connector contract proven with one production-quality connector.
+
+Deliverables:
+- `packages/connector-sdk` exposing the `Connector` ABC with `authenticate`, `discover`, `collect`, `health`, `revoke`. Async, idempotent, resumable.
+- Temporal workflow that runs `collect` for a given `(engagement_id, connector_id, window)` with retry, backoff, and per-resource checkpointing.
+- `connectors/github` implementing PRs, reviews, commits, workflows, and Copilot admin metrics. OAuth GitHub App preferred; PAT fallback.
+- Secrets stored in KMS-backed `secret_refs` table; never in plaintext.
+- Web: connector configuration screen with "Verify access" and "Run collection" actions; live status from Temporal.
+
+Acceptance criteria:
+- Recorded HTTP fixtures (vcrpy) reproduce a successful end-to-end GitHub collection in CI.
+- Killing the worker mid-collection and restarting resumes from the last checkpoint with no duplicate writes.
+- Revoking a token wipes secret material and surfaces a clear UI error.
+
+### Phase 4 — Remaining System Connectors
+
+**Goal:** Full connector coverage for v1 system telemetry.
+
+Deliverables (one per sub-task, in this order): `connectors/jira`, `connectors/gitlab`, `connectors/linear`, `connectors/azure_devops` (repos, PRs, work items, pipelines), `connectors/ci_github_actions`, `connectors/ci_circleci`, `connectors/ci_jenkins`, `connectors/ci_gitlab`, `connectors/ai_copilot_admin`, `connectors/ai_cursor`, `connectors/ai_claude_code`, `connectors/ai_windsurf`, `connectors/ai_amazon_q`.
+
+For each: same SDK contract, recorded fixtures, integration tests, README in `/docs/connectors/<name>.md`.
+
+Acceptance criteria:
+- Every connector passes the SDK conformance test suite (`tests/connectors/test_conformance.py`).
+- The `assessment.json` `systems` block is populated end-to-end on the fixture engagement.
+
+### Phase 5 — Survey Engine
+
+**Goal:** Build, distribute, and aggregate the developer survey with hard anonymity guarantees.
+
+Deliverables:
+- Survey template model (questions, modules, conditional logic). Seed file `/seeds/survey_template_v1.yaml` containing the full v1 template defined in §6.3 (30 core questions + 4 optional modules, 12 questions).
+- Survey editor UI: assessor can modify questions and module selection per engagement.
+- Single-use magic-link distribution. Magic-link → token detached at submission; identity-to-response linkage destroyed after submit (verify with a unit test).
+- Aggregation enforces `≥5 respondents per team` floor; UI hides cells below the floor.
+- Reminder scheduler (Temporal cron) at Day 3, Day 6, Day 8.
+
+Acceptance criteria:
+- Property-based test (`hypothesis`) asserts no query path returns identifying data joined to a response.
+- Synthetic survey run with 30 simulated respondents produces correct aggregations and respects the floor.
+
+### Phase 6 — Interview Hub
+
+**Goal:** Capture interviews and convert notes into tagged `Evidence`.
+
+Deliverables:
+- Rich-text notes editor (Tiptap or Lexical). Highlight-to-tag interaction creating an `Evidence` record bound to the highlighted span.
+- LLM extraction job (Anthropic API, Sonnet 4.6) proposing dimension tags + candidate quotes. Prompt template in `/prompts/interview_extraction.md`. All proposals require explicit assessor accept/edit.
+- Audio upload optional; transcription out of scope for v1 (file is stored, no auto-transcribe).
+- Quote ledger view per engagement.
+
+Acceptance criteria:
+- Round-trip: create interview → paste fixture notes → run AI extraction → assessor accepts 3 tags → tags appear in `assessment.json` evidence array with stable IDs.
+- Zero AI-only evidence in any export (every `Evidence` has `acceptedBy: <user_id>`).
+
+### Phase 7 — Artifact Vault
+
+**Goal:** Upload, scan, extract, and search supporting documents.
+
+Deliverables:
+- S3-backed upload with 2 GB per-engagement cap. ClamAV scan on ingest.
+- Text extraction for PDF (`pypdf`), DOCX (`python-docx`), Markdown, plain text.
+- Per-engagement search (Postgres full-text in v1; pluggable for OpenSearch later).
+
+Acceptance criteria:
+- Infected fixture file (EICAR) is rejected and logged.
+- Extracted text is queryable within 30s of upload.
+
+### Phase 8 — Scoring Engine
+
+**Goal:** Produce evidence-weighted scores per dimension with override flow.
+
+Deliverables:
+- Rubric loader for `/scoring/rubrics/<dimension>.yaml`. Seed v1 rubrics for all six dimensions (Tooling / Measurement / Process / People / Governance / Culture).
+- Scoring service: takes the populated dataset, returns scores, stage classifications, confidence levels, and the `Evidence` IDs that drove each score.
+- Web: scoring review screen with per-dimension drilldown, override UI requiring a justification note (stored in `scores.byDimension.<d>.overrides`).
+- Every score is stamped with the rubric version actually used.
+
+Acceptance criteria:
+- Golden tests: three fixture engagements produce deterministic scores byte-equal to checked-in expected outputs.
+- Overrides round-trip into `assessment.json` with author, timestamp, justification.
+
+### Phase 9 — Results Dashboard (in-app deliverables UI)
+
+**Goal:** Build the `/results` section — the primary in-app view of all five deliverables, designed for both assessor editing and live client readouts.
+
+Deliverables:
+- Results shell with five-tab sub-navigation (Heatmap / Gap Analysis / Action Plan / Entry Point / NPV) and a global status bar showing per-deliverable Draft/Reviewed/Locked state.
+- **Heatmap tab:** interactive 6×5 grid from `scores.byDimension`. Cell click → evidence popover. Confidence-based shading (solid/hatched/outline).
+- **Gap Analysis tab:** accordion layout, one card per dimension. AI-drafted narratives via Anthropic API (prompts in `/prompts/deliverables/gap_analysis.md`). Inline rich-text editing with change tracking (author + timestamp). Evidence sidebar with add/remove citations. Hard rule: every paragraph must cite ≥1 `Evidence` ID; ungrounded text fails validation.
+- **Action Plan tab:** dual-view — prioritized table (default) and Kanban board (toggle). Drag-and-drop reorder. Inline editing on all fields (initiative, dimension, priority, effort, impact, owner role, success metric, dependencies). "Generate from gaps" action seeds from playbook library (`/playbooks/<dimension>/<gap_pattern>.yaml`). Timeline toggle for Gantt-style 90-day view.
+- **Entry Point tab:** visual PDLC pipeline (Strategy → Design → Build → Ship → Run) with recommended stage highlighted. Hypr agent recommendation cards with relevance rationale. AI-drafted narrative (assessor-editable). "What if" toggle: selecting a different entry point recalculates agent recommendations and shows action-plan impact.
+- **NPV tab:** input form (pre-populated from system metrics where available) + output panel (3-year NPV, payback, IRR, lever breakdown stacked bar chart). Sensitivity table (low/base/high) with tornado chart. `openpyxl` round-trip against `/templates/npv_model_v1.xlsx`. "Download model" exports the filled `.xlsx`.
+- **Presentation mode** (global toggle): hides sidebar, top nav, assessor controls. Full-viewport branded layout. Keyboard nav (arrow keys) across deliverable tabs. Suitable for projector / screen-share during client readout.
+- **Evidence trace:** every narrative paragraph, score, and recommendation is clickable → popover showing source evidence with type icon (system/survey/interview/artifact).
+
+Acceptance criteria:
+- All five tabs render correctly with golden-fixture data. Playwright screenshot tests for each tab in both normal and presentation mode.
+- Editing a gap-analysis narrative and locking it persists through page reload with correct author/timestamp.
+- Presentation mode hides all assessor chrome; only deliverable content and FullStack branding visible.
+- Ungrounded narrative paragraph (no evidence citation) is flagged in the UI and blocks the deliverable from moving to Locked state.
+
+### Phase 10 — Report Export (PPTX + PDF)
+
+**Goal:** Compile the five locked deliverables into downloadable PPTX and PDF reports.
+
+Deliverables:
+- Report compiler: `python-pptx` against `/templates/assessment_report.pptx`. One section per deliverable, heatmap as embedded SVG/PNG, charts as images.
+- LibreOffice headless for PPTX→PDF conversion.
+- WeasyPrint for optional long-form PDF appendix (evidence details, full survey aggregations, connector run summaries).
+- Reproducibility test: same `assessment.json` + rubric version + template version → byte-identical PPTX (deterministic timestamps disabled).
+
+Acceptance criteria:
+- End-to-end test on the golden fixture produces a valid PPTX (opens cleanly, all five sections present) and PDF.
+- Report content matches what the Results Dashboard displays — no divergence between in-app and exported deliverables.
+
+### Phase 11 — Data Export, Provenance, Notifications
+
+**Goal:** One-click export bundle and operational visibility.
+
+Deliverables:
+- Data export endpoint produces signed (SHA-256) `assessment.json`, `npv_model.xlsx`, `evidence.zip`, `summary.csv`. (PPTX/PDF report export is handled in Phase 10.) Versions retained.
+- Provenance block populated with connector run IDs, rubric version, template version, export version, signatures.
+- Slack integration: per-engagement channel auto-created on engagement creation; connector status, survey milestones, and daily progress posted via webhook.
+
+Acceptance criteria:
+- Two consecutive exports of an unchanged engagement produce identical signatures (modulo `exportedAt`).
+- Slack messages render correctly in a test workspace.
+
+### Phase 12 — Hardening
+
+**Goal:** Production-readiness for SOC 2 alignment and operational scale.
+
+Deliverables:
+- Audit log retention (90 days minimum) with query API.
+- Rate-limit middleware; per-user request throttling.
+- OpenTelemetry traces on connector workflows; structured JSON logs; Sentry on web; Datadog dashboards (or equivalent OSS) for connector success rate, survey funnel, export latency.
+- Load test scenario (k6) demonstrating 20 concurrent engagements + 50 concurrent connector jobs at target SLOs (§7).
+- Threat model document `/docs/security/threat_model.md` covering OWASP top 10 + connector-specific risks.
+
+Acceptance criteria:
+- k6 scenario passes within target latencies.
+- All §7 non-functional requirements have a corresponding test or runbook entry.
+
+### Phase 13 — Pilot Readiness
+
+**Goal:** Run the tool on a real Bregal portfolio engagement end-to-end.
+
+Deliverables:
+- Seed data and demo engagement loader (`make seed-pilot`).
+- Operations runbook `/docs/runbooks/pilot.md` covering connector token rotation, failed-run recovery, export re-issue, and known-issue triage.
+- Feedback capture form inside the app (writes to a dedicated `feedback` table).
+
+Acceptance criteria:
+- A scripted end-to-end run (`scripts/e2e_pilot_dry_run.py`) exercises every phase: create engagement → configure 3 connectors → run collection → distribute survey → import simulated responses → capture 2 interviews → score → generate deliverables → export. Zero manual fixes required.
+
+### Cross-cutting Implementation Conventions
+
+- **Language/tooling:** Python 3.12 + FastAPI + SQLAlchemy 2.0 + Pydantic v2 on the backend; TypeScript 5 + Next.js 14 (App Router) + Tailwind + shadcn/ui on the frontend; Temporal for connector workflows; Postgres 16; Redis 7; S3-compatible object storage.
+- **Test policy:** every new module ships with unit tests (≥80% line coverage on changed code) and at least one integration test wired into CI. Connectors must use recorded HTTP fixtures (`vcrpy`).
+- **LLM call policy:** all model calls go through `packages/llm-gateway` which (a) strips known PII patterns before sending, (b) logs the prompt hash and response hash, (c) caps token spend per engagement.
+- **Schema versioning:** every breaking change to `assessment.json`, rubrics, NPV model, or report templates increments a SemVer version stamped in provenance.
+- **Determinism:** scoring, deliverables compilation, and export must be deterministic given the same inputs + versions. Any nondeterminism (e.g., LLM temperature) must be localized and stamped with model id + seed.
+- **Style:** follow the conventions in `/CONTRIBUTING.md` (Claude Code generates this in Phase 0). Prefer composition over inheritance. Keep modules ≤500 LOC where reasonable. No silent exception swallowing.
+
+### Verification Gate Between Phases
+
+Before moving from phase N to phase N+1:
+1. All acceptance criteria for phase N pass in CI.
+2. `PHASE_<n>_NOTES.md` is committed.
+3. Open questions raised during the phase are appended to §14 of this PRD with a proposed resolution.
+
+---
+
+## 12. Success Metrics
+
+- **Time-to-collection:** data collection effort per engagement ≤ 4 assessor hours (baseline ~25).
+- **Throughput:** 15+ concurrent engagements sustainable with the existing assessment team.
+- **Data quality:** 100% of assessment data points traceable to a source in the export (provenance coverage).
+- **Survey response rate:** ≥ 60% average across engagements.
+- **Connector reliability:** ≥ 98% successful connector runs without manual retry.
+- **Time-to-report:** from "collection complete" to "locked report" ≤ 1 assessor day (baseline ~3 days of manual deck/NPV work).
+- **Report reproducibility:** 100% of exported reports reproducible from `assessment.json` + rubric version + template version.
+- **Assessor NPS:** ≥ 40 after pilot.
+
+---
+
+## 13. Risks & Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Client refuses API access | Blocks system telemetry | Manual upload fallback (CSV export from client's own dashboards mapped into the same schema) |
+| AI tooling APIs incomplete (Cursor, Windsurf) | Gaps in tooling landscape | Admin-dashboard screenshot upload path + OCR; clear documentation of which providers have API vs. manual paths |
+| Survey anonymity concerns | Low response rate, culture signal | Enforce ≥5 per team aggregation; show survey preview to client before distribution; emphasize in intake call |
+| LLM hallucination in interview tagging | Wrong evidence tags in export | All AI tags require assessor acceptance; diffs tracked; model calls logged |
+| AI-drafted narratives without grounding | Report quality erosion | Every paragraph must cite ≥1 Evidence ID; assessor sign-off required before lock; ungrounded sections blocked from export |
+| Rubric drift across engagements | Incomparable scores over time | Versioned rubrics; every score stamped with rubric version; benchmark comparisons only across matching versions |
+| NPV model assumptions challenged | Loss of credibility with CFO audiences | Model inputs editable in-app; sensitivity analysis mandatory; assumption footnotes rendered in report |
+| Connector token misuse | Security incident | Read-only scopes only; KMS-backed secrets; 30-day retention default; revocation audit |
+| Scope creep into scoring/reporting | Delays GA | Explicit non-goal; interface contract frozen at M1 |
+
+---
+
+## 14. Open Questions
+
+All open questions have been resolved. Decisions captured here for implementation reference:
+
+1. **Survey engine** — **Build our own.** Custom implementation gives full control over anonymity enforcement (identity-to-response detachment at submit), the ≥5 per-team aggregation floor, and the magic-link distribution flow. No external dependency.
+2. **Rubric ownership** — **Assessment practice leads** own the rubric YAML files. They propose changes via PR; merge requires at least one other practice lead's review. Rubric version increments on every merge.
+3. **Cross-client benchmarking** — **Deferred.** Legal basis and opt-in pattern TBD. Build the data model to support future benchmarking (engagement-level metadata tags, anonymized score snapshots), but do not expose benchmark comparisons in the UI or export until legal review is complete.
+4. **Connector orchestration** — **Temporal.** Use Temporal for all connector workflows. Justified by resumable long-running pulls, per-resource checkpointing, and built-in retry/backoff. Accept the operational overhead — Temporal dev server ships in docker compose; production deployment via Temporal Cloud.
+5. **Azure DevOps** — **Yes, include in v1.** Add `connectors/azure_devops` to Phase 4 covering repos, PRs, work items, and pipelines. Same SDK contract as all other connectors.
+6. **NPV model** — **Spreadsheet-backed.** Use `openpyxl` round-tripping a versioned `/templates/npv_model_v<n>.xlsx` template. Finance edits the template in Excel; the app wraps it with a web form for inputs and writes results back. No native in-app financial model.
+7. **Report format** — **PPTX.** Generate via `python-pptx` from a branded template. Convert to PDF via LibreOffice headless. No Google Slides integration in v1.
+
+---
+
+
+## Appendix A — Survey Template Summary
+
+The full v1 survey template (30 core + 12 optional questions) is defined inline in §6.3. Summary:
+
+- **Core (30 questions, always on):** Demographics (4, unscored), Tooling (6), Measurement (4), Process (6), People (4), Governance (3), Culture (3).
+- **Module A — Security (3):** AI code security review coverage, incident history, tooling confidence.
+- **Module B — Data & Analytics (3):** AI/ML in data pipelines, data accessibility, data governance for AI.
+- **Module C — Platform Engineering (3):** IDP maturity, CI/CD self-service, AI-in-platform integrations.
+- **Module D — Product Design (3):** design-to-code handover quality, AI in handover, cross-functional collaboration.
+
+## Appendix B — Connector Discovery Scopes (starter list)
+
+- **GitHub:** `repo:read`, `read:org`, `read:actions`, Copilot admin API (org admin token).
+- **GitLab:** `read_api`, `read_repository`, `read_api` for Code Suggestions where enabled.
+- **Jira:** `read:jira-work`, `read:jira-user`.
+- **Linear:** `read` API key.
+- **Copilot admin:** organization admin token with `manage_billing:copilot` read scopes (read-only).
+- *(Productivity-platform adapters deferred — DX / Jellyfish / LinearB / Swarmia scopes to be defined when those connectors are scheduled.)*
