@@ -309,6 +309,14 @@ paths:
       tags: [connectors]
       parameters:
         - { name: connectorId, in: path, required: true, schema: { type: string } }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: OK
@@ -317,6 +325,22 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/ConnectorRun" }
+
+  /connectors/{connectorId}/signals:
+    get:
+      operationId: getConnectorSignals
+      tags: [connectors]
+      description: |
+        Returns the latest run summary plus normalized evidence rows authored
+        by this connector. Used by the "view raw signals" drawer in the UI.
+      parameters:
+        - { name: connectorId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectorSignals" }
 
   /engagements/{id}/survey:
     get:
@@ -896,7 +920,7 @@ components:
 
     Connector:
       type: object
-      required: [id, engagementId, kind, label, status, createdAt]
+      required: [id, engagementId, kind, label, status, createdAt, scheduleEnabled, scheduleCadenceMinutes]
       properties:
         id: { type: string }
         engagementId: { type: string }
@@ -910,7 +934,20 @@ components:
           type: object
           additionalProperties: true
         lastRunAt: { type: string, nullable: true }
+        lastSuccessAt: { type: string, nullable: true }
         lastError: { type: string, nullable: true }
+        scheduleEnabled:
+          type: boolean
+          description: When true, the background scheduler runs this connector on cadence.
+        scheduleCadenceMinutes:
+          type: integer
+          minimum: 5
+          maximum: 43200
+          description: Minutes between scheduled runs. Defaults to 1440 (daily).
+        nextRunAt:
+          type: string
+          nullable: true
+          description: When the scheduler will next pick up this connector.
         createdAt: { type: string }
 
     CreateConnectorInput:
@@ -933,6 +970,33 @@ components:
         config:
           type: object
           additionalProperties: true
+        scheduleEnabled: { type: boolean }
+        scheduleCadenceMinutes:
+          type: integer
+          minimum: 5
+          maximum: 43200
+
+    ConnectorSignals:
+      type: object
+      required: [connectorId, evidence]
+      properties:
+        connectorId: { type: string }
+        latestRun:
+          allOf:
+            - $ref: "#/components/schemas/ConnectorRun"
+          nullable: true
+        evidence:
+          type: array
+          items:
+            type: object
+            required: [id, dimension, signalType, text, createdAt]
+            properties:
+              id: { type: string }
+              dimension: { type: string }
+              signalType: { type: string }
+              stageHint: { type: integer, nullable: true }
+              text: { type: string }
+              createdAt: { type: string }
 
     ConnectorVerifyResult:
       type: object

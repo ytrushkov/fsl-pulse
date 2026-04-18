@@ -274,6 +274,9 @@ export const ListConnectorsParams = zod.object({
   id: zod.coerce.string(),
 });
 
+export const listConnectorsResponseScheduleCadenceMinutesMin = 5;
+export const listConnectorsResponseScheduleCadenceMinutesMax = 43200;
+
 export const ListConnectorsResponseItem = zod.object({
   id: zod.string(),
   engagementId: zod.string(),
@@ -289,7 +292,22 @@ export const ListConnectorsResponseItem = zod.object({
   ]),
   config: zod.record(zod.string(), zod.unknown()).optional(),
   lastRunAt: zod.string().nullish(),
+  lastSuccessAt: zod.string().nullish(),
   lastError: zod.string().nullish(),
+  scheduleEnabled: zod
+    .boolean()
+    .describe(
+      "When true, the background scheduler runs this connector on cadence.",
+    ),
+  scheduleCadenceMinutes: zod
+    .number()
+    .min(listConnectorsResponseScheduleCadenceMinutesMin)
+    .max(listConnectorsResponseScheduleCadenceMinutesMax)
+    .describe("Minutes between scheduled runs. Defaults to 1440 (daily)."),
+  nextRunAt: zod
+    .string()
+    .nullish()
+    .describe("When the scheduler will next pick up this connector."),
   createdAt: zod.string(),
 });
 export const ListConnectorsResponse = zod.array(ListConnectorsResponseItem);
@@ -310,11 +328,23 @@ export const UpdateConnectorParams = zod.object({
   connectorId: zod.coerce.string(),
 });
 
+export const updateConnectorBodyScheduleCadenceMinutesMin = 5;
+export const updateConnectorBodyScheduleCadenceMinutesMax = 43200;
+
 export const UpdateConnectorBody = zod.object({
   label: zod.string().optional(),
   token: zod.string().optional(),
   config: zod.record(zod.string(), zod.unknown()).optional(),
+  scheduleEnabled: zod.boolean().optional(),
+  scheduleCadenceMinutes: zod
+    .number()
+    .min(updateConnectorBodyScheduleCadenceMinutesMin)
+    .max(updateConnectorBodyScheduleCadenceMinutesMax)
+    .optional(),
 });
+
+export const updateConnectorResponseScheduleCadenceMinutesMin = 5;
+export const updateConnectorResponseScheduleCadenceMinutesMax = 43200;
 
 export const UpdateConnectorResponse = zod.object({
   id: zod.string(),
@@ -331,7 +361,22 @@ export const UpdateConnectorResponse = zod.object({
   ]),
   config: zod.record(zod.string(), zod.unknown()).optional(),
   lastRunAt: zod.string().nullish(),
+  lastSuccessAt: zod.string().nullish(),
   lastError: zod.string().nullish(),
+  scheduleEnabled: zod
+    .boolean()
+    .describe(
+      "When true, the background scheduler runs this connector on cadence.",
+    ),
+  scheduleCadenceMinutes: zod
+    .number()
+    .min(updateConnectorResponseScheduleCadenceMinutesMin)
+    .max(updateConnectorResponseScheduleCadenceMinutesMax)
+    .describe("Minutes between scheduled runs. Defaults to 1440 (daily)."),
+  nextRunAt: zod
+    .string()
+    .nullish()
+    .describe("When the scheduler will next pick up this connector."),
   createdAt: zod.string(),
 });
 
@@ -357,6 +402,24 @@ export const ListConnectorRunsParams = zod.object({
   connectorId: zod.coerce.string(),
 });
 
+export const listConnectorRunsQueryLimitDefault = 25;
+export const listConnectorRunsQueryLimitMax = 100;
+
+export const listConnectorRunsQueryOffsetDefault = 0;
+export const listConnectorRunsQueryOffsetMin = 0;
+
+export const ListConnectorRunsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listConnectorRunsQueryLimitMax)
+    .default(listConnectorRunsQueryLimitDefault),
+  offset: zod.coerce
+    .number()
+    .min(listConnectorRunsQueryOffsetMin)
+    .default(listConnectorRunsQueryOffsetDefault),
+});
+
 export const ListConnectorRunsResponseItem = zod.object({
   id: zod.string(),
   connectorId: zod.string(),
@@ -370,6 +433,41 @@ export const ListConnectorRunsResponseItem = zod.object({
 export const ListConnectorRunsResponse = zod.array(
   ListConnectorRunsResponseItem,
 );
+
+/**
+ * Returns the latest run summary plus normalized evidence rows authored
+by this connector. Used by the "view raw signals" drawer in the UI.
+
+ */
+export const GetConnectorSignalsParams = zod.object({
+  connectorId: zod.coerce.string(),
+});
+
+export const GetConnectorSignalsResponse = zod.object({
+  connectorId: zod.string(),
+  latestRun: zod
+    .object({
+      id: zod.string(),
+      connectorId: zod.string(),
+      status: zod.enum(["running", "success", "failed"]),
+      startedAt: zod.string(),
+      finishedAt: zod.string().nullish(),
+      recordsCollected: zod.number().optional(),
+      error: zod.string().nullish(),
+      summary: zod.record(zod.string(), zod.unknown()).optional(),
+    })
+    .nullish(),
+  evidence: zod.array(
+    zod.object({
+      id: zod.string(),
+      dimension: zod.string(),
+      signalType: zod.string(),
+      stageHint: zod.number().nullish(),
+      text: zod.string(),
+      createdAt: zod.string(),
+    }),
+  ),
+});
 
 export const GetSurveyParams = zod.object({
   id: zod.coerce.string(),

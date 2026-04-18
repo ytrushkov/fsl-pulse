@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { migrateLegacyConnectorTokens } from "./lib/migrations";
+import { startScheduler } from "./lib/scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -35,4 +36,9 @@ app.listen(port, (err) => {
       }
     })
     .catch((e) => logger.error({ err: e }, "Token migration failed"));
+
+  // Background scheduler for connector runs. Polls every minute for due
+  // connectors (`scheduleEnabled = true AND nextRunAt <= now()`) and
+  // dispatches them through the same executor as POST /run.
+  startScheduler();
 });

@@ -23,6 +23,7 @@ import type {
   AuthedUser,
   Connector,
   ConnectorRun,
+  ConnectorSignals,
   ConnectorVerifyResult,
   CreateArtifactInput,
   CreateConnectorInput,
@@ -41,6 +42,7 @@ import type {
   HealthStatus,
   Interview,
   InterviewTagSuggestions,
+  ListConnectorRunsParams,
   PublicSurvey,
   ScoreOverrideInput,
   Scoring,
@@ -1534,22 +1536,47 @@ export const useRunConnector = <
   return useMutation(getRunConnectorMutationOptions(options));
 };
 
-export const getListConnectorRunsUrl = (connectorId: string) => {
-  return `/api/connectors/${connectorId}/runs`;
+export const getListConnectorRunsUrl = (
+  connectorId: string,
+  params?: ListConnectorRunsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/connectors/${connectorId}/runs?${stringifiedParams}`
+    : `/api/connectors/${connectorId}/runs`;
 };
 
 export const listConnectorRuns = async (
   connectorId: string,
+  params?: ListConnectorRunsParams,
   options?: RequestInit,
 ): Promise<ConnectorRun[]> => {
-  return customFetch<ConnectorRun[]>(getListConnectorRunsUrl(connectorId), {
-    ...options,
-    method: "GET",
-  });
+  return customFetch<ConnectorRun[]>(
+    getListConnectorRunsUrl(connectorId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
-export const getListConnectorRunsQueryKey = (connectorId: string) => {
-  return [`/api/connectors/${connectorId}/runs`] as const;
+export const getListConnectorRunsQueryKey = (
+  connectorId: string,
+  params?: ListConnectorRunsParams,
+) => {
+  return [
+    `/api/connectors/${connectorId}/runs`,
+    ...(params ? [params] : []),
+  ] as const;
 };
 
 export const getListConnectorRunsQueryOptions = <
@@ -1557,6 +1584,7 @@ export const getListConnectorRunsQueryOptions = <
   TError = ErrorType<unknown>,
 >(
   connectorId: string,
+  params?: ListConnectorRunsParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof listConnectorRuns>>,
@@ -1569,12 +1597,12 @@ export const getListConnectorRunsQueryOptions = <
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey =
-    queryOptions?.queryKey ?? getListConnectorRunsQueryKey(connectorId);
+    queryOptions?.queryKey ?? getListConnectorRunsQueryKey(connectorId, params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof listConnectorRuns>>
   > = ({ signal }) =>
-    listConnectorRuns(connectorId, { signal, ...requestOptions });
+    listConnectorRuns(connectorId, params, { signal, ...requestOptions });
 
   return {
     queryKey,
@@ -1598,6 +1626,7 @@ export function useListConnectorRuns<
   TError = ErrorType<unknown>,
 >(
   connectorId: string,
+  params?: ListConnectorRunsParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof listConnectorRuns>>,
@@ -1607,7 +1636,98 @@ export function useListConnectorRuns<
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getListConnectorRunsQueryOptions(connectorId, options);
+  const queryOptions = getListConnectorRunsQueryOptions(
+    connectorId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns the latest run summary plus normalized evidence rows authored
+by this connector. Used by the "view raw signals" drawer in the UI.
+
+ */
+export const getGetConnectorSignalsUrl = (connectorId: string) => {
+  return `/api/connectors/${connectorId}/signals`;
+};
+
+export const getConnectorSignals = async (
+  connectorId: string,
+  options?: RequestInit,
+): Promise<ConnectorSignals> => {
+  return customFetch<ConnectorSignals>(getGetConnectorSignalsUrl(connectorId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetConnectorSignalsQueryKey = (connectorId: string) => {
+  return [`/api/connectors/${connectorId}/signals`] as const;
+};
+
+export const getGetConnectorSignalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getConnectorSignals>>,
+  TError = ErrorType<unknown>,
+>(
+  connectorId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getConnectorSignals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetConnectorSignalsQueryKey(connectorId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getConnectorSignals>>
+  > = ({ signal }) =>
+    getConnectorSignals(connectorId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!connectorId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getConnectorSignals>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetConnectorSignalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getConnectorSignals>>
+>;
+export type GetConnectorSignalsQueryError = ErrorType<unknown>;
+
+export function useGetConnectorSignals<
+  TData = Awaited<ReturnType<typeof getConnectorSignals>>,
+  TError = ErrorType<unknown>,
+>(
+  connectorId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getConnectorSignals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetConnectorSignalsQueryOptions(connectorId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

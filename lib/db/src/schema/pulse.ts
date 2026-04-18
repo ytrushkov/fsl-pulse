@@ -95,10 +95,28 @@ export const connectorsTable = pgTable(
     config: jsonb("config").notNull().default({}),
     status: text("status").notNull().default("not_configured"),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
     lastError: text("last_error"),
+    // Background scheduler controls. When `scheduleEnabled` is true the
+    // server-side runner picks up this connector every `scheduleCadenceMinutes`
+    // (default 1440 = daily) and writes a connector_runs row exactly as if
+    // POST /connectors/:id/run had been invoked. `nextRunAt` is the watermark
+    // the scheduler queries against; it is bumped after each tick.
+    scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
+    scheduleCadenceMinutes: integer("schedule_cadence_minutes")
+      .notNull()
+      .default(1440),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({ engIdx: index("connectors_engagement_idx").on(t.engagementId) }),
+  (t) => ({
+    engIdx: index("connectors_engagement_idx").on(t.engagementId),
+    // Partial-ish index used by the scheduler tick: pick connectors that are
+    // due (`schedule_enabled = true AND next_run_at <= now()`). Drizzle
+    // doesn't model partial indexes here, but a plain btree on next_run_at
+    // is enough since the scheduler runs once a minute on a small table.
+    nextRunIdx: index("connectors_next_run_idx").on(t.nextRunAt),
+  }),
 );
 
 export const connectorRunsTable = pgTable(

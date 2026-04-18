@@ -51,6 +51,35 @@ export async function recordActivity(
   }
 }
 
+/**
+ * System-actor variant used by background jobs (e.g. the connector scheduler)
+ * where there is no Express request in scope. The actor is recorded as
+ * `"system"` so feed filters can distinguish automated runs from user-driven
+ * actions, and `requestId` is generated synthetically for log correlation.
+ */
+export async function recordSystemActivity(
+  input: RecordActivityInput & { requestId?: string },
+): Promise<void> {
+  try {
+    await db.insert(activityEventsTable).values({
+      engagementId: input.engagementId,
+      actorUserId: null,
+      actorName: "system",
+      actorEmail: null,
+      kind: input.kind,
+      message: input.message,
+      payload: input.payload ?? {},
+      severity: input.severity ?? "info",
+      requestId: input.requestId ?? null,
+    });
+  } catch (err) {
+    logger.error(
+      { err, kind: input.kind, engagementId: input.engagementId },
+      "Failed to record system activity event",
+    );
+  }
+}
+
 /** Anonymous variant for public/magic-link routes that have no req.authedUser. */
 export async function recordAnonymousActivity(
   req: Request,

@@ -18,6 +18,17 @@ export interface Connector {
   status: ConnectorStatus;
   config?: ConnectorConfig;
   lastRunAt?: string | null;
+  lastSuccessAt?: string | null;
   lastError?: string | null;
+  /** When true, the background scheduler runs this connector on cadence. */
+  scheduleEnabled: boolean;
+  /**
+   * Minutes between scheduled runs. Defaults to 1440 (daily).
+   * @minimum 5
+   * @maximum 43200
+   */
+  scheduleCadenceMinutes: number;
+  /** When the scheduler will next pick up this connector. */
+  nextRunAt?: string | null;
   createdAt: string;
 }

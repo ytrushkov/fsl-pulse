@@ -284,7 +284,18 @@ export interface Connector {
   status: ConnectorStatus;
   config?: ConnectorConfig;
   lastRunAt?: string | null;
+  lastSuccessAt?: string | null;
   lastError?: string | null;
+  /** When true, the background scheduler runs this connector on cadence. */
+  scheduleEnabled: boolean;
+  /**
+   * Minutes between scheduled runs. Defaults to 1440 (daily).
+   * @minimum 5
+   * @maximum 43200
+   */
+  scheduleCadenceMinutes: number;
+  /** When the scheduler will next pick up this connector. */
+  nextRunAt?: string | null;
   createdAt: string;
 }
 
@@ -304,15 +315,22 @@ export interface UpdateConnectorInput {
   label?: string;
   token?: string;
   config?: UpdateConnectorInputConfig;
+  scheduleEnabled?: boolean;
+  /**
+   * @minimum 5
+   * @maximum 43200
+   */
+  scheduleCadenceMinutes?: number;
 }
 
-export type ConnectorVerifyResultDetails = { [key: string]: unknown };
-
-export interface ConnectorVerifyResult {
-  ok: boolean;
-  message?: string;
-  details?: ConnectorVerifyResultDetails;
-}
+export type ConnectorSignalsEvidenceItem = {
+  id: string;
+  dimension: string;
+  signalType: string;
+  stageHint?: number | null;
+  text: string;
+  createdAt: string;
+};
 
 export type ConnectorRunStatus =
   (typeof ConnectorRunStatus)[keyof typeof ConnectorRunStatus];
@@ -334,6 +352,20 @@ export interface ConnectorRun {
   recordsCollected?: number;
   error?: string | null;
   summary?: ConnectorRunSummary;
+}
+
+export interface ConnectorSignals {
+  connectorId: string;
+  latestRun?: ConnectorRun | null;
+  evidence: ConnectorSignalsEvidenceItem[];
+}
+
+export type ConnectorVerifyResultDetails = { [key: string]: unknown };
+
+export interface ConnectorVerifyResult {
+  ok: boolean;
+  message?: string;
+  details?: ConnectorVerifyResultDetails;
 }
 
 export type SurveyQuestionType =
@@ -840,3 +872,15 @@ export const ExportEngagementActivityCsvSeverity = {
   info: "info",
   critical: "critical",
 } as const;
+
+export type ListConnectorRunsParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   */
+  offset?: number;
+};

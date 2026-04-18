@@ -25,6 +25,8 @@ export * from "./connectorKind";
 export * from "./connectorRun";
 export * from "./connectorRunStatus";
 export * from "./connectorRunSummary";
+export * from "./connectorSignals";
+export * from "./connectorSignalsEvidenceItem";
 export * from "./connectorStatus";
 export * from "./connectorVerifyResult";
 export * from "./connectorVerifyResultDetails";

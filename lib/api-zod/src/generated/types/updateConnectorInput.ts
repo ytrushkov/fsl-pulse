@@ -11,4 +11,10 @@ export interface UpdateConnectorInput {
   label?: string;
   token?: string;
   config?: UpdateConnectorInputConfig;
+  scheduleEnabled?: boolean;
+  /**
+   * @minimum 5
+   * @maximum 43200
+   */
+  scheduleCadenceMinutes?: number;
 }

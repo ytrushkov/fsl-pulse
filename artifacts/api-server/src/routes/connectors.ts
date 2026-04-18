@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import {
   db,
   connectorsTable,
@@ -14,11 +14,15 @@ import {
   maskToken,
   checkSafeUrl,
 } from "../lib/util";
-import {
-  runConnector as runConnectorImpl,
-  verifyConnector as verifyConnectorImpl,
-} from "../lib/connectors";
+import { verifyConnector as verifyConnectorImpl } from "../lib/connectors";
+import { executeConnectorRun } from "../lib/connector-runner";
 import { requireResourceMember } from "../middlewares/auth";
+
+// Sane bounds for the per-engagement scheduler. 5 minutes is the floor so we
+// can't accidentally hammer a third-party API; 30 days is the ceiling so a
+// "forgotten" connector can't go silent for a year.
+const MIN_CADENCE_MIN = 5;
+const MAX_CADENCE_MIN = 60 * 24 * 30;
 
 const router: IRouter = Router();
 
@@ -45,7 +49,11 @@ function shape(c: typeof connectorsTable.$inferSelect) {
     status: c.status,
     config: { ...cfg, tokenMask: maskToken(c.encryptedToken) },
     lastRunAt: c.lastRunAt?.toISOString() ?? null,
+    lastSuccessAt: c.lastSuccessAt?.toISOString() ?? null,
     lastError: c.lastError,
+    scheduleEnabled: c.scheduleEnabled,
+    scheduleCadenceMinutes: c.scheduleCadenceMinutes,
+    nextRunAt: c.nextRunAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
   };
 }
@@ -134,6 +142,32 @@ router.patch("/connectors/:connectorId", requireConnectorMember, async (req, res
   if ("token" in b && b.token) {
     set.encryptedToken = encryptToken(b.token);
     set.status = "configured";
+  }
+  // Schedule controls. Validate cadence within bounds; whenever the schedule
+  // is enabled (or its cadence changes) we set nextRunAt = now() so the next
+  // tick picks it up promptly instead of waiting a full cadence window.
+  let scheduleTouched = false;
+  if ("scheduleEnabled" in b) {
+    set.scheduleEnabled = Boolean(b.scheduleEnabled);
+    scheduleTouched = true;
+  }
+  if ("scheduleCadenceMinutes" in b) {
+    const cadence = Number(b.scheduleCadenceMinutes);
+    if (
+      !Number.isFinite(cadence) ||
+      cadence < MIN_CADENCE_MIN ||
+      cadence > MAX_CADENCE_MIN
+    ) {
+      res.status(400).json({
+        error: `scheduleCadenceMinutes must be between ${MIN_CADENCE_MIN} and ${MAX_CADENCE_MIN}`,
+      });
+      return;
+    }
+    set.scheduleCadenceMinutes = cadence;
+    scheduleTouched = true;
+  }
+  if (scheduleTouched && (set.scheduleEnabled ?? true)) {
+    set.nextRunAt = new Date();
   }
   const [previous] = await db
     .select()
@@ -243,98 +277,19 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  const [c] = await db.select().from(connectorsTable).where(eq(connectorsTable.id, id));
-  if (!c) {
+  // Delegate to the shared executor so manual + scheduled runs share the same
+  // decryption / evidence / audit code path. Never throws; either returns the
+  // final run row or null when the connector is missing.
+  const updated = await executeConnectorRun(id, {
+    trigger: "manual",
+    req,
+    requestId: (req as typeof req & { id?: string }).id,
+  });
+  if (!updated) {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  const [run] = await db
-    .insert(connectorRunsTable)
-    .values({ connectorId: id, status: "running" })
-    .returning();
-  await db
-    .update(connectorsTable)
-    .set({ status: "collecting", lastRunAt: new Date(), lastError: null })
-    .where(eq(connectorsTable.id, id));
-
-  try {
-    const token = c.encryptedToken ? decryptToken(c.encryptedToken) : "";
-    if (c.encryptedToken) {
-      await recordActivity(req, {
-        engagementId: c.engagementId,
-        kind: "connector_token_used",
-        severity: "critical",
-        message: `Token used to run ${c.label}`,
-        payload: { connectorId: c.id, op: "run", provider: c.provider },
-      });
-    }
-    const out = await runConnectorImpl(
-      c.kind,
-      c.provider,
-      token,
-      c.config as Record<string, unknown>,
-      { requestId: (req as typeof req & { id?: string }).id },
-    );
-
-    // Persist evidence rows derived from connector summary
-    if (out.evidence && out.evidence.length > 0) {
-      await db.insert(evidenceTable).values(
-        out.evidence.map((e) => ({
-          engagementId: c.engagementId,
-          sourceType: "system" as const,
-          sourceRef: `${c.kind}:${c.provider}:${c.id}`,
-          dimension: e.dimension,
-          signalType: e.signalType,
-          stageHint: e.stageHint ?? null,
-          text: e.text,
-          createdBy: "system",
-        })),
-      );
-    }
-    const [updated] = await db
-      .update(connectorRunsTable)
-      .set({
-        status: "success",
-        finishedAt: new Date(),
-        recordsCollected: out.recordsCollected,
-        summary: out.summary,
-      })
-      .where(eq(connectorRunsTable.id, run.id))
-      .returning();
-    await db
-      .update(connectorsTable)
-      .set({ status: "collected", lastRunAt: new Date(), lastError: null })
-      .where(eq(connectorsTable.id, id));
-    await recordActivity(req, {
-      engagementId: c.engagementId,
-      kind: "connector_run",
-      message: `Collected ${out.recordsCollected} records from ${c.label}`,
-      payload: {
-        connectorId: c.id,
-        runId: run.id,
-        recordsCollected: out.recordsCollected,
-      },
-    });
-    res.status(202).json(updated);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    const [updated] = await db
-      .update(connectorRunsTable)
-      .set({ status: "failed", finishedAt: new Date(), error: msg })
-      .where(eq(connectorRunsTable.id, run.id))
-      .returning();
-    await db
-      .update(connectorsTable)
-      .set({ status: "failed", lastError: msg })
-      .where(eq(connectorsTable.id, id));
-    await recordActivity(req, {
-      engagementId: c.engagementId,
-      kind: "connector_run_failed",
-      message: `Connector run failed for ${c.label}: ${msg}`,
-      payload: { connectorId: c.id, runId: run.id, error: msg },
-    });
-    res.status(202).json(updated);
-  }
+  res.status(202).json(updated);
 });
 
 router.get("/connectors/:connectorId/runs", requireConnectorMember, async (req, res): Promise<void> => {
@@ -343,13 +298,75 @@ router.get("/connectors/:connectorId/runs", requireConnectorMember, async (req, 
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  // Pagination: default 25, hard cap 100. Long-lived engagements can
+  // accumulate hundreds of run rows; the UI paginates so we don't ship the
+  // whole history on every panel open.
+  const limitRaw = Number(req.query.limit ?? 25);
+  const offsetRaw = Number(req.query.offset ?? 0);
+  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 25, 1), 100);
+  const offset = Math.max(Number.isFinite(offsetRaw) ? offsetRaw : 0, 0);
   const rows = await db
     .select()
     .from(connectorRunsTable)
     .where(eq(connectorRunsTable.connectorId, id))
     .orderBy(desc(connectorRunsTable.startedAt))
-    .limit(50);
+    .limit(limit)
+    .offset(offset);
   res.json(rows);
 });
+
+router.get(
+  "/connectors/:connectorId/signals",
+  requireConnectorMember,
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.connectorId);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const [c] = await db
+      .select()
+      .from(connectorsTable)
+      .where(eq(connectorsTable.id, id))
+      .limit(1);
+    if (!c) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    // Latest run summary (raw provider counts) plus the evidence rows this
+    // connector has authored. The UI uses this for the "view raw signals"
+    // drawer; keeps assessors from having to dig through the evidence tab.
+    const [latestRun] = await db
+      .select()
+      .from(connectorRunsTable)
+      .where(eq(connectorRunsTable.connectorId, id))
+      .orderBy(desc(connectorRunsTable.startedAt))
+      .limit(1);
+    const sourceRef = `${c.kind}:${c.provider}:${c.id}`;
+    const evidence = await db
+      .select()
+      .from(evidenceTable)
+      .where(
+        and(
+          eq(evidenceTable.engagementId, c.engagementId),
+          eq(evidenceTable.sourceRef, sourceRef),
+        ),
+      )
+      .orderBy(desc(evidenceTable.createdAt))
+      .limit(100);
+    res.json({
+      connectorId: c.id,
+      latestRun: latestRun ?? null,
+      evidence: evidence.map((e) => ({
+        id: e.id,
+        dimension: e.dimension,
+        signalType: e.signalType,
+        stageHint: e.stageHint,
+        text: e.text,
+        createdAt: e.createdAt.toISOString(),
+      })),
+    });
+  },
+);
 
 export default router;
