@@ -100,6 +100,20 @@ async function buildAll() {
       "puppeteer",
       "puppeteer-core",
       "electron",
+      // pdfkit pulls in fontkit + brotli + dfa + restructure which use
+      // dynamic requires and CJS-only assets; bundling them with esbuild
+      // breaks resolution at runtime. Mark them external so node loads
+      // them straight from node_modules.
+      "pdfkit",
+      "fontkit",
+      "brotli",
+      "linebreak",
+      "dfa",
+      "restructure",
+      "unicode-properties",
+      "unicode-trie",
+      "tiny-inflate",
+      "swap-case",
     ],
     sourcemap: "linked",
     plugins: [

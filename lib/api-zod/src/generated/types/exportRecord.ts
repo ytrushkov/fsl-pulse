@@ -13,5 +13,6 @@ export interface ExportRecord {
   version: number;
   createdAt: string;
   signature?: string;
+  finalizerEmail?: string | null;
   files: ExportRecordFilesItem[];
 }

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useParams } from "wouter";
 import { useListExports, useCreateExport, getListExportsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -9,8 +8,23 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { formatRelative, formatNumber } from "@/lib/format";
-import { Download, Package, FileArchive } from "lucide-react";
+import { formatRelative } from "@/lib/format";
+import { Download, Package, FileArchive, FileText, FileCode, FileBox } from "lucide-react";
+
+const BASE_URL = (import.meta as any).env?.BASE_URL ?? "/";
+
+function fileIcon(name: string) {
+  if (name.endsWith(".pdf")) return <FileText className="h-4 w-4" />;
+  if (name.endsWith(".docx")) return <FileBox className="h-4 w-4" />;
+  if (name.endsWith(".json")) return <FileCode className="h-4 w-4" />;
+  return <Download className="h-4 w-4" />;
+}
+
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
 
 export default function ExportsView() {
   const params = useParams();
@@ -30,12 +44,12 @@ export default function ExportsView() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListExportsQueryKey(id) });
-          toast({ title: "Export created", description: "Deliverable bundle has been compiled successfully." });
+          toast({ title: "Export created", description: "Branded PDF + DOCX bundle is ready." });
         },
         onError: () => {
           toast({ variant: "destructive", title: "Error", description: "Failed to create export bundle." });
-        }
-      }
+        },
+      },
     );
   };
 
@@ -44,7 +58,7 @@ export default function ExportsView() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Exports</h1>
-          <p className="text-muted-foreground mt-1">Immutable snapshots of deliverables for client handoff.</p>
+          <p className="text-muted-foreground mt-1">Immutable, signed snapshots of the deliverables for client handoff.</p>
         </div>
         <Button onClick={handleCreate} disabled={createExport.isPending} className="gap-2">
           <Package className="h-4 w-4" />
@@ -55,7 +69,7 @@ export default function ExportsView() {
       <Card>
         <CardHeader>
           <CardTitle>Generated Bundles</CardTitle>
-          <CardDescription>Downloadable ZIP archives containing all deliverables and evidence.</CardDescription>
+          <CardDescription>Each bundle ships as a branded PDF, an editable DOCX, and a signed JSON snapshot.</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -80,9 +94,9 @@ export default function ExportsView() {
                 <TableRow>
                   <TableHead>Version</TableHead>
                   <TableHead>Created</TableHead>
+                  <TableHead>Finalized by</TableHead>
                   <TableHead>Signature (SHA-256)</TableHead>
-                  <TableHead className="text-right">Size</TableHead>
-                  <TableHead className="text-right">Download</TableHead>
+                  <TableHead>Files</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -94,18 +108,35 @@ export default function ExportsView() {
                     <TableCell className="text-sm font-medium">
                       {formatRelative(exp.createdAt)}
                     </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {exp.finalizerEmail ?? <span className="italic">unknown</span>}
+                    </TableCell>
                     <TableCell>
-                      <code className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded truncate max-w-[200px] inline-block">
-                        {exp.signature || "Pending..."}
+                      <code className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded truncate max-w-[200px] inline-block" title={exp.signature ?? ""}>
+                        {exp.signature ? `${exp.signature.slice(0, 16)}…` : "Pending..."}
                       </code>
                     </TableCell>
-                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                      {exp.files?.[0] ? `${(exp.files[0].sizeBytes / 1024 / 1024).toFixed(2)} MB` : '-'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" className="gap-2 font-medium text-primary">
-                        <Download className="h-4 w-4" /> ZIP
-                      </Button>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(exp.files ?? []).map((f) => (
+                          <Button
+                            key={f.name}
+                            asChild
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 h-7 px-2 text-xs"
+                          >
+                            <a
+                              href={`${BASE_URL}api/engagements/${id}/exports/${exp.id}/file/${encodeURIComponent(f.name)}`}
+                              download={f.name}
+                            >
+                              {fileIcon(f.name)}
+                              <span className="font-mono">{f.name.split(".").pop()?.toUpperCase()}</span>
+                              <span className="text-muted-foreground">{formatBytes(f.sizeBytes)}</span>
+                            </a>
+                          </Button>
+                        ))}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

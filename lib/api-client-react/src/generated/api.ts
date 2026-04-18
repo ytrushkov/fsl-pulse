@@ -32,6 +32,7 @@ import type {
   CreateInterviewInput,
   CreateRubricDraftBody,
   CreateSurveyInvitesInput,
+  DeliverableVersion,
   Deliverables,
   Engagement,
   EngagementDashboard,
@@ -45,10 +46,13 @@ import type {
   InterviewTagSuggestions,
   InvitePreview,
   ListConnectorRunsParams,
+  NpvInputs,
+  NpvResult,
   PreviewInvitesInput,
   PreviewScoring200,
   PreviewScoringBody,
   PublicSurvey,
+  RevertDeliverableBody,
   RubricVersion,
   SaveSurveyDraftInput,
   ScoreOverrideInput,
@@ -4698,6 +4702,383 @@ export const useDraftDeliverables = <
   return useMutation(getDraftDeliverablesMutationOptions(options));
 };
 
+export const getListDeliverableVersionsUrl = (
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+) => {
+  return `/api/engagements/${id}/deliverables/${key}/versions`;
+};
+
+export const listDeliverableVersions = async (
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+  options?: RequestInit,
+): Promise<DeliverableVersion[]> => {
+  return customFetch<DeliverableVersion[]>(
+    getListDeliverableVersionsUrl(id, key),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListDeliverableVersionsQueryKey = (
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+) => {
+  return [`/api/engagements/${id}/deliverables/${key}/versions`] as const;
+};
+
+export const getListDeliverableVersionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDeliverableVersions>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDeliverableVersions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListDeliverableVersionsQueryKey(id, key);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listDeliverableVersions>>
+  > = ({ signal }) =>
+    listDeliverableVersions(id, key, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(id && key),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDeliverableVersions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDeliverableVersionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDeliverableVersions>>
+>;
+export type ListDeliverableVersionsQueryError = ErrorType<unknown>;
+
+export function useListDeliverableVersions<
+  TData = Awaited<ReturnType<typeof listDeliverableVersions>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDeliverableVersions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDeliverableVersionsQueryOptions(id, key, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getRevertDeliverableUrl = (
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+) => {
+  return `/api/engagements/${id}/deliverables/${key}/revert`;
+};
+
+export const revertDeliverable = async (
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+  revertDeliverableBody: RevertDeliverableBody,
+  options?: RequestInit,
+): Promise<Deliverables> => {
+  return customFetch<Deliverables>(getRevertDeliverableUrl(id, key), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(revertDeliverableBody),
+  });
+};
+
+export const getRevertDeliverableMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revertDeliverable>>,
+    TError,
+    {
+      id: string;
+      key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+      data: BodyType<RevertDeliverableBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revertDeliverable>>,
+  TError,
+  {
+    id: string;
+    key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+    data: BodyType<RevertDeliverableBody>;
+  },
+  TContext
+> => {
+  const mutationKey = ["revertDeliverable"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revertDeliverable>>,
+    {
+      id: string;
+      key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+      data: BodyType<RevertDeliverableBody>;
+    }
+  > = (props) => {
+    const { id, key, data } = props ?? {};
+
+    return revertDeliverable(id, key, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevertDeliverableMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revertDeliverable>>
+>;
+export type RevertDeliverableMutationBody = BodyType<RevertDeliverableBody>;
+export type RevertDeliverableMutationError = ErrorType<unknown>;
+
+export const useRevertDeliverable = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revertDeliverable>>,
+    TError,
+    {
+      id: string;
+      key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+      data: BodyType<RevertDeliverableBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof revertDeliverable>>,
+  TError,
+  {
+    id: string;
+    key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+    data: BodyType<RevertDeliverableBody>;
+  },
+  TContext
+> => {
+  return useMutation(getRevertDeliverableMutationOptions(options));
+};
+
+export const getFinalizeDeliverableUrl = (
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+) => {
+  return `/api/engagements/${id}/deliverables/${key}/finalize`;
+};
+
+export const finalizeDeliverable = async (
+  id: string,
+  key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv",
+  options?: RequestInit,
+): Promise<DeliverableVersion> => {
+  return customFetch<DeliverableVersion>(getFinalizeDeliverableUrl(id, key), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getFinalizeDeliverableMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeDeliverable>>,
+    TError,
+    {
+      id: string;
+      key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof finalizeDeliverable>>,
+  TError,
+  {
+    id: string;
+    key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+  },
+  TContext
+> => {
+  const mutationKey = ["finalizeDeliverable"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof finalizeDeliverable>>,
+    {
+      id: string;
+      key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+    }
+  > = (props) => {
+    const { id, key } = props ?? {};
+
+    return finalizeDeliverable(id, key, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type FinalizeDeliverableMutationResult = NonNullable<
+  Awaited<ReturnType<typeof finalizeDeliverable>>
+>;
+
+export type FinalizeDeliverableMutationError = ErrorType<unknown>;
+
+export const useFinalizeDeliverable = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeDeliverable>>,
+    TError,
+    {
+      id: string;
+      key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof finalizeDeliverable>>,
+  TError,
+  {
+    id: string;
+    key: "heatmap" | "gapAnalysis" | "actionPlan" | "entryPoint" | "npv";
+  },
+  TContext
+> => {
+  return useMutation(getFinalizeDeliverableMutationOptions(options));
+};
+
+export const getRecomputeNpvUrl = (id: string) => {
+  return `/api/engagements/${id}/npv/recompute`;
+};
+
+export const recomputeNpv = async (
+  id: string,
+  npvInputs: NpvInputs,
+  options?: RequestInit,
+): Promise<NpvResult> => {
+  return customFetch<NpvResult>(getRecomputeNpvUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(npvInputs),
+  });
+};
+
+export const getRecomputeNpvMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recomputeNpv>>,
+    TError,
+    { id: string; data: BodyType<NpvInputs> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof recomputeNpv>>,
+  TError,
+  { id: string; data: BodyType<NpvInputs> },
+  TContext
+> => {
+  const mutationKey = ["recomputeNpv"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof recomputeNpv>>,
+    { id: string; data: BodyType<NpvInputs> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return recomputeNpv(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RecomputeNpvMutationResult = NonNullable<
+  Awaited<ReturnType<typeof recomputeNpv>>
+>;
+export type RecomputeNpvMutationBody = BodyType<NpvInputs>;
+export type RecomputeNpvMutationError = ErrorType<unknown>;
+
+export const useRecomputeNpv = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recomputeNpv>>,
+    TError,
+    { id: string; data: BodyType<NpvInputs> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof recomputeNpv>>,
+  TError,
+  { id: string; data: BodyType<NpvInputs> },
+  TContext
+> => {
+  return useMutation(getRecomputeNpvMutationOptions(options));
+};
+
 export const getListExportsUrl = (id: string) => {
   return `/api/engagements/${id}/exports`;
 };
@@ -4855,3 +5236,107 @@ export const useCreateExport = <
 > => {
   return useMutation(getCreateExportMutationOptions(options));
 };
+
+export const getDownloadExportFileUrl = (
+  id: string,
+  exportId: string,
+  fileName: string,
+) => {
+  return `/api/engagements/${id}/exports/${exportId}/file/${fileName}`;
+};
+
+export const downloadExportFile = async (
+  id: string,
+  exportId: string,
+  fileName: string,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getDownloadExportFileUrl(id, exportId, fileName), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadExportFileQueryKey = (
+  id: string,
+  exportId: string,
+  fileName: string,
+) => {
+  return [
+    `/api/engagements/${id}/exports/${exportId}/file/${fileName}`,
+  ] as const;
+};
+
+export const getDownloadExportFileQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadExportFile>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  exportId: string,
+  fileName: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadExportFile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getDownloadExportFileQueryKey(id, exportId, fileName);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadExportFile>>
+  > = ({ signal }) =>
+    downloadExportFile(id, exportId, fileName, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(id && exportId && fileName),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadExportFile>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadExportFileQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadExportFile>>
+>;
+export type DownloadExportFileQueryError = ErrorType<unknown>;
+
+export function useDownloadExportFile<
+  TData = Awaited<ReturnType<typeof downloadExportFile>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  exportId: string,
+  fileName: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadExportFile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadExportFileQueryOptions(
+    id,
+    exportId,
+    fileName,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

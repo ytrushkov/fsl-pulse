@@ -909,6 +909,30 @@ export interface UpdateDeliverablesInput {
   npv?: NpvResult;
 }
 
+export type DeliverableKey =
+  (typeof DeliverableKey)[keyof typeof DeliverableKey];
+
+export const DeliverableKey = {
+  heatmap: "heatmap",
+  gapAnalysis: "gapAnalysis",
+  actionPlan: "actionPlan",
+  entryPoint: "entryPoint",
+  npv: "npv",
+} as const;
+
+export type DeliverableVersionSnapshot = { [key: string]: unknown };
+
+export interface DeliverableVersion {
+  id: string;
+  engagementId: string;
+  key: DeliverableKey;
+  version: number;
+  finalized: boolean;
+  authorEmail?: string | null;
+  createdAt: string;
+  snapshot: DeliverableVersionSnapshot;
+}
+
 export type ExportRecordFilesItem = {
   name: string;
   sizeBytes: number;
@@ -921,6 +945,7 @@ export interface ExportRecord {
   version: number;
   createdAt: string;
   signature?: string;
+  finalizerEmail?: string | null;
   files: ExportRecordFilesItem[];
 }
 
@@ -1009,4 +1034,8 @@ export type UpdateRubricDraftBody = {
   version?: string;
   notes?: string;
   body?: RubricBody;
+};
+
+export type RevertDeliverableBody = {
+  version: number;
 };

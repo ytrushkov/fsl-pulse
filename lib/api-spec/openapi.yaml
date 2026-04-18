@@ -890,6 +890,86 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Deliverables" }
 
+  /engagements/{id}/deliverables/{key}/versions:
+    get:
+      operationId: listDeliverableVersions
+      tags: [deliverables]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: path
+          required: true
+          schema: { type: string, enum: [heatmap, gapAnalysis, actionPlan, entryPoint, npv] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DeliverableVersion" }
+
+  /engagements/{id}/deliverables/{key}/revert:
+    post:
+      operationId: revertDeliverable
+      tags: [deliverables]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: path
+          required: true
+          schema: { type: string, enum: [heatmap, gapAnalysis, actionPlan, entryPoint, npv] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deliverables" }
+
+  /engagements/{id}/deliverables/{key}/finalize:
+    post:
+      operationId: finalizeDeliverable
+      tags: [deliverables]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: path
+          required: true
+          schema: { type: string, enum: [heatmap, gapAnalysis, actionPlan, entryPoint, npv] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliverableVersion" }
+
+  /engagements/{id}/npv/recompute:
+    post:
+      operationId: recomputeNpv
+      tags: [deliverables]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NpvInputs" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NpvResult" }
+
   /engagements/{id}/exports:
     get:
       operationId: listExports
@@ -915,6 +995,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExportRecord" }
+
+  /engagements/{id}/exports/{exportId}/file/{fileName}:
+    get:
+      operationId: downloadExportFile
+      tags: [exports]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: exportId, in: path, required: true, schema: { type: string } }
+        - { name: fileName, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: File stream
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
 
 components:
   schemas:
@@ -1790,6 +1885,25 @@ components:
         entryPoint: { $ref: "#/components/schemas/EntryPointRecommendation" }
         npv: { $ref: "#/components/schemas/NpvResult" }
 
+    DeliverableKey:
+      type: string
+      enum: [heatmap, gapAnalysis, actionPlan, entryPoint, npv]
+
+    DeliverableVersion:
+      type: object
+      required: [id, engagementId, key, version, createdAt, finalized, snapshot]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        key: { $ref: "#/components/schemas/DeliverableKey" }
+        version: { type: integer }
+        finalized: { type: boolean }
+        authorEmail: { type: string, nullable: true }
+        createdAt: { type: string }
+        snapshot:
+          type: object
+          additionalProperties: true
+
     ExportRecord:
       type: object
       required: [id, engagementId, version, createdAt, files]
@@ -1799,6 +1913,7 @@ components:
         version: { type: integer }
         createdAt: { type: string }
         signature: { type: string }
+        finalizerEmail: { type: string, nullable: true }
         files:
           type: array
           items:

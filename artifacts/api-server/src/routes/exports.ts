@@ -19,6 +19,11 @@ import {
   exportKeyFingerprint,
 } from "../lib/util";
 import { recordActivity } from "../lib/audit";
+import {
+  renderEngagementPdf,
+  renderEngagementDocx,
+  type DeliverableBundle,
+} from "../lib/export-render";
 
 const router: IRouter = Router();
 
@@ -40,10 +45,57 @@ router.get("/engagements/:id/exports", async (req, res): Promise<void> => {
       version: r.version,
       createdAt: r.createdAt.toISOString(),
       signature: r.signature,
+      finalizerEmail: r.finalizerEmail,
       files: r.files,
     })),
   );
 });
+
+/**
+ * Stream a single file out of an export record. Files are stored inline as
+ * base64 data URLs (so the snapshot is portable and re-deliverable from a
+ * cold backup); this endpoint decodes them and serves with the right
+ * Content-Type so browsers download instead of rendering them as JSON.
+ */
+router.get(
+  "/engagements/:id/exports/:exportId/file/:fileName",
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    const exportId = paramId(req.params.exportId);
+    const fileName = String(req.params.fileName ?? "");
+    if (!id || !exportId || !fileName) {
+      res.status(400).json({ error: "Invalid params" });
+      return;
+    }
+    const [exp] = await db
+      .select()
+      .from(exportsTable)
+      .where(eq(exportsTable.id, exportId));
+    if (!exp || exp.engagementId !== id) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    type ExportFile = { name: string; sizeBytes: number; downloadUrl: string };
+    const file = (exp.files as ExportFile[]).find((f) => f.name === fileName);
+    if (!file) {
+      res.status(404).json({ error: "File not found" });
+      return;
+    }
+    const m = /^data:([^;]+);base64,(.*)$/s.exec(file.downloadUrl);
+    if (!m) {
+      res.status(500).json({ error: "Malformed file" });
+      return;
+    }
+    const buf = Buffer.from(m[2] ?? "", "base64");
+    res.setHeader("Content-Type", m[1] ?? "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName.replace(/"/g, "")}"`,
+    );
+    res.setHeader("Content-Length", String(buf.length));
+    res.end(buf);
+  },
+);
 
 router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
   const id = paramId(req.params.id);
@@ -100,36 +152,57 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
     await db.select().from(exportsTable).where(eq(exportsTable.engagementId, id))
   ).length;
 
+  // Render the branded client deliverable in both PDF and DOCX so the
+  // assessor can hand off whichever format the client prefers without
+  // round-tripping back through the platform.
+  const actor = req.authedUser ?? null;
+  const bundleForRender: DeliverableBundle = {
+    clientName: eng.clientName,
+    sponsor: eng.sponsor,
+    exportedAt: bundle.exportedAt,
+    exportVersion: previousCount + 1,
+    finalizerEmail: actor?.email ?? null,
+    scoring: scoring
+      ? {
+          rubricVersion: scoring.rubricVersion,
+          overall: scoring.overall as { score: number; stage: number; confidence: string },
+          byDimension: scoring.byDimension as DeliverableBundle["scoring"] extends infer S
+            ? S extends { byDimension: infer B }
+              ? B
+              : never
+            : never,
+        }
+      : null,
+    deliverables: {
+      heatmap: (deliverables?.heatmap ?? []) as DeliverableBundle["deliverables"]["heatmap"],
+      gapAnalysis: (deliverables?.gapAnalysis ?? []) as DeliverableBundle["deliverables"]["gapAnalysis"],
+      actionPlan: (deliverables?.actionPlan ?? []) as DeliverableBundle["deliverables"]["actionPlan"],
+      entryPoint: (deliverables?.entryPoint ?? null) as DeliverableBundle["deliverables"]["entryPoint"],
+      npv: (deliverables?.npv ?? null) as DeliverableBundle["deliverables"]["npv"],
+    },
+  };
+  const [pdfBuf, docxBuf] = await Promise.all([
+    renderEngagementPdf(bundleForRender),
+    renderEngagementDocx(bundleForRender),
+  ]);
+  const safeClient = eng.clientName.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+  const baseName = `${safeClient}-pulse-v${previousCount + 1}`;
+
   const files = [
+    {
+      name: `${baseName}.pdf`,
+      sizeBytes: pdfBuf.length,
+      downloadUrl: `data:application/pdf;base64,${pdfBuf.toString("base64")}`,
+    },
+    {
+      name: `${baseName}.docx`,
+      sizeBytes: docxBuf.length,
+      downloadUrl: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${docxBuf.toString("base64")}`,
+    },
     {
       name: "engagement-snapshot.json",
       sizeBytes: Buffer.byteLength(json, "utf8"),
       downloadUrl: `data:application/json;base64,${Buffer.from(json).toString("base64")}`,
-    },
-    {
-      name: "heatmap.json",
-      sizeBytes: Buffer.byteLength(JSON.stringify(deliverables?.heatmap ?? [])),
-      downloadUrl: `data:application/json;base64,${Buffer.from(JSON.stringify(deliverables?.heatmap ?? [])).toString("base64")}`,
-    },
-    {
-      name: "gap-analysis.json",
-      sizeBytes: Buffer.byteLength(JSON.stringify(deliverables?.gapAnalysis ?? [])),
-      downloadUrl: `data:application/json;base64,${Buffer.from(JSON.stringify(deliverables?.gapAnalysis ?? [])).toString("base64")}`,
-    },
-    {
-      name: "action-plan.json",
-      sizeBytes: Buffer.byteLength(JSON.stringify(deliverables?.actionPlan ?? [])),
-      downloadUrl: `data:application/json;base64,${Buffer.from(JSON.stringify(deliverables?.actionPlan ?? [])).toString("base64")}`,
-    },
-    {
-      name: "entry-point.json",
-      sizeBytes: Buffer.byteLength(JSON.stringify(deliverables?.entryPoint ?? null)),
-      downloadUrl: `data:application/json;base64,${Buffer.from(JSON.stringify(deliverables?.entryPoint ?? null)).toString("base64")}`,
-    },
-    {
-      name: "npv.json",
-      sizeBytes: Buffer.byteLength(JSON.stringify(deliverables?.npv ?? null)),
-      downloadUrl: `data:application/json;base64,${Buffer.from(JSON.stringify(deliverables?.npv ?? null)).toString("base64")}`,
     },
   ];
 
@@ -140,6 +213,7 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
       version: previousCount + 1,
       signature,
       files,
+      finalizerEmail: actor?.email ?? null,
     })
     .returning();
 

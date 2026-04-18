@@ -359,6 +359,36 @@ export const deliverablesTable = pgTable("deliverables", {
     .$onUpdate(() => new Date()),
 });
 
+// Per-deliverable version history. Every PATCH that touches a deliverable
+// snapshots the new state here so an assessor can compare or revert. The
+// `finalized` flag marks the snapshot that produced the most recent
+// branded export.
+export const deliverableVersionsTable = pgTable(
+  "deliverable_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagementsTable.id, { onDelete: "cascade" }),
+    // One of: heatmap | gapAnalysis | actionPlan | entryPoint | npv.
+    deliverableKey: text("deliverable_key").notNull(),
+    // Monotonically increasing per (engagementId, deliverableKey).
+    version: integer("version").notNull(),
+    snapshot: jsonb("snapshot").notNull(),
+    authorEmail: text("author_email"),
+    finalized: boolean("finalized").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    engKeyIdx: index("deliverable_versions_eng_key_idx").on(
+      t.engagementId,
+      t.deliverableKey,
+    ),
+  }),
+);
+
 export const exportsTable = pgTable(
   "export_records",
   {
@@ -369,6 +399,10 @@ export const exportsTable = pgTable(
     version: integer("version").notNull(),
     signature: text("signature").notNull(),
     files: jsonb("files").notNull().default([]),
+    // Email of the assessor who triggered the export. Captured so the
+    // Exports tab can attribute "finalized by" without joining
+    // activity_events. Nullable for legacy rows created before auth landed.
+    finalizerEmail: text("finalizer_email"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({ engIdx: index("export_records_engagement_idx").on(t.engagementId) }),

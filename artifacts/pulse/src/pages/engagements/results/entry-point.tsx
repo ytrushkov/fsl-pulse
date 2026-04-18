@@ -1,11 +1,40 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { useUpdateDeliverables, getGetDeliverablesQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 
 export default function EntryPointView({ engagementId, deliverables }: any) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const update = useUpdateDeliverables();
+  const [rationale, setRationale] = useState("");
+  useEffect(() => {
+    if (deliverables?.entryPoint?.rationaleMd != null) setRationale(deliverables.entryPoint.rationaleMd);
+  }, [deliverables?.entryPoint?.rationaleMd]);
+
   if (!deliverables?.entryPoint) return <div className="p-8 text-center text-muted-foreground">No entry point recommendation available.</div>;
 
   const stages = ['strategy', 'design', 'build', 'ship', 'run'];
   const data = deliverables.entryPoint;
+  const isLocked = deliverables.statuses.entryPoint === "locked";
+  const dirty = rationale !== data.rationaleMd;
+
+  const save = () => {
+    update.mutate(
+      { id: engagementId, data: { entryPoint: { ...data, rationaleMd: rationale } } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetDeliverablesQueryKey(engagementId) });
+          toast({ title: "Saved", description: "Rationale updated." });
+        },
+        onError: () => toast({ variant: "destructive", title: "Save failed" }),
+      },
+    );
+  };
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -14,9 +43,7 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
           <h2 className="text-2xl font-bold text-foreground">Recommended Entry Point</h2>
           <p className="text-muted-foreground">Where to start implementing AI agents in the SDLC.</p>
         </div>
-        <Badge variant={deliverables.statuses.entryPoint === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
-          {deliverables.statuses.entryPoint}
-        </Badge>
+        <DeliverableToolbar engagementId={engagementId} deliverableKey="entryPoint" status={deliverables.statuses.entryPoint} />
       </div>
 
       <div className="relative mb-16 px-4">
@@ -49,10 +76,23 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
 
       <div className="grid md:grid-cols-3 gap-8">
         <div className="md:col-span-2 prose prose-sm dark:prose-invert">
-          <h3 className="text-xl font-bold border-b pb-2">Strategic Rationale</h3>
-          <p className="text-lg leading-relaxed text-muted-foreground mt-4">
-            {data.rationaleMd}
-          </p>
+          <h3 className="text-xl font-bold border-b pb-2 not-prose">Strategic Rationale</h3>
+          {isLocked ? (
+            <p className="text-lg leading-relaxed text-muted-foreground mt-4 whitespace-pre-wrap">
+              {rationale}
+            </p>
+          ) : (
+            <div className="mt-4 not-prose">
+              <Textarea value={rationale} onChange={(e) => setRationale(e.target.value)} rows={10} className="font-mono text-sm" />
+              {dirty && (
+                <div className="mt-2 flex justify-end">
+                  <Button size="sm" onClick={save} disabled={update.isPending}>
+                    {update.isPending ? "Saving…" : "Save changes"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         
         <div>

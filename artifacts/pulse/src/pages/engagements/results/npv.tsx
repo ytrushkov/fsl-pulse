@@ -1,12 +1,85 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { formatCurrency } from "@/lib/format";
+import {
+  useRecomputeNpv,
+  useUpdateDeliverables,
+  getGetDeliverablesQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { Calculator, Save } from "lucide-react";
 
+/**
+ * NPV view: shows the headline scenarios + lever breakdown plus an
+ * editable inputs panel. Recompute hits the pure server helper (no AI),
+ * giving the assessor instant what-if iteration before they save the
+ * recomputed result back into the deliverable.
+ */
 export default function NpvView({ engagementId, deliverables }: any) {
-  if (!deliverables?.npv) return <div className="p-8 text-center text-muted-foreground">No NPV analysis available.</div>;
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const recompute = useRecomputeNpv();
+  const update = useUpdateDeliverables();
 
-  const data = deliverables.npv;
+  // Local editable copy of the NPV result so recompute can re-render
+  // immediately without waiting for the deliverables refetch.
+  const [working, setWorking] = useState<any>(null);
+  useEffect(() => {
+    if (deliverables?.npv) setWorking(deliverables.npv);
+  }, [deliverables?.npv]);
+
+  if (!deliverables?.npv || !working) {
+    return <div className="p-8 text-center text-muted-foreground">No NPV analysis available.</div>;
+  }
+
+  const isLocked = deliverables.statuses.npv === "locked";
+  const data = working;
   const base = data.scenarios.base;
+  const dirty = JSON.stringify(working) !== JSON.stringify(deliverables.npv);
+
+  // Map editable snapshot keys to the server's NpvInputs shape (the
+  // OpenAPI body). The snapshot keeps a few legacy fields the model has
+  // historically returned (toolingAnnualCost, defectsPerSprint) — those
+  // aren't part of NpvInputs so we don't forward them.
+  const buildInputsBody = () => ({
+    fullyLoadedCost: Math.max(0, Number(data.inputs.fullyLoadedCost ?? 200000)),
+    teamCount: Math.max(1, Math.round(Number(data.inputs.teamCount ?? 8))),
+    baselineCycleTimeDays: Math.max(1, Number(data.inputs.baselineCycleTimeDays ?? 14)),
+    aiAcceptanceRate: Math.min(1, Math.max(0, Number(data.inputs.aiAcceptanceRate ?? 0.35))),
+    reworkRate: Math.min(1, Math.max(0, Number(data.inputs.reworkRate ?? 0.18))),
+    discountRate: Math.min(1, Math.max(0, Number(data.inputs.discountRate ?? 0.1))),
+  });
+
+  const setInput = (key: string, value: number) =>
+    setWorking((w: any) => ({ ...w, inputs: { ...w.inputs, [key]: value } }));
+
+  const handleRecompute = () => {
+    recompute.mutate(
+      { id: engagementId, data: buildInputsBody() },
+      {
+        onSuccess: (res) => setWorking(res),
+        onError: () => toast({ variant: "destructive", title: "Recompute failed" }),
+      },
+    );
+  };
+
+  const handleSave = () => {
+    update.mutate(
+      { id: engagementId, data: { npv: working } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetDeliverablesQueryKey(engagementId) });
+          toast({ title: "Saved", description: "NPV recomputation persisted." });
+        },
+        onError: () => toast({ variant: "destructive", title: "Save failed" }),
+      },
+    );
+  };
 
   return (
     <div className="p-8">
@@ -15,9 +88,7 @@ export default function NpvView({ engagementId, deliverables }: any) {
           <h2 className="text-2xl font-bold text-foreground">Business Case (NPV)</h2>
           <p className="text-muted-foreground">Financial modeling for agentic transformation.</p>
         </div>
-        <Badge variant={deliverables.statuses.npv === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
-          {deliverables.statuses.npv}
-        </Badge>
+        <DeliverableToolbar engagementId={engagementId} deliverableKey="npv" status={deliverables.statuses.npv} hideRegenerate />
       </div>
 
       <div className="grid md:grid-cols-3 gap-6 mb-8">
@@ -49,18 +120,39 @@ export default function NpvView({ engagementId, deliverables }: any) {
 
       <div className="grid md:grid-cols-2 gap-8">
         <div>
-          <h3 className="text-lg font-bold mb-4 border-b pb-2">Assumptions (Inputs)</h3>
-          <div className="bg-muted/20 rounded-md border p-0 overflow-hidden">
-            <table className="w-full text-sm">
-              <tbody>
-                <tr className="border-b"><td className="p-3 font-medium text-muted-foreground w-1/2">Fully Loaded Cost</td><td className="p-3 text-right font-mono font-medium">{formatCurrency(data.inputs.fullyLoadedCost)}/FTE</td></tr>
-                <tr className="border-b"><td className="p-3 font-medium text-muted-foreground">Team Count</td><td className="p-3 text-right font-mono font-medium">{data.inputs.teamCount}</td></tr>
-                <tr className="border-b"><td className="p-3 font-medium text-muted-foreground">Baseline Cycle Time</td><td className="p-3 text-right font-mono font-medium">{data.inputs.baselineCycleTimeDays} days</td></tr>
-                <tr className="border-b"><td className="p-3 font-medium text-muted-foreground">AI Acceptance Rate</td><td className="p-3 text-right font-mono font-medium">{Math.round(data.inputs.aiAcceptanceRate * 100)}%</td></tr>
-                <tr className="border-b"><td className="p-3 font-medium text-muted-foreground">Rework Rate</td><td className="p-3 text-right font-mono font-medium">{Math.round(data.inputs.reworkRate * 100)}%</td></tr>
-                <tr><td className="p-3 font-medium text-muted-foreground">Discount Rate</td><td className="p-3 text-right font-mono font-medium">{Math.round(data.inputs.discountRate * 100)}%</td></tr>
-              </tbody>
-            </table>
+          <div className="flex items-center justify-between mb-4 border-b pb-2">
+            <h3 className="text-lg font-bold">Assumptions (Inputs)</h3>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRecompute}
+                disabled={isLocked || recompute.isPending}
+              >
+                <Calculator className="h-4 w-4 mr-1" />
+                {recompute.isPending ? "Computing…" : "Recompute"}
+              </Button>
+              {dirty && (
+                <Button size="sm" onClick={handleSave} disabled={isLocked || update.isPending}>
+                  <Save className="h-4 w-4 mr-1" />
+                  {update.isPending ? "Saving…" : "Save"}
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="bg-muted/20 rounded-md border p-4 grid grid-cols-1 gap-3">
+            <NpvField label="Fully Loaded Cost / FTE" value={data.inputs.fullyLoadedCost ?? 200000} step={5000}
+              disabled={isLocked} onChange={(v) => setInput("fullyLoadedCost", v)} />
+            <NpvField label="Team Count" value={data.inputs.teamCount ?? 8} step={1}
+              disabled={isLocked} onChange={(v) => setInput("teamCount", v)} />
+            <NpvField label="Baseline Cycle Time (days)" value={data.inputs.baselineCycleTimeDays ?? 14} step={1}
+              disabled={isLocked} onChange={(v) => setInput("baselineCycleTimeDays", v)} />
+            <NpvField label="AI Acceptance Rate (0-1)" value={data.inputs.aiAcceptanceRate ?? 0.35} step={0.05}
+              disabled={isLocked} onChange={(v) => setInput("aiAcceptanceRate", v)} />
+            <NpvField label="Rework Rate (0-1)" value={data.inputs.reworkRate ?? 0.18} step={0.01}
+              disabled={isLocked} onChange={(v) => setInput("reworkRate", v)} />
+            <NpvField label="Discount Rate (0-1)" value={data.inputs.discountRate ?? 0.1} step={0.01}
+              disabled={isLocked} onChange={(v) => setInput("discountRate", v)} />
           </div>
         </div>
 
@@ -81,6 +173,37 @@ export default function NpvView({ engagementId, deliverables }: any) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function NpvField({
+  label,
+  value,
+  step,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: number;
+  step: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-3 items-center">
+      <Label className="text-sm text-muted-foreground">{label}</Label>
+      <Input
+        type="number"
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (Number.isFinite(n)) onChange(n);
+        }}
+        className="font-mono text-right"
+      />
     </div>
   );
 }

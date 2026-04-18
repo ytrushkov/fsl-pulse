@@ -1,5 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 
 export default function ActionPlanView({ engagementId, deliverables }: any) {
   if (!deliverables?.actionPlan?.length) return <div className="p-8 text-center text-muted-foreground">No action plan available.</div>;
@@ -11,9 +12,7 @@ export default function ActionPlanView({ engagementId, deliverables }: any) {
           <h2 className="text-2xl font-bold text-foreground">Strategic Action Plan</h2>
           <p className="text-muted-foreground">Prioritized initiatives to reach target state.</p>
         </div>
-        <Badge variant={deliverables.statuses.actionPlan === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
-          {deliverables.statuses.actionPlan}
-        </Badge>
+        <DeliverableToolbar engagementId={engagementId} deliverableKey="actionPlan" status={deliverables.statuses.actionPlan} />
       </div>
 
       <div className="border rounded-md shadow-sm overflow-hidden">

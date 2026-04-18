@@ -1,5 +1,5 @@
-import { Badge } from "@/components/ui/badge";
 import { Dimension } from "@workspace/api-client-react";
+import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 
 export default function HeatmapView({ engagementId, deliverables }: any) {
   if (!deliverables?.heatmap) return <div className="p-8 text-center text-muted-foreground">No heatmap data available.</div>;
@@ -14,9 +14,7 @@ export default function HeatmapView({ engagementId, deliverables }: any) {
           <h2 className="text-2xl font-bold text-foreground">Agentic Maturity Heatmap</h2>
           <p className="text-muted-foreground">Current state across six core dimensions.</p>
         </div>
-        <Badge variant={deliverables.statuses.heatmap === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
-          {deliverables.statuses.heatmap}
-        </Badge>
+        <DeliverableToolbar engagementId={engagementId} deliverableKey="heatmap" status={deliverables.statuses.heatmap} />
       </div>
 
       <div className="overflow-x-auto">

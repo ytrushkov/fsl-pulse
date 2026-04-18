@@ -2020,6 +2020,214 @@ export const DraftDeliverablesResponse = zod.object({
   }),
 });
 
+export const ListDeliverableVersionsParams = zod.object({
+  id: zod.coerce.string(),
+  key: zod.enum(["heatmap", "gapAnalysis", "actionPlan", "entryPoint", "npv"]),
+});
+
+export const ListDeliverableVersionsResponseItem = zod.object({
+  id: zod.string(),
+  engagementId: zod.string(),
+  key: zod.enum(["heatmap", "gapAnalysis", "actionPlan", "entryPoint", "npv"]),
+  version: zod.number(),
+  finalized: zod.boolean(),
+  authorEmail: zod.string().nullish(),
+  createdAt: zod.string(),
+  snapshot: zod.record(zod.string(), zod.unknown()),
+});
+export const ListDeliverableVersionsResponse = zod.array(
+  ListDeliverableVersionsResponseItem,
+);
+
+export const RevertDeliverableParams = zod.object({
+  id: zod.coerce.string(),
+  key: zod.enum(["heatmap", "gapAnalysis", "actionPlan", "entryPoint", "npv"]),
+});
+
+export const RevertDeliverableBody = zod.object({
+  version: zod.number(),
+});
+
+export const RevertDeliverableResponse = zod.object({
+  engagementId: zod.string(),
+  statuses: zod.object({
+    heatmap: zod.enum(["draft", "reviewed", "locked"]),
+    gapAnalysis: zod.enum(["draft", "reviewed", "locked"]),
+    actionPlan: zod.enum(["draft", "reviewed", "locked"]),
+    entryPoint: zod.enum(["draft", "reviewed", "locked"]),
+    npv: zod.enum(["draft", "reviewed", "locked"]),
+  }),
+  heatmap: zod.array(
+    zod.object({
+      dimension: zod.enum([
+        "tooling",
+        "measurement",
+        "process",
+        "people",
+        "governance",
+        "culture",
+      ]),
+      currentStage: zod.number(),
+      targetStage: zod.number(),
+      confidence: zod.enum(["low", "medium", "high"]),
+    }),
+  ),
+  gapAnalysis: zod.array(
+    zod.object({
+      dimension: zod.enum([
+        "tooling",
+        "measurement",
+        "process",
+        "people",
+        "governance",
+        "culture",
+      ]),
+      currentStage: zod.number(),
+      targetStage: zod.number(),
+      narrativeMd: zod.string(),
+      gaps: zod.array(zod.string()).optional(),
+      evidenceIds: zod.array(zod.string()),
+    }),
+  ),
+  actionPlan: zod.array(
+    zod.object({
+      id: zod.string(),
+      initiative: zod.string(),
+      dimension: zod.enum([
+        "tooling",
+        "measurement",
+        "process",
+        "people",
+        "governance",
+        "culture",
+      ]),
+      priority: zod.enum(["P0", "P1", "P2"]),
+      effort: zod.enum(["S", "M", "L", "XL"]),
+      impact: zod.enum(["S", "M", "L", "XL"]),
+      ownerRole: zod.string().optional(),
+      successMetric: zod.string().optional(),
+      dependencies: zod.array(zod.string()).optional(),
+    }),
+  ),
+  entryPoint: zod.object({
+    recommendedStage: zod.enum(["strategy", "design", "build", "ship", "run"]),
+    hyprAgents: zod
+      .array(
+        zod.object({
+          name: zod.string(),
+          relevance: zod.string(),
+        }),
+      )
+      .optional(),
+    rationaleMd: zod.string(),
+    evidenceIds: zod.array(zod.string()).optional(),
+  }),
+  npv: zod.object({
+    modelVersion: zod.string(),
+    inputs: zod.object({
+      fullyLoadedCost: zod.number(),
+      teamCount: zod.number(),
+      baselineCycleTimeDays: zod.number(),
+      aiAcceptanceRate: zod.number(),
+      reworkRate: zod.number(),
+      discountRate: zod.number(),
+    }),
+    scenarios: zod.object({
+      low: zod.object({
+        npv3yr: zod.number(),
+        paybackMonths: zod.number(),
+        irr: zod.number(),
+        annualSavings: zod.array(zod.number()).optional(),
+      }),
+      base: zod.object({
+        npv3yr: zod.number(),
+        paybackMonths: zod.number(),
+        irr: zod.number(),
+        annualSavings: zod.array(zod.number()).optional(),
+      }),
+      high: zod.object({
+        npv3yr: zod.number(),
+        paybackMonths: zod.number(),
+        irr: zod.number(),
+        annualSavings: zod.array(zod.number()).optional(),
+      }),
+    }),
+    leverBreakdown: zod.array(
+      zod.object({
+        lever: zod.string(),
+        savings: zod.number(),
+      }),
+    ),
+  }),
+});
+
+export const FinalizeDeliverableParams = zod.object({
+  id: zod.coerce.string(),
+  key: zod.enum(["heatmap", "gapAnalysis", "actionPlan", "entryPoint", "npv"]),
+});
+
+export const FinalizeDeliverableResponse = zod.object({
+  id: zod.string(),
+  engagementId: zod.string(),
+  key: zod.enum(["heatmap", "gapAnalysis", "actionPlan", "entryPoint", "npv"]),
+  version: zod.number(),
+  finalized: zod.boolean(),
+  authorEmail: zod.string().nullish(),
+  createdAt: zod.string(),
+  snapshot: zod.record(zod.string(), zod.unknown()),
+});
+
+export const RecomputeNpvParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const RecomputeNpvBody = zod.object({
+  fullyLoadedCost: zod.number(),
+  teamCount: zod.number(),
+  baselineCycleTimeDays: zod.number(),
+  aiAcceptanceRate: zod.number(),
+  reworkRate: zod.number(),
+  discountRate: zod.number(),
+});
+
+export const RecomputeNpvResponse = zod.object({
+  modelVersion: zod.string(),
+  inputs: zod.object({
+    fullyLoadedCost: zod.number(),
+    teamCount: zod.number(),
+    baselineCycleTimeDays: zod.number(),
+    aiAcceptanceRate: zod.number(),
+    reworkRate: zod.number(),
+    discountRate: zod.number(),
+  }),
+  scenarios: zod.object({
+    low: zod.object({
+      npv3yr: zod.number(),
+      paybackMonths: zod.number(),
+      irr: zod.number(),
+      annualSavings: zod.array(zod.number()).optional(),
+    }),
+    base: zod.object({
+      npv3yr: zod.number(),
+      paybackMonths: zod.number(),
+      irr: zod.number(),
+      annualSavings: zod.array(zod.number()).optional(),
+    }),
+    high: zod.object({
+      npv3yr: zod.number(),
+      paybackMonths: zod.number(),
+      irr: zod.number(),
+      annualSavings: zod.array(zod.number()).optional(),
+    }),
+  }),
+  leverBreakdown: zod.array(
+    zod.object({
+      lever: zod.string(),
+      savings: zod.number(),
+    }),
+  ),
+});
+
 export const ListExportsParams = zod.object({
   id: zod.coerce.string(),
 });
@@ -2030,6 +2238,7 @@ export const ListExportsResponseItem = zod.object({
   version: zod.number(),
   createdAt: zod.string(),
   signature: zod.string().optional(),
+  finalizerEmail: zod.string().nullish(),
   files: zod.array(
     zod.object({
       name: zod.string(),
@@ -2042,4 +2251,10 @@ export const ListExportsResponse = zod.array(ListExportsResponseItem);
 
 export const CreateExportParams = zod.object({
   id: zod.coerce.string(),
+});
+
+export const DownloadExportFileParams = zod.object({
+  id: zod.coerce.string(),
+  exportId: zod.coerce.string(),
+  fileName: zod.coerce.string(),
 });
