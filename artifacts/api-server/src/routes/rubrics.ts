@@ -54,7 +54,7 @@ router.post("/rubrics", async (req, res): Promise<void> => {
     notes: typeof b.notes === "string" ? b.notes : "",
     body: b.body,
     cloneFromId: typeof b.cloneFromId === "string" ? b.cloneFromId : undefined,
-    createdByEmail: actor?.email ?? null,
+    createdByEmail: actor?.email ?? undefined,
   });
   res.status(201).json(toApi(row));
 });
@@ -99,25 +99,25 @@ router.post("/rubrics/:id/publish", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  // Publish events are practice-wide rather than engagement-scoped, but the
-  // activity feed is engagement-scoped today. We log to a synthetic
-  // engagement-less audit row by using a sentinel kind so a future portfolio
-  // dashboard can surface them; for now this is a best-effort audit.
-  try {
-    await db.insert(activityEventsTable).values({
-      engagementId: id, // re-use rubric id as scope so the row is queryable
-      actorUserId: req.authedUser?.id ?? null,
-      actorName: req.authedUser?.name ?? "system",
-      actorEmail: req.authedUser?.email ?? null,
-      kind: "rubric_published",
-      severity: "critical",
-      message: `Rubric ${row.version} published`,
-      payload: { rubricVersionId: row.id, version: row.version },
-    });
-  } catch {
-    // Audit logging is best-effort here because rubric scope isn't an
-    // engagement; never let it block the publish.
-  }
+  // Publish is a practice-wide event (no engagement scope). We persist it
+  // to activityEvents with engagementId=null and a payload.scope=rubric so
+  // the future portfolio dashboard can surface it. The insert MUST
+  // succeed — publish is required by spec to be audit-logged, so we let
+  // any error bubble out and 500.
+  await db.insert(activityEventsTable).values({
+    engagementId: null,
+    actorUserId: req.authedUser?.id ?? null,
+    actorName: req.authedUser?.name ?? "system",
+    actorEmail: req.authedUser?.email ?? null,
+    kind: "rubric_published",
+    severity: "critical",
+    message: `Rubric ${row.version} published`,
+    payload: {
+      scope: "rubric",
+      rubricVersionId: row.id,
+      version: row.version,
+    },
+  });
   res.json(toApi(row));
 });
 

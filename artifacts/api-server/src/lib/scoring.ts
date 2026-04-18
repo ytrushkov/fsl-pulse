@@ -139,7 +139,21 @@ export async function computeEngagementScoring(
   opts: { rubricVersionId?: string | null; persist?: boolean } = {},
 ) {
   const persist = opts.persist !== false;
-  const rubric = await resolveRubricForScoring(opts.rubricVersionId);
+  // Preserve the pinned rubric on plain recomputes. If the engagement
+  // already has a scoring row with a rubricVersionId, reuse it so that
+  // publishing a newer rubric never silently changes an engagement's
+  // scoring. Only an explicit /upgrade call switches the pin.
+  let rubricVersionId = opts.rubricVersionId ?? null;
+  if (!rubricVersionId) {
+    const [existing] = await db
+      .select({ rubricVersionId: scoringTable.rubricVersionId })
+      .from(scoringTable)
+      .where(eq(scoringTable.engagementId, engagementId));
+    if (existing?.rubricVersionId) {
+      rubricVersionId = existing.rubricVersionId;
+    }
+  }
+  const rubric = await resolveRubricForScoring(rubricVersionId);
   return computeWithRubric(engagementId, rubric, persist);
 }
 

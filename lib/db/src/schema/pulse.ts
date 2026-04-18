@@ -378,9 +378,13 @@ export const activityEventsTable = pgTable(
   "activity_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    engagementId: uuid("engagement_id")
-      .notNull()
-      .references(() => engagementsTable.id, { onDelete: "cascade" }),
+    // Nullable so practice-wide events (rubric publish, system actions) can
+    // be logged without inventing a synthetic engagement. Engagement-scoped
+    // events still set this column.
+    engagementId: uuid("engagement_id").references(
+      () => engagementsTable.id,
+      { onDelete: "cascade" },
+    ),
     actorUserId: uuid("actor_user_id").references(() => usersTable.id, {
       onDelete: "set null",
     }),

@@ -24,6 +24,7 @@ router.get("/engagements/:id/scoring", async (req, res): Promise<void> => {
     res.json({
       engagementId: id,
       rubricVersion: "1.0.0",
+      rubricVersionId: null,
       byDimension: [],
       overall: { score: 0, stage: 0, confidence: "low" },
       computedAt: new Date().toISOString(),
@@ -33,6 +34,7 @@ router.get("/engagements/:id/scoring", async (req, res): Promise<void> => {
   res.json({
     engagementId: s.engagementId,
     rubricVersion: s.rubricVersion,
+    rubricVersionId: s.rubricVersionId,
     byDimension: s.byDimension,
     overall: s.overall,
     computedAt: s.computedAt.toISOString(),
@@ -96,6 +98,7 @@ router.post("/engagements/:id/scoring/preview", async (req, res): Promise<void> 
     preview,
     current: current
       ? {
+          engagementId: current.engagementId,
           rubricVersion: current.rubricVersion,
           rubricVersionId: current.rubricVersionId,
           byDimension: current.byDimension,
