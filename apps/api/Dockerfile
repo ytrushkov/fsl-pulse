@@ -10,19 +10,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && pip install --no-cache-dir uv==0.4.15 \
     && groupadd --gid 1000 appuser \
     && useradd --uid 1000 --gid 1000 --no-create-home appuser
-WORKDIR /app
+# Workspace root — matches repo layout so uv workspace resolution works
+WORKDIR /workspace
 
 FROM base AS development
+# Copy workspace manifests and package sources
 COPY pyproject.toml ./
-RUN uv pip install -e ".[dev]" --no-cache
+COPY packages/ ./packages/
+COPY apps/api/pyproject.toml ./apps/api/pyproject.toml
+RUN uv pip install --system -e "./apps/api[dev]" --no-cache
+WORKDIR /workspace/apps/api
 USER appuser
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 FROM base AS production
 COPY pyproject.toml ./
-RUN uv pip install -e "." --no-cache
-COPY app/ ./app/
+COPY packages/ ./packages/
+COPY apps/api/pyproject.toml ./apps/api/pyproject.toml
+RUN uv pip install --system -e "./apps/api" --no-cache
+COPY apps/api/app/ ./apps/api/app/
+WORKDIR /workspace/apps/api
 USER appuser
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

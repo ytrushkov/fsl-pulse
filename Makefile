@@ -43,7 +43,11 @@ test: test-py test-ts
 
 .PHONY: test-py
 test-py:
-	uv run pytest apps/api/tests packages -q --maxfail=5
+	uv run pytest apps/api/tests packages -q --maxfail=5 -m "not integration"
+
+.PHONY: test-integration
+test-integration:
+	uv run pytest apps/api/tests -q --maxfail=5 -m "integration"
 
 .PHONY: test-ts
 test-ts:

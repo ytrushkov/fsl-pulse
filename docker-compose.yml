@@ -62,10 +62,9 @@ services:
       # Require password auth for all connections (no trust / peer auth).
       POSTGRES_HOST_AUTH_METHOD: scram-sha-256
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
-    # Port intentionally not exposed to host. Uncomment for psql debugging only,
-    # bound to loopback so it is never reachable on a shared/CI network.
-    # ports:
-    #   - "127.0.0.1:5432:5432"
+    # Exposed to loopback for local development and integration tests.
+    ports:
+      - "127.0.0.1:5433:5432"
     healthcheck:
       # pg_isready uses flags, not a connection string — password does not appear
       # in the process argument list visible to 'ps aux'.
@@ -168,7 +167,7 @@ services:
     volumes:
       - temporal_data:/etc/temporal
     environment:
-      DB: postgresql
+      DB: postgres12
       DB_PORT: ${POSTGRES_PORT}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PWD: ${POSTGRES_PASSWORD}
@@ -190,8 +189,8 @@ services:
   # ---------------------------------------------------------------------------
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/api/Dockerfile
       target: development
     restart: unless-stopped
     networks:
@@ -206,9 +205,10 @@ services:
       TEMPORAL_HOST: temporal:7233
       S3_ENDPOINT_URL: http://minio:9000
     volumes:
-      - ./apps/api:/app:cached
+      - ./apps/api:/workspace/apps/api:cached
+      - ./packages:/workspace/packages:cached
       # JWT signing keys mounted read-only; secrets/ is covered by .gitignore.
-      - ./secrets:/app/secrets:ro
+      - ./secrets:/workspace/apps/api/secrets:ro
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -239,8 +239,8 @@ services:
   # ---------------------------------------------------------------------------
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
       target: development
     restart: unless-stopped
     networks:
@@ -252,21 +252,19 @@ services:
       # Server-component calls go through the Docker network, not the host.
       API_INTERNAL_URL: http://api:8000
     volumes:
-      - ./apps/web:/app:cached
-      # Anonymous volumes prevent host node_modules / .next from shadowing the image.
-      - /app/node_modules
-      - /app/.next
+      - ./apps/web:/app/apps/web:cached
+      # Anonymous volume prevents host node_modules from shadowing the image's install.
+      - /app/apps/web/node_modules
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
       - api
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 20s
-    user: "1000:1000"
     deploy:
       resources:
         limits:
@@ -278,8 +276,8 @@ services:
   # ---------------------------------------------------------------------------
   worker:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/api/Dockerfile
       target: development
     restart: unless-stopped
     networks:
@@ -292,8 +290,9 @@ services:
       TEMPORAL_HOST: temporal:7233
       S3_ENDPOINT_URL: http://minio:9000
     volumes:
-      - ./apps/api:/app:cached
-      - ./secrets:/app/secrets:ro
+      - ./apps/api:/workspace/apps/api:cached
+      - ./packages:/workspace/packages:cached
+      - ./secrets:/workspace/apps/api/secrets:ro
     command: ["python", "-m", "app.worker"]
     depends_on:
       db:
