@@ -157,6 +157,7 @@ export interface Engagement {
   sponsor: string;
   teamCount: number;
   scope?: string;
+  industry?: string | null;
   teams?: string[];
   kickoffDate?: string | null;
   targetDeliveryDate?: string | null;
@@ -182,6 +183,7 @@ export interface CreateEngagementInput {
   /** @minimum 1 */
   teamCount: number;
   scope?: string;
+  industry?: string | null;
   teams?: string[];
   kickoffDate?: string | null;
   targetDeliveryDate?: string | null;
@@ -203,11 +205,84 @@ export interface UpdateEngagementInput {
   sponsor?: string;
   teamCount?: number;
   scope?: string;
+  industry?: string | null;
   teams?: string[];
   kickoffDate?: string | null;
   targetDeliveryDate?: string | null;
   status?: EngagementStatus;
   modules?: UpdateEngagementInputModulesItem[];
+}
+
+/**
+ * Derived from teamCount — small ≤5, medium 6–25, large >25.
+ */
+export type PortfolioSizeBand =
+  (typeof PortfolioSizeBand)[keyof typeof PortfolioSizeBand];
+
+export const PortfolioSizeBand = {
+  small: "small",
+  medium: "medium",
+  large: "large",
+} as const;
+
+export type PortfolioStallReason =
+  (typeof PortfolioStallReason)[keyof typeof PortfolioStallReason];
+
+export const PortfolioStallReason = {
+  low_survey_response: "low_survey_response",
+  stale_connectors: "stale_connectors",
+  no_finalized_deliverable: "no_finalized_deliverable",
+} as const;
+
+export interface PortfolioEngagement {
+  id: string;
+  clientName: string;
+  sponsor: string;
+  industry?: string | null;
+  teamCount: number;
+  sizeBand: PortfolioSizeBand;
+  status: EngagementStatus;
+  createdAt: string;
+  updatedAt: string;
+  targetDeliveryDate?: string | null;
+  overallScore?: number | null;
+  overallStage?: number | null;
+  rubricVersion?: string | null;
+  surveyResponseRate: number;
+  surveySent: number;
+  surveyCompleted: number;
+  connectorsTotal: number;
+  connectorsHealthy: number;
+  lastConnectorRunAt?: string | null;
+  lastActivityAt?: string | null;
+  finalizedDeliverableCount: number;
+  totalDeliverableCount: number;
+  stallReasons: PortfolioStallReason[];
+}
+
+export interface PortfolioSummary {
+  engagements: PortfolioEngagement[];
+  stalledCount: number;
+  industries: string[];
+  generatedAt: string;
+}
+
+export interface PortfolioHeatmapCell {
+  dimension: Dimension;
+  meanScore: number | null;
+  meanStage: number | null;
+  count: number;
+  suppressed?: boolean;
+}
+
+export type PortfolioHeatmapAppliedFilters = { [key: string]: unknown };
+
+export interface PortfolioHeatmap {
+  cells: PortfolioHeatmapCell[];
+  engagementCount: number;
+  anonymityFloor: number;
+  appliedFilters?: PortfolioHeatmapAppliedFilters;
+  generatedAt: string;
 }
 
 export type EngagementDashboardDeliverableStatuses = {
@@ -1012,6 +1087,26 @@ export const ExportEngagementActivityCsvSeverity = {
   info: "info",
   critical: "critical",
 } as const;
+
+export type GetPortfolioSummaryParams = {
+  industry?: string;
+  size?: PortfolioSizeBand;
+  /**
+   * ISO timestamp lower bound (engagement createdAt)
+   */
+  from?: string;
+  /**
+   * ISO timestamp upper bound (engagement createdAt)
+   */
+  to?: string;
+};
+
+export type GetPortfolioHeatmapParams = {
+  industry?: string;
+  size?: PortfolioSizeBand;
+  from?: string;
+  to?: string;
+};
 
 export type ListConnectorRunsParams = {
   /**

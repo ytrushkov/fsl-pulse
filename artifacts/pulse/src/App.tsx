@@ -29,6 +29,7 @@ import InterviewDetailView from "@/pages/engagements/interview-detail";
 import ResultsView from "@/pages/engagements/results";
 import ExportsView from "@/pages/engagements/exports";
 import RubricsPage from "@/pages/rubrics";
+import PortfolioPage from "@/pages/portfolio";
 import PublicSurveyForm from "@/pages/survey/public-survey";
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as
@@ -211,6 +212,11 @@ function AppRouter() {
       <Route path="/rubrics">
         <ProtectedRoute>
           <RubricsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/portfolio">
+        <ProtectedRoute>
+          <PortfolioPage />
         </ProtectedRoute>
       </Route>
       <Route path="/engagements/:id">

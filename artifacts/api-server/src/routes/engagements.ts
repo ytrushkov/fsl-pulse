@@ -81,6 +81,7 @@ router.post("/engagements", async (req, res): Promise<void> => {
       sponsor: b.sponsor,
       teamCount: b.teamCount,
       scope: b.scope ?? "",
+      industry: typeof b.industry === "string" && b.industry.trim() ? b.industry.trim() : null,
       teams: b.teams ?? [],
       modules: b.modules ?? [],
       kickoffDate: b.kickoffDate ? new Date(b.kickoffDate) : null,
@@ -174,11 +175,16 @@ router.patch(
       "sponsor",
       "teamCount",
       "scope",
+      "industry",
       "teams",
       "modules",
       "status",
     ]) {
       if (k in b) set[k] = b[k];
+    }
+    if ("industry" in set) {
+      const v = set.industry;
+      set.industry = typeof v === "string" && v.trim() ? v.trim() : null;
     }
     if ("kickoffDate" in b)
       set.kickoffDate = b.kickoffDate ? new Date(b.kickoffDate) : null;

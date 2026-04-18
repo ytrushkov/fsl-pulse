@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useListEngagements } from "@workspace/api-client-react";
-import { Briefcase, Search, BookCheck } from "lucide-react";
+import { Briefcase, Search, BookCheck, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -88,6 +88,16 @@ export function Sidebar() {
       </div>
 
       <div className="border-t border-sidebar-border p-4 space-y-2">
+        <Link href="/portfolio" className="w-full">
+          <Button
+            variant={location.startsWith("/portfolio") ? "default" : "outline"}
+            className="w-full justify-start gap-2 border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent"
+            data-testid="link-portfolio"
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            Portfolio
+          </Button>
+        </Link>
         <Link href="/engagements" className="w-full">
           <Button
             variant="outline"

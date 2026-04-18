@@ -35,6 +35,7 @@ const formSchema = z.object({
   sponsor: z.string().min(1, "Sponsor is required"),
   teamCount: z.coerce.number().min(1, "At least 1 team is required"),
   scope: z.string().optional(),
+  industry: z.string().optional(),
 });
 
 export function CreateEngagementDialog() {
@@ -50,6 +51,7 @@ export function CreateEngagementDialog() {
       sponsor: "",
       teamCount: 1,
       scope: "",
+      industry: "",
     },
   });
 
@@ -134,6 +136,22 @@ export function CreateEngagementDialog() {
                   </FormControl>
                   <FormDescription>
                     Estimated number of teams in scope.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="industry"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Industry</FormLabel>
+                  <FormControl>
+                    <Input placeholder="fintech, healthcare, retail…" {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    Optional — used to filter and benchmark across the portfolio.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

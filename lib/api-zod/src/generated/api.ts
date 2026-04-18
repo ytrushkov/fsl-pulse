@@ -63,6 +63,7 @@ export const ListEngagementsResponseItem = zod.object({
   sponsor: zod.string(),
   teamCount: zod.number(),
   scope: zod.string().optional(),
+  industry: zod.string().nullish(),
   teams: zod.array(zod.string()).optional(),
   kickoffDate: zod.string().nullish(),
   targetDeliveryDate: zod.string().nullish(),
@@ -87,6 +88,7 @@ export const CreateEngagementBody = zod.object({
   sponsor: zod.string(),
   teamCount: zod.number().min(1),
   scope: zod.string().optional(),
+  industry: zod.string().nullish(),
   teams: zod.array(zod.string()).optional(),
   kickoffDate: zod.string().nullish(),
   targetDeliveryDate: zod.string().nullish(),
@@ -105,6 +107,7 @@ export const GetEngagementResponse = zod.object({
   sponsor: zod.string(),
   teamCount: zod.number(),
   scope: zod.string().optional(),
+  industry: zod.string().nullish(),
   teams: zod.array(zod.string()).optional(),
   kickoffDate: zod.string().nullish(),
   targetDeliveryDate: zod.string().nullish(),
@@ -132,6 +135,7 @@ export const UpdateEngagementBody = zod.object({
   sponsor: zod.string().optional(),
   teamCount: zod.number().optional(),
   scope: zod.string().optional(),
+  industry: zod.string().nullish(),
   teams: zod.array(zod.string()).optional(),
   kickoffDate: zod.string().nullish(),
   targetDeliveryDate: zod.string().nullish(),
@@ -156,6 +160,7 @@ export const UpdateEngagementResponse = zod.object({
   sponsor: zod.string(),
   teamCount: zod.number(),
   scope: zod.string().optional(),
+  industry: zod.string().nullish(),
   teams: zod.array(zod.string()).optional(),
   kickoffDate: zod.string().nullish(),
   targetDeliveryDate: zod.string().nullish(),
@@ -268,6 +273,103 @@ export const ExportEngagementActivityCsvQueryParams = zod.object({
   actor: zod.coerce.string().optional(),
   from: zod.date().optional(),
   to: zod.date().optional(),
+});
+
+/**
+ * @summary Cross-engagement summary scoped to the signed-in user's memberships.
+ */
+export const GetPortfolioSummaryQueryParams = zod.object({
+  industry: zod.coerce.string().optional(),
+  size: zod.enum(["small", "medium", "large"]).optional(),
+  from: zod
+    .date()
+    .optional()
+    .describe("ISO timestamp lower bound (engagement createdAt)"),
+  to: zod
+    .date()
+    .optional()
+    .describe("ISO timestamp upper bound (engagement createdAt)"),
+});
+
+export const GetPortfolioSummaryResponse = zod.object({
+  engagements: zod.array(
+    zod.object({
+      id: zod.string(),
+      clientName: zod.string(),
+      sponsor: zod.string(),
+      industry: zod.string().nullish(),
+      teamCount: zod.number(),
+      sizeBand: zod
+        .enum(["small", "medium", "large"])
+        .describe("Derived from teamCount — small ≤5, medium 6–25, large >25."),
+      status: zod.enum([
+        "draft",
+        "active",
+        "collecting",
+        "ready_for_analysis",
+        "exported",
+        "archived",
+      ]),
+      createdAt: zod.string(),
+      updatedAt: zod.string(),
+      targetDeliveryDate: zod.string().nullish(),
+      overallScore: zod.number().nullish(),
+      overallStage: zod.number().nullish(),
+      rubricVersion: zod.string().nullish(),
+      surveyResponseRate: zod.number(),
+      surveySent: zod.number(),
+      surveyCompleted: zod.number(),
+      connectorsTotal: zod.number(),
+      connectorsHealthy: zod.number(),
+      lastConnectorRunAt: zod.string().nullish(),
+      lastActivityAt: zod.string().nullish(),
+      finalizedDeliverableCount: zod.number(),
+      totalDeliverableCount: zod.number(),
+      stallReasons: zod.array(
+        zod.enum([
+          "low_survey_response",
+          "stale_connectors",
+          "no_finalized_deliverable",
+        ]),
+      ),
+    }),
+  ),
+  stalledCount: zod.number(),
+  industries: zod.array(zod.string()),
+  generatedAt: zod.string(),
+});
+
+/**
+ * @summary Mean dimension scores aggregated across the filtered portfolio.
+ */
+export const GetPortfolioHeatmapQueryParams = zod.object({
+  industry: zod.coerce.string().optional(),
+  size: zod.enum(["small", "medium", "large"]).optional(),
+  from: zod.date().optional(),
+  to: zod.date().optional(),
+});
+
+export const GetPortfolioHeatmapResponse = zod.object({
+  cells: zod.array(
+    zod.object({
+      dimension: zod.enum([
+        "tooling",
+        "measurement",
+        "process",
+        "people",
+        "governance",
+        "culture",
+      ]),
+      meanScore: zod.number().nullable(),
+      meanStage: zod.number().nullable(),
+      count: zod.number(),
+      suppressed: zod.boolean().optional(),
+    }),
+  ),
+  engagementCount: zod.number(),
+  anonymityFloor: zod.number(),
+  appliedFilters: zod.record(zod.string(), zod.unknown()).optional(),
+  generatedAt: zod.string(),
 });
 
 export const ListConnectorsParams = zod.object({

@@ -220,6 +220,57 @@ paths:
         "403":
           description: Admin role required
 
+  /portfolio:
+    get:
+      operationId: getPortfolioSummary
+      tags: [portfolio]
+      summary: Cross-engagement summary scoped to the signed-in user's memberships.
+      parameters:
+        - { name: industry, in: query, required: false, schema: { type: string } }
+        - { name: size, in: query, required: false, schema: { $ref: "#/components/schemas/PortfolioSizeBand" } }
+        - { name: from, in: query, required: false, description: "ISO timestamp lower bound (engagement createdAt)", schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: "ISO timestamp upper bound (engagement createdAt)", schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortfolioSummary" }
+
+  /portfolio/heatmap:
+    get:
+      operationId: getPortfolioHeatmap
+      tags: [portfolio]
+      summary: Mean dimension scores aggregated across the filtered portfolio.
+      parameters:
+        - { name: industry, in: query, required: false, schema: { type: string } }
+        - { name: size, in: query, required: false, schema: { $ref: "#/components/schemas/PortfolioSizeBand" } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortfolioHeatmap" }
+
+  /portfolio/benchmark.csv:
+    get:
+      operationId: exportPortfolioBenchmarkCsv
+      tags: [portfolio]
+      summary: |
+        Admin-only anonymized benchmark export (industry × size × dimension means).
+        Cells with fewer than the anonymity floor (5) contributing engagements
+        are suppressed.
+      responses:
+        "200":
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+        "403":
+          description: Admin role required
+
   /engagements/{id}/connectors:
     get:
       operationId: listConnectors
@@ -1103,6 +1154,7 @@ components:
         sponsor: { type: string }
         teamCount: { type: integer }
         scope: { type: string }
+        industry: { type: string, nullable: true }
         teams:
           type: array
           items: { type: string }
@@ -1123,6 +1175,7 @@ components:
         sponsor: { type: string }
         teamCount: { type: integer, minimum: 1 }
         scope: { type: string }
+        industry: { type: string, nullable: true }
         teams:
           type: array
           items: { type: string }
@@ -1139,6 +1192,7 @@ components:
         sponsor: { type: string }
         teamCount: { type: integer }
         scope: { type: string }
+        industry: { type: string, nullable: true }
         teams:
           type: array
           items: { type: string }
@@ -1148,6 +1202,100 @@ components:
         modules:
           type: array
           items: { type: string, enum: [security, data, platform, design] }
+
+    PortfolioSizeBand:
+      type: string
+      enum: [small, medium, large]
+      description: Derived from teamCount — small ≤5, medium 6–25, large >25.
+
+    PortfolioStallReason:
+      type: string
+      enum: [low_survey_response, stale_connectors, no_finalized_deliverable]
+
+    PortfolioEngagement:
+      type: object
+      required:
+        [
+          id,
+          clientName,
+          sponsor,
+          teamCount,
+          sizeBand,
+          status,
+          createdAt,
+          updatedAt,
+          surveyResponseRate,
+          surveySent,
+          surveyCompleted,
+          connectorsTotal,
+          connectorsHealthy,
+          finalizedDeliverableCount,
+          totalDeliverableCount,
+          stallReasons,
+        ]
+      properties:
+        id: { type: string }
+        clientName: { type: string }
+        sponsor: { type: string }
+        industry: { type: string, nullable: true }
+        teamCount: { type: integer }
+        sizeBand: { $ref: "#/components/schemas/PortfolioSizeBand" }
+        status: { $ref: "#/components/schemas/EngagementStatus" }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        targetDeliveryDate: { type: string, nullable: true }
+        overallScore: { type: number, nullable: true }
+        overallStage: { type: integer, nullable: true }
+        rubricVersion: { type: string, nullable: true }
+        surveyResponseRate: { type: number }
+        surveySent: { type: integer }
+        surveyCompleted: { type: integer }
+        connectorsTotal: { type: integer }
+        connectorsHealthy: { type: integer }
+        lastConnectorRunAt: { type: string, nullable: true }
+        lastActivityAt: { type: string, nullable: true }
+        finalizedDeliverableCount: { type: integer }
+        totalDeliverableCount: { type: integer }
+        stallReasons:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioStallReason" }
+
+    PortfolioSummary:
+      type: object
+      required: [engagements, stalledCount, industries, generatedAt]
+      properties:
+        engagements:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioEngagement" }
+        stalledCount: { type: integer }
+        industries:
+          type: array
+          items: { type: string }
+        generatedAt: { type: string }
+
+    PortfolioHeatmapCell:
+      type: object
+      required: [dimension, meanScore, meanStage, count]
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        meanScore: { type: number, nullable: true }
+        meanStage: { type: number, nullable: true }
+        count: { type: integer }
+        suppressed: { type: boolean }
+
+    PortfolioHeatmap:
+      type: object
+      required: [cells, engagementCount, anonymityFloor, generatedAt]
+      properties:
+        cells:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioHeatmapCell" }
+        engagementCount: { type: integer }
+        anonymityFloor: { type: integer }
+        appliedFilters:
+          type: object
+          additionalProperties: true
+        generatedAt: { type: string }
 
     EngagementDashboard:
       type: object

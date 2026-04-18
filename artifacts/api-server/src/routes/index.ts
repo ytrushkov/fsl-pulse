@@ -17,6 +17,7 @@ import rubricsRouter from "./rubrics";
 import deliverablesRouter from "./deliverables";
 import exportsRouter from "./exports";
 import aiRouter from "./ai";
+import portfolioRouter from "./portfolio";
 import {
   requireAuth,
   requireEngagementMember,
@@ -73,5 +74,9 @@ router.use(rubricsRouter);
 router.use(deliverablesRouter);
 router.use(exportsRouter);
 router.use(aiRouter);
+// Portfolio rollup routes. They authorize internally (intersect with the
+// caller's engagement memberships) so they intentionally do NOT match the
+// `/engagements/:id/...` membership wrapper above.
+router.use(portfolioRouter);
 
 export default router;

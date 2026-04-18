@@ -41,6 +41,8 @@ import type {
   ExportEngagementActivityCsvParams,
   ExportRecord,
   GetEngagementActivityParams,
+  GetPortfolioHeatmapParams,
+  GetPortfolioSummaryParams,
   HealthStatus,
   Interview,
   InterviewTagSuggestions,
@@ -48,6 +50,8 @@ import type {
   ListConnectorRunsParams,
   NpvInputs,
   NpvResult,
+  PortfolioHeatmap,
+  PortfolioSummary,
   PreviewInvitesInput,
   PreviewScoring200,
   PreviewScoringBody,
@@ -1062,6 +1066,289 @@ export function useExportEngagementActivityCsv<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Cross-engagement summary scoped to the signed-in user's memberships.
+ */
+export const getGetPortfolioSummaryUrl = (
+  params?: GetPortfolioSummaryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/portfolio?${stringifiedParams}`
+    : `/api/portfolio`;
+};
+
+export const getPortfolioSummary = async (
+  params?: GetPortfolioSummaryParams,
+  options?: RequestInit,
+): Promise<PortfolioSummary> => {
+  return customFetch<PortfolioSummary>(getGetPortfolioSummaryUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPortfolioSummaryQueryKey = (
+  params?: GetPortfolioSummaryParams,
+) => {
+  return [`/api/portfolio`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetPortfolioSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPortfolioSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPortfolioSummaryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPortfolioSummary>>
+  > = ({ signal }) =>
+    getPortfolioSummary(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPortfolioSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPortfolioSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPortfolioSummary>>
+>;
+export type GetPortfolioSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Cross-engagement summary scoped to the signed-in user's memberships.
+ */
+
+export function useGetPortfolioSummary<
+  TData = Awaited<ReturnType<typeof getPortfolioSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPortfolioSummaryQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Mean dimension scores aggregated across the filtered portfolio.
+ */
+export const getGetPortfolioHeatmapUrl = (
+  params?: GetPortfolioHeatmapParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/portfolio/heatmap?${stringifiedParams}`
+    : `/api/portfolio/heatmap`;
+};
+
+export const getPortfolioHeatmap = async (
+  params?: GetPortfolioHeatmapParams,
+  options?: RequestInit,
+): Promise<PortfolioHeatmap> => {
+  return customFetch<PortfolioHeatmap>(getGetPortfolioHeatmapUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPortfolioHeatmapQueryKey = (
+  params?: GetPortfolioHeatmapParams,
+) => {
+  return [`/api/portfolio/heatmap`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetPortfolioHeatmapQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPortfolioHeatmap>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioHeatmapParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioHeatmap>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPortfolioHeatmapQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPortfolioHeatmap>>
+  > = ({ signal }) =>
+    getPortfolioHeatmap(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPortfolioHeatmap>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPortfolioHeatmapQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPortfolioHeatmap>>
+>;
+export type GetPortfolioHeatmapQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Mean dimension scores aggregated across the filtered portfolio.
+ */
+
+export function useGetPortfolioHeatmap<
+  TData = Awaited<ReturnType<typeof getPortfolioHeatmap>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioHeatmapParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioHeatmap>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPortfolioHeatmapQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Admin-only anonymized benchmark export (industry × size × dimension means).
+Cells with fewer than the anonymity floor (5) contributing engagements
+are suppressed.
+
+ */
+export const getExportPortfolioBenchmarkCsvUrl = () => {
+  return `/api/portfolio/benchmark.csv`;
+};
+
+export const exportPortfolioBenchmarkCsv = async (
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getExportPortfolioBenchmarkCsvUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getExportPortfolioBenchmarkCsvQueryKey = () => {
+  return [`/api/portfolio/benchmark.csv`] as const;
+};
+
+export const getExportPortfolioBenchmarkCsvQueryOptions = <
+  TData = Awaited<ReturnType<typeof exportPortfolioBenchmarkCsv>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof exportPortfolioBenchmarkCsv>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getExportPortfolioBenchmarkCsvQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof exportPortfolioBenchmarkCsv>>
+  > = ({ signal }) =>
+    exportPortfolioBenchmarkCsv({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof exportPortfolioBenchmarkCsv>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ExportPortfolioBenchmarkCsvQueryResult = NonNullable<
+  Awaited<ReturnType<typeof exportPortfolioBenchmarkCsv>>
+>;
+export type ExportPortfolioBenchmarkCsvQueryError = ErrorType<void>;
+
+/**
+ * @summary Admin-only anonymized benchmark export (industry × size × dimension means).
+Cells with fewer than the anonymity floor (5) contributing engagements
+are suppressed.
+
+ */
+
+export function useExportPortfolioBenchmarkCsv<
+  TData = Awaited<ReturnType<typeof exportPortfolioBenchmarkCsv>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof exportPortfolioBenchmarkCsv>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getExportPortfolioBenchmarkCsvQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -41,6 +41,11 @@ export const engagementsTable = pgTable("engagements", {
   sponsor: text("sponsor").notNull(),
   teamCount: integer("team_count").notNull().default(1),
   scope: text("scope").notNull().default(""),
+  // Optional client industry tag (e.g. "fintech", "healthcare", "retail").
+  // Drives portfolio dashboard filtering and the anonymized benchmark CSV
+  // export. Nullable so legacy engagements created before the portfolio
+  // shipped don't have to be backfilled.
+  industry: text("industry"),
   teams: text("teams").array().notNull().default([]),
   modules: text("modules").array().notNull().default([]),
   kickoffDate: timestamp("kickoff_date", { withTimezone: true }),

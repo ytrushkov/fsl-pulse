@@ -13,6 +13,7 @@ export interface CreateEngagementInput {
   /** @minimum 1 */
   teamCount: number;
   scope?: string;
+  industry?: string | null;
   teams?: string[];
   kickoffDate?: string | null;
   targetDeliveryDate?: string | null;
