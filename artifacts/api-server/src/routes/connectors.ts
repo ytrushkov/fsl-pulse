@@ -81,8 +81,12 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
       status: b.token ? "configured" : "not_configured",
     })
     .returning();
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "connector_added",
     message: `Connector added: ${c.label} (${c.kind})`,
   });
@@ -199,8 +203,12 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
       .update(connectorsTable)
       .set({ status: "collected", lastRunAt: new Date(), lastError: null })
       .where(eq(connectorsTable.id, id));
+    const actor = req.authedUser!;
     await db.insert(activityEventsTable).values({
       engagementId: c.engagementId,
+      actorUserId: actor.id,
+      actorName: actor.name,
+      actorEmail: actor.email,
       kind: "connector_run",
       message: `Collected ${out.recordsCollected} records from ${c.label}`,
     });

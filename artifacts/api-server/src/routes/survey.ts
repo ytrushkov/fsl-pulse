@@ -109,8 +109,12 @@ router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> =
       })),
     )
     .returning();
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "invites_sent",
     message: `Created ${rows.length} survey invites`,
   });

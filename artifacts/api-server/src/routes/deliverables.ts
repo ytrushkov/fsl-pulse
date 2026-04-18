@@ -126,8 +126,12 @@ router.post("/engagements/:id/deliverables/draft", async (req, res): Promise<voi
     })
     .where(eq(deliverablesTable.engagementId, id))
     .returning();
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "deliverables_drafted",
     message: "Deliverables drafted with AI assistance",
   });

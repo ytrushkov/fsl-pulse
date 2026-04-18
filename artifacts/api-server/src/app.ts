@@ -33,7 +33,29 @@ app.use(
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
-app.use(cors({ credentials: true, origin: true }));
+// Restrict CORS to known origins. Reflecting arbitrary origins with
+// credentials would be a CSRF risk on authenticated endpoints.
+const allowedOrigins = new Set<string>(
+  [
+    process.env.PULSE_WEB_ORIGIN,
+    process.env.REPLIT_DEV_DOMAIN
+      ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+      : undefined,
+    "http://localhost:5173",
+    "http://localhost:3000",
+  ].filter((s): s is string => Boolean(s)),
+);
+app.use(
+  cors({
+    credentials: true,
+    origin: (origin, cb) => {
+      // Same-origin / curl / server-to-server (no Origin header) are allowed.
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.has(origin)) return cb(null, true);
+      return cb(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

@@ -91,8 +91,12 @@ router.post("/engagements/:id/interviews", async (req, res): Promise<void> => {
       status: "draft",
     })
     .returning();
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "interview_created",
     message: `Interview added: ${iv.interviewee} (${iv.role})`,
   });

@@ -149,6 +149,56 @@ async function userIsMember(
   return Boolean(member);
 }
 
+async function userIsOwner(
+  user: AuthedUser,
+  engagementId: string,
+): Promise<boolean> {
+  const [member] = await db
+    .select({ role: engagementMembersTable.role })
+    .from(engagementMembersTable)
+    .where(
+      and(
+        eq(engagementMembersTable.engagementId, engagementId),
+        eq(engagementMembersTable.role, "owner"),
+        or(
+          eq(engagementMembersTable.userId, user.id),
+          eq(engagementMembersTable.email, user.email),
+        ),
+      ),
+    )
+    .limit(1);
+  return Boolean(member);
+}
+
+/**
+ * Owner-only guard for membership management. Must run after `requireAuth`.
+ * Engagement id is read from `:id` route param.
+ */
+export async function requireEngagementOwner(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const user = req.authedUser;
+  if (!user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const rawId = req.params["id"];
+  const engagementId = Array.isArray(rawId) ? rawId[0] : rawId;
+  if (!engagementId) {
+    res.status(400).json({ error: "Missing engagement id" });
+    return;
+  }
+  if (!(await userIsOwner(user, engagementId))) {
+    res
+      .status(403)
+      .json({ error: "Only engagement owners can manage members" });
+    return;
+  }
+  next();
+}
+
 /**
  * Generic resource-membership guard. Resolves the parent engagement id for the
  * resource referenced in the URL (connector / interview / artifact / evidence)
@@ -169,7 +219,8 @@ export function requireResourceMember<R>(opts: {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const resourceId = req.params[opts.paramName];
+    const raw = req.params[opts.paramName];
+    const resourceId = Array.isArray(raw) ? raw[0] : raw;
     if (!resourceId) {
       res.status(400).json({ error: `Missing ${opts.paramName}` });
       return;
@@ -201,7 +252,8 @@ export async function requireEngagementMember(
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const engagementId = req.params["id"];
+  const rawId = req.params["id"];
+  const engagementId = Array.isArray(rawId) ? rawId[0] : rawId;
   if (!engagementId) {
     res.status(400).json({ error: "Missing engagement id" });
     return;

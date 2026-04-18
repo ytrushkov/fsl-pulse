@@ -18,6 +18,9 @@ export const usersTable = pgTable(
     email: text("email").notNull(),
     name: text("name").notNull().default(""),
     avatarUrl: text("avatar_url"),
+    role: text("role", { enum: ["admin", "assessor", "viewer"] })
+      .notNull()
+      .default("assessor"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

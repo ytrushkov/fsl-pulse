@@ -72,8 +72,12 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
       extractedSummary: summary,
     })
     .returning();
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "artifact_uploaded",
     message: `Artifact uploaded: ${a.filename}`,
   });

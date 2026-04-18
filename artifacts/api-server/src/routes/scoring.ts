@@ -45,8 +45,12 @@ router.post("/engagements/:id/scoring", async (req, res): Promise<void> => {
     return;
   }
   const result = await computeEngagementScoring(id);
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "scoring_computed",
     message: `Scoring computed (rubric ${result.rubricVersion})`,
   });
@@ -72,10 +76,14 @@ router.post("/engagements/:id/scoring/override", async (req, res): Promise<void>
     justification: b.justification,
   });
   const result = await computeEngagementScoring(id);
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "score_override",
-    message: `Override applied to ${b.dimension}: stage ${b.stage}`,
+    message: `Override applied to ${b.dimension}: stage ${b.stage} by ${actor.name || actor.email}`,
   });
   res.json(result);
 });

@@ -16,7 +16,11 @@ import {
 } from "@workspace/db";
 import { paramId } from "../lib/util";
 import { DEFAULT_SURVEY_QUESTIONS } from "../lib/survey-template";
-import { requireAuth, requireEngagementMember } from "../middlewares/auth";
+import {
+  requireAuth,
+  requireEngagementMember,
+  requireEngagementOwner,
+} from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -33,7 +37,7 @@ router.get("/me", async (req, res): Promise<void> => {
     email: u.email,
     name: u.name,
     avatarUrl: u.avatarUrl,
-    role: row?.role ?? "assessor",
+    role: (row?.role ?? "assessor") as "admin" | "assessor" | "viewer",
     createdAt: row?.createdAt?.toISOString() ?? new Date().toISOString(),
   });
 });
@@ -339,7 +343,7 @@ router.get(
 router.post(
   "/engagements/:id/members",
   requireAuth,
-  requireEngagementMember,
+  requireEngagementOwner,
   async (req, res): Promise<void> => {
     const id = paramId(req.params.id);
     if (!id) {
@@ -412,7 +416,7 @@ router.post(
 router.delete(
   "/engagements/:id/members/:memberId",
   requireAuth,
-  requireEngagementMember,
+  requireEngagementOwner,
   async (req, res): Promise<void> => {
     const id = paramId(req.params.id);
     const memberId = paramId(req.params.memberId);

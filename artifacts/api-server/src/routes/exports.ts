@@ -139,8 +139,12 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
     .update(engagementsTable)
     .set({ status: "exported" })
     .where(eq(engagementsTable.id, id));
+  const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
     engagementId: id,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
     kind: "export_created",
     message: `Export v${exp.version} created`,
   });
