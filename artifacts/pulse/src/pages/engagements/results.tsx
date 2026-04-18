@@ -29,7 +29,7 @@ export default function ResultsView() {
     setLocation(`/engagements/${id}/results/${val}`);
   };
 
-  if (isLoading) {
+  if (isLoading || !deliverables) {
     return (
       <AppLayout engagementId={id}>
         <Skeleton className="h-10 w-48 mb-6" />

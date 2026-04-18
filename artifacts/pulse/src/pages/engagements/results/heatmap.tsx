@@ -3,6 +3,8 @@ import {
   Dimension,
   useUpdateDeliverables,
   getGetDeliverablesQueryKey,
+  type Deliverables,
+  type HeatmapCell,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -10,7 +12,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 
-export default function HeatmapView({ engagementId, deliverables }: any) {
+interface ViewProps {
+  engagementId: string;
+  deliverables: Deliverables;
+}
+
+export default function HeatmapView({ engagementId, deliverables }: ViewProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const update = useUpdateDeliverables();
@@ -20,9 +27,7 @@ export default function HeatmapView({ engagementId, deliverables }: any) {
   useEffect(() => {
     if (deliverables?.heatmap) {
       setNotes(
-        Object.fromEntries(
-          deliverables.heatmap.map((c: any) => [c.dimension, c.notes ?? ""]),
-        ),
+        Object.fromEntries(deliverables.heatmap.map((c) => [c.dimension, c.notes ?? ""])),
       );
     }
   }, [deliverables?.heatmap]);
@@ -34,7 +39,7 @@ export default function HeatmapView({ engagementId, deliverables }: any) {
   const stageLabels = ["1. Legacy", "2. AI-Assisted", "3. AI-Enabled", "4. AI-Native", "5. Dark Factory"];
   const isLocked = deliverables.statuses.heatmap === "locked";
   const dirty = deliverables.heatmap.some(
-    (c: any) => (notes[c.dimension] ?? "") !== (c.notes ?? ""),
+    (c) => (notes[c.dimension] ?? "") !== (c.notes ?? ""),
   );
 
   const save = () => {
@@ -42,7 +47,7 @@ export default function HeatmapView({ engagementId, deliverables }: any) {
       {
         id: engagementId,
         data: {
-          heatmap: deliverables.heatmap.map((c: any) => ({
+          heatmap: deliverables.heatmap.map((c): HeatmapCell => ({
             ...c,
             notes: notes[c.dimension] ?? c.notes ?? "",
           })),
@@ -102,7 +107,7 @@ export default function HeatmapView({ engagementId, deliverables }: any) {
           </thead>
           <tbody>
             {Object.values(Dimension).map((dim) => {
-              const cellData = deliverables.heatmap.find((c: any) => c.dimension === dim);
+              const cellData = deliverables.heatmap.find((c) => c.dimension === dim);
               const currentStage = cellData?.currentStage || 0;
               const targetStage = cellData?.targetStage || 0;
 

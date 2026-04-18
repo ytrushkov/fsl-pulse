@@ -8,6 +8,11 @@ import {
   Dimension,
   useUpdateDeliverables,
   getGetDeliverablesQueryKey,
+  type Deliverables,
+  type ActionItem,
+  type ActionItemPriority,
+  type ActionItemEffort,
+  type ActionItemImpact,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -17,13 +22,18 @@ import { Trash2, Plus } from "lucide-react";
 const PRIORITIES = ["P0", "P1", "P2"] as const;
 const SIZES = ["S", "M", "L", "XL"] as const;
 
-export default function ActionPlanView({ engagementId, deliverables }: any) {
+interface ViewProps {
+  engagementId: string;
+  deliverables: Deliverables;
+}
+
+export default function ActionPlanView({ engagementId, deliverables }: ViewProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const update = useUpdateDeliverables();
   // Editable copy of the action plan; serialized straight back to the
   // server when the assessor clicks Save.
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<ActionItem[]>([]);
   useEffect(() => {
     if (deliverables?.actionPlan) setItems(deliverables.actionPlan);
   }, [deliverables?.actionPlan]);
@@ -35,7 +45,7 @@ export default function ActionPlanView({ engagementId, deliverables }: any) {
   const isLocked = deliverables.statuses.actionPlan === "locked";
   const dirty = JSON.stringify(items) !== JSON.stringify(deliverables.actionPlan);
 
-  const setItem = (id: string, patch: Partial<any>) =>
+  const setItem = (id: string, patch: Partial<ActionItem>) =>
     setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   const removeItem = (id: string) => setItems((xs) => xs.filter((x) => x.id !== id));
   const addItem = () =>
@@ -122,7 +132,7 @@ export default function ActionPlanView({ engagementId, deliverables }: any) {
                       {item.priority}
                     </Badge>
                   ) : (
-                    <Select value={item.priority} onValueChange={(v) => setItem(item.id, { priority: v })}>
+                    <Select value={item.priority} onValueChange={(v) => setItem(item.id, { priority: v as ActionItemPriority })}>
                       <SelectTrigger className="h-8 w-20 font-mono"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {PRIORITIES.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
@@ -145,7 +155,7 @@ export default function ActionPlanView({ engagementId, deliverables }: any) {
                   {isLocked ? (
                     <Badge variant="outline" className="capitalize">{item.dimension}</Badge>
                   ) : (
-                    <Select value={item.dimension} onValueChange={(v) => setItem(item.id, { dimension: v })}>
+                    <Select value={item.dimension} onValueChange={(v) => setItem(item.id, { dimension: v as ActionItem["dimension"] })}>
                       <SelectTrigger className="h-8 w-32 capitalize"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {Object.values(Dimension).map((d) => (
@@ -161,7 +171,7 @@ export default function ActionPlanView({ engagementId, deliverables }: any) {
                       {item.effort}
                     </Badge>
                   ) : (
-                    <Select value={item.effort} onValueChange={(v) => setItem(item.id, { effort: v })}>
+                    <Select value={item.effort} onValueChange={(v) => setItem(item.id, { effort: v as ActionItemEffort })}>
                       <SelectTrigger className="h-8 w-16 font-mono"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {SIZES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -175,7 +185,7 @@ export default function ActionPlanView({ engagementId, deliverables }: any) {
                       {item.impact}
                     </Badge>
                   ) : (
-                    <Select value={item.impact} onValueChange={(v) => setItem(item.id, { impact: v })}>
+                    <Select value={item.impact} onValueChange={(v) => setItem(item.id, { impact: v as ActionItemImpact })}>
                       <SelectTrigger className="h-8 w-16 font-mono"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {SIZES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}

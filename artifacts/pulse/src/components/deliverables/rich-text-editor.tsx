@@ -182,11 +182,26 @@ function MarkdownPreview({ source }: { source: string }) {
   return <>{out}</>;
 }
 
+// Allowlist link schemes so a `[label](javascript:…)` markdown link can't
+// produce an executable href in the rendered preview. Anything outside
+// http/https/mailto is dropped to a non-link span.
+const SAFE_HREF = /^(https?:|mailto:)/i;
+function safeHref(raw: string) {
+  const trimmed = raw.trim();
+  return SAFE_HREF.test(trimmed) ? trimmed : null;
+}
+
 function inline(s: string) {
   return escapeHtml(s)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/_([^_]+)_/g, "<em>$1</em>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label: string, href: string) => {
+      const safe = safeHref(href);
+      if (!safe) return label;
+      // href is already escaped by escapeHtml above (the whole string was
+      // escaped before regex). Same for label.
+      return `<a href="${safe}" target="_blank" rel="noreferrer noopener">${label}</a>`;
+    });
 }
 
 function escapeHtml(s: string) {

@@ -1,13 +1,22 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useUpdateDeliverables, getGetDeliverablesQueryKey } from "@workspace/api-client-react";
+import {
+  useUpdateDeliverables,
+  getGetDeliverablesQueryKey,
+  type Deliverables,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 import { RichTextEditor } from "@/components/deliverables/rich-text-editor";
 
-export default function EntryPointView({ engagementId, deliverables }: any) {
+interface ViewProps {
+  engagementId: string;
+  deliverables: Deliverables;
+}
+
+export default function EntryPointView({ engagementId, deliverables }: ViewProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const update = useUpdateDeliverables();
@@ -108,7 +117,7 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
                 Hypr Agents
               </h3>
               <ul className="space-y-4">
-                {data.hyprAgents?.map((agent: any, i: number) => (
+                {data.hyprAgents?.map((agent, i: number) => (
                   <li key={i} className="text-sm">
                     <span className="font-bold text-foreground block mb-1">{agent.name}</span>
                     <span className="text-muted-foreground leading-snug">{agent.relevance}</span>

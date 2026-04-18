@@ -370,20 +370,11 @@ router.post(
     const raw = (req.body?.inputs ?? req.body ?? {}) as Partial<NpvInputs>;
     const inputs = normalizeNpvInputs(raw);
     const next = computeNpv(inputs);
-    await db
-      .update(deliverablesTable)
-      .set({ npv: next })
-      .where(eq(deliverablesTable.engagementId, id));
-    const actor = req.authedUser!;
-    await snapshotVersion(id, "npv", next, actor.email);
-    await recordActivity(req, {
-      engagementId: id,
-      kind: "deliverable_updated",
-      message: "NPV recomputed with new inputs",
-      payload: { inputs },
-    });
-    // OpenAPI contract: return the NpvResult directly so the client can
-    // splice it straight into the editor's working state.
+    // Pure recompute: this endpoint is read-only and does NOT persist or
+    // snapshot a new version. The client splices the returned NpvResult
+    // into its working state and only PATCH /deliverables (or finalize)
+    // writes / versions. This keeps live what-if iteration cheap and
+    // avoids polluting version history with every keystroke.
     res.json(next);
   },
 );

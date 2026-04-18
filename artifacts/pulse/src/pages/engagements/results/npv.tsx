@@ -8,6 +8,9 @@ import {
   useRecomputeNpv,
   useUpdateDeliverables,
   getGetDeliverablesQueryKey,
+  type Deliverables,
+  type NpvResult,
+  type NpvInputs,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -16,11 +19,18 @@ import { Calculator, Save } from "lucide-react";
 
 /**
  * NPV view: shows the headline scenarios + lever breakdown plus an
- * editable inputs panel. Recompute hits the pure server helper (no AI),
- * giving the assessor instant what-if iteration before they save the
- * recomputed result back into the deliverable.
+ * editable inputs panel. The /npv/recompute endpoint is pure — it neither
+ * persists nor snapshots — so the debounced live recompute lets the
+ * assessor iterate freely. Only the explicit "Save" button persists the
+ * working state through PATCH /deliverables, which is the single
+ * authoritative write that produces a new version row.
  */
-export default function NpvView({ engagementId, deliverables }: any) {
+interface ViewProps {
+  engagementId: string;
+  deliverables: Deliverables;
+}
+
+export default function NpvView({ engagementId, deliverables }: ViewProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const recompute = useRecomputeNpv();
@@ -28,10 +38,10 @@ export default function NpvView({ engagementId, deliverables }: any) {
 
   // Local editable copy of the NPV result so recompute can re-render
   // immediately without waiting for the deliverables refetch.
-  const [working, setWorking] = useState<any>(null);
+  const [working, setWorking] = useState<NpvResult | null>(null);
   // Track which inputs the assessor edited so we only auto-recompute
   // when the assumptions change, not on every parent refetch.
-  const [pendingInputs, setPendingInputs] = useState<Record<string, number> | null>(null);
+  const [pendingInputs, setPendingInputs] = useState<Partial<NpvInputs> | null>(null);
   useEffect(() => {
     if (deliverables?.npv) setWorking(deliverables.npv);
   }, [deliverables?.npv]);
@@ -46,10 +56,9 @@ export default function NpvView({ engagementId, deliverables }: any) {
   const dirty = JSON.stringify(working) !== JSON.stringify(deliverables.npv);
 
   // Map editable snapshot keys to the server's NpvInputs shape (the
-  // OpenAPI body). The snapshot keeps a few legacy fields the model has
-  // historically returned (toolingAnnualCost, defectsPerSprint) — those
-  // aren't part of NpvInputs so we don't forward them.
-  const buildInputsBody = () => ({
+  // OpenAPI body). All six fields are required so we clamp/round here and
+  // never forward optional/legacy keys.
+  const buildInputsBody = (): NpvInputs => ({
     fullyLoadedCost: Math.max(0, Number(data.inputs.fullyLoadedCost ?? 200000)),
     teamCount: Math.max(1, Math.round(Number(data.inputs.teamCount ?? 8))),
     baselineCycleTimeDays: Math.max(1, Number(data.inputs.baselineCycleTimeDays ?? 14)),
@@ -58,8 +67,8 @@ export default function NpvView({ engagementId, deliverables }: any) {
     discountRate: Math.min(1, Math.max(0, Number(data.inputs.discountRate ?? 0.1))),
   });
 
-  const setInput = (key: string, value: number) => {
-    setWorking((w: any) => ({ ...w, inputs: { ...w.inputs, [key]: value } }));
+  const setInput = (key: keyof NpvInputs, value: number) => {
+    setWorking((w) => (w ? { ...w, inputs: { ...w.inputs, [key]: value } } : w));
     setPendingInputs((p) => ({ ...(p ?? {}), [key]: value }));
   };
 
@@ -189,7 +198,7 @@ export default function NpvView({ engagementId, deliverables }: any) {
         <div>
           <h3 className="text-lg font-bold mb-4 border-b pb-2">Value Levers</h3>
           <div className="space-y-4 pt-2">
-            {data.leverBreakdown.map((lever: any) => (
+            {data.leverBreakdown.map((lever) => (
               <div key={lever.lever}>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="font-medium text-foreground">{lever.lever}</span>

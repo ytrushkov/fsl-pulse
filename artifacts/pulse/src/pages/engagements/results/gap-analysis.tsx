@@ -2,13 +2,23 @@ import { useEffect, useState } from "react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useUpdateDeliverables, getGetDeliverablesQueryKey } from "@workspace/api-client-react";
+import {
+  useUpdateDeliverables,
+  getGetDeliverablesQueryKey,
+  type Deliverables,
+  type GapAnalysisItem,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 import { RichTextEditor } from "@/components/deliverables/rich-text-editor";
 
-export default function GapAnalysisView({ engagementId, deliverables }: any) {
+interface ViewProps {
+  engagementId: string;
+  deliverables: Deliverables;
+}
+
+export default function GapAnalysisView({ engagementId, deliverables }: ViewProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const update = useUpdateDeliverables();
@@ -17,21 +27,21 @@ export default function GapAnalysisView({ engagementId, deliverables }: any) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   useEffect(() => {
     if (deliverables?.gapAnalysis) {
-      setDrafts(Object.fromEntries(deliverables.gapAnalysis.map((g: any) => [g.dimension, g.narrativeMd])));
+      setDrafts(Object.fromEntries(deliverables.gapAnalysis.map((g) => [g.dimension, g.narrativeMd])));
     }
   }, [deliverables?.gapAnalysis]);
 
   if (!deliverables?.gapAnalysis?.length) return <div className="p-8 text-center text-muted-foreground">No gap analysis data available.</div>;
 
   const isLocked = deliverables.statuses.gapAnalysis === "locked";
-  const dirty = deliverables.gapAnalysis.some((g: any) => drafts[g.dimension] !== g.narrativeMd);
+  const dirty = deliverables.gapAnalysis.some((g) => drafts[g.dimension] !== g.narrativeMd);
 
   const save = () => {
     update.mutate(
       {
         id: engagementId,
         data: {
-          gapAnalysis: deliverables.gapAnalysis.map((g: any) => ({
+          gapAnalysis: deliverables.gapAnalysis.map((g): GapAnalysisItem => ({
             ...g,
             narrativeMd: drafts[g.dimension] ?? g.narrativeMd,
           })),
@@ -65,8 +75,8 @@ export default function GapAnalysisView({ engagementId, deliverables }: any) {
         </div>
       )}
 
-      <Accordion type="multiple" defaultValue={deliverables.gapAnalysis.map((g: any) => g.dimension)} className="w-full">
-        {deliverables.gapAnalysis.map((item: any) => (
+      <Accordion type="multiple" defaultValue={deliverables.gapAnalysis.map((g) => g.dimension)} className="w-full">
+        {deliverables.gapAnalysis.map((item) => (
           <AccordionItem key={item.dimension} value={item.dimension} className="border bg-card mb-4 rounded-lg overflow-hidden px-2 shadow-sm">
             <AccordionTrigger className="hover:no-underline px-4 py-4">
               <div className="flex items-center justify-between w-full pr-4">
