@@ -770,9 +770,17 @@ async function runCicd(
     });
     return out;
   }
-  // Other CI providers (CircleCI, Jenkins, GitLab CI) are recognized but
-  // collection is currently limited — surface the gap explicitly so the
-  // assessor knows the dimension is uncovered rather than silently empty.
+  if (provider === "circleci") {
+    return runCircleCi(token, config);
+  }
+  if (provider === "gitlab_ci") {
+    // GitLab CI shares the same backend as the GitLab connector; reuse the
+    // pipeline metrics path so deploy/change-fail come out normalized.
+    return runGitlab(token, config);
+  }
+  // Truly unsupported providers (e.g. self-hosted Jenkins without a stable
+  // public API) get an explicit "no collector available" gap so the
+  // dimension is visibly uncovered.
   return {
     recordsCollected: 0,
     summary: { provider, deploysPerDay: null, changeFailureRate: null },
@@ -781,9 +789,113 @@ async function runCicd(
         dimension: "process",
         signalType: "gap",
         stageHint: 1,
-        text: `CI/CD connector configured for ${provider}, but automated metric collection (deploys/day, change-failure rate) is not yet implemented for this provider. Add a GitHub or GitLab connector for full DORA coverage.`,
+        text: `CI/CD connector configured for ${provider}, but no automated collector exists for this provider yet. Add a GitHub Actions, GitLab CI, or CircleCI connector for DORA coverage.`,
       },
     ],
+  };
+}
+
+// Pulls the most recent workflows/pipelines from a CircleCI project to
+// compute the same DORA-style proxies as GitHub/GitLab. Config required:
+//   provider: "circleci", vcs: "github" | "bitbucket", org: "<org-slug>",
+//   project: "<repo-name>"
+async function runCircleCi(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorRunResult> {
+  const vcs = String(config.vcs ?? "github");
+  const org = String(config.org ?? "");
+  const project = String(config.project ?? "");
+  const evidence: CollectedEvidence[] = [];
+  if (!org || !project) {
+    return {
+      recordsCollected: 0,
+      summary: { provider: "circleci" },
+      evidence: [
+        {
+          dimension: "process",
+          signalType: "gap",
+          stageHint: 1,
+          text: "CircleCI connector missing org/project config — cannot collect pipeline metrics.",
+        },
+      ],
+    };
+  }
+  const slug = `${vcs}/${org}/${project}`;
+  // CircleCI v2 API: list pipelines for the project (paginated). We pull the
+  // first 100 to keep the call cheap; over a 30-day window most projects
+  // produce well under that.
+  const headers = { "Circle-Token": token, Accept: "application/json" };
+  const r = await fetch(
+    `https://circleci.com/api/v2/project/${encodeURIComponent(slug)}/pipeline?limit=100`,
+    { headers },
+  );
+  if (!r.ok) throw new Error(`CircleCI ${r.status}`);
+  const data = (await r.json()) as {
+    items: Array<{ id: string; created_at: string; state: string }>;
+  };
+  const since = Date.now() - 30 * 86_400_000;
+  const recent = data.items.filter(
+    (p) => new Date(p.created_at).getTime() >= since,
+  );
+
+  // For each pipeline, fetch its workflows to determine pass/fail.
+  let workflowsTotal = 0;
+  let workflowsFailed = 0;
+  for (const p of recent.slice(0, 30)) {
+    try {
+      const wr = await fetch(
+        `https://circleci.com/api/v2/pipeline/${p.id}/workflow`,
+        { headers },
+      );
+      if (!wr.ok) continue;
+      const w = (await wr.json()) as {
+        items: Array<{ status: string }>;
+      };
+      workflowsTotal += w.items.length;
+      workflowsFailed += w.items.filter(
+        (x) => x.status === "failed" || x.status === "failing",
+      ).length;
+    } catch {
+      // ignore individual pipeline errors
+    }
+  }
+
+  const summary: Record<string, unknown> = {
+    provider: "circleci",
+    pipelines30d: recent.length,
+    workflows30d: workflowsTotal,
+    workflowsFailed30d: workflowsFailed,
+  };
+  if (workflowsTotal > 0) {
+    const deploysPerDay = workflowsTotal / 30;
+    summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
+    evidence.push({
+      dimension: "process",
+      signalType: deploysPerDay >= 1 ? "strength" : "gap",
+      stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
+      text: `Deployment frequency (CircleCI ${slug}): ~${deploysPerDay.toFixed(2)} workflows/day (30d).`,
+    });
+    const cfr = workflowsFailed / workflowsTotal;
+    summary.changeFailureRate = Number(cfr.toFixed(3));
+    evidence.push({
+      dimension: "measurement",
+      signalType: cfr <= 0.15 ? "strength" : "gap",
+      stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
+      text: `Change failure rate (CircleCI ${slug}): ${(cfr * 100).toFixed(1)}% (${workflowsFailed}/${workflowsTotal}).`,
+    });
+  } else {
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: `No CircleCI workflows found in the last 30 days for ${slug}.`,
+    });
+  }
+  return {
+    recordsCollected: workflowsTotal + recent.length,
+    summary,
+    evidence,
   };
 }
 
@@ -817,7 +929,15 @@ async function runAiTooling(
   config: Record<string, unknown>,
 ): Promise<ConnectorRunResult> {
   const provider = String(config.provider ?? "openai");
+  // engineerCount is the denominator for adoption rate. Assessors enter this
+  // as part of connector config (or it can come from the People module);
+  // when absent, we emit raw counts and an explicit gap.
+  const engineerCount = Number(config.engineerCount ?? 0);
   let modelCount = 0;
+  let aiUsersCount: number | null = null;
+  let aiUsersLabel = "";
+  const evidence: CollectedEvidence[] = [];
+
   if (provider === "openai") {
     const r = await fetch("https://api.openai.com/v1/models", {
       headers: { Authorization: `Bearer ${token}` },
@@ -825,6 +945,22 @@ async function runAiTooling(
     if (r.ok) {
       const data = (await r.json()) as { data: unknown[] };
       modelCount = data.data.length;
+    }
+    // OpenAI Admin API: count users with org access. This is the single
+    // non-survey adoption signal OpenAI exposes (paid endpoint, requires an
+    // admin key — silently degrades if the token is a regular project key).
+    try {
+      const ur = await fetch(
+        "https://api.openai.com/v1/organization/users?limit=100",
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (ur.ok) {
+        const ud = (await ur.json()) as { data: Array<{ id: string }> };
+        aiUsersCount = ud.data.length;
+        aiUsersLabel = "OpenAI org members";
+      }
+    } catch {
+      // ignore — non-admin tokens 403 here, which is expected.
     }
   } else if (provider === "anthropic") {
     const r = await fetch("https://api.anthropic.com/v1/models", {
@@ -834,32 +970,49 @@ async function runAiTooling(
       const data = (await r.json()) as { data: unknown[] };
       modelCount = data.data.length;
     }
+    // Anthropic does not expose an organization users endpoint publicly;
+    // adoption stays null and we emit a gap that points at the survey.
   }
-  // Adoption rate is genuinely hard to extract per-provider without per-user
-  // usage APIs (which most don't expose). We surface the integration as
-  // evidence of "AI tooling is in place" (tooling dimension) and explicitly
-  // call out the adoption-measurement gap (people dimension) so the scoring
-  // engine doesn't over-credit the org for merely having a key.
-  const evidence: CollectedEvidence[] = [
-    {
-      dimension: "tooling",
-      signalType: modelCount > 0 ? "strength" : "gap",
-      stageHint: modelCount > 0 ? 3 : 2,
-      text: `AI tooling provider "${provider}" configured with ${modelCount} models accessible.`,
-    },
-    {
+
+  evidence.push({
+    dimension: "tooling",
+    signalType: modelCount > 0 ? "strength" : "gap",
+    stageHint: modelCount > 0 ? 3 : 2,
+    text: `AI tooling provider "${provider}" configured with ${modelCount} models accessible.`,
+  });
+
+  let adoptionPct: number | null = null;
+  if (aiUsersCount !== null && engineerCount > 0) {
+    adoptionPct = Math.min(100, (aiUsersCount / engineerCount) * 100);
+    evidence.push({
+      dimension: "people",
+      signalType: adoptionPct >= 50 ? "strength" : "gap",
+      stageHint: adoptionPct >= 80 ? 5 : adoptionPct >= 50 ? 4 : adoptionPct >= 20 ? 3 : 2,
+      text: `AI tool adoption: ~${adoptionPct.toFixed(0)}% (${aiUsersCount} ${aiUsersLabel} / ${engineerCount} engineers).`,
+    });
+  } else if (aiUsersCount !== null) {
+    evidence.push({
+      dimension: "people",
+      signalType: "quote",
+      text: `AI tool reach: ${aiUsersCount} ${aiUsersLabel}. Set engineerCount in connector config to compute adoption %.`,
+    });
+  } else {
+    evidence.push({
       dimension: "people",
       signalType: "gap",
       stageHint: 2,
-      text: `AI tool adoption rate (active users / engineers) cannot be measured automatically for ${provider} — pair this connector with the adoption-survey module to capture it.`,
-    },
-  ];
+      text: `AI tool adoption rate not measurable for ${provider} via API alone. Provide an admin token (OpenAI) and engineerCount in config, or rely on the adoption-survey module.`,
+    });
+  }
+
   return {
-    recordsCollected: modelCount,
+    recordsCollected: modelCount + (aiUsersCount ?? 0),
     summary: {
       provider,
       modelsAvailable: modelCount,
-      adoptionRatePctApprox: null,
+      aiUsersCount,
+      engineerCount: engineerCount || null,
+      adoptionRatePct: adoptionPct === null ? null : Number(adoptionPct.toFixed(1)),
     },
     evidence,
   };
