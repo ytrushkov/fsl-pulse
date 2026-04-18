@@ -42,10 +42,12 @@ import {
   AlertCircle,
   Eye,
   Clock,
+  History,
 } from "lucide-react";
 import { CreateConnectorDialog } from "@/components/connectors/create-connector-dialog";
 import { EditConnectorDialog } from "@/components/connectors/edit-connector-dialog";
 import { SignalsDrawer } from "@/components/connectors/signals-drawer";
+import { RunHistoryDialog } from "@/components/connectors/run-history-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { formatRelative } from "@/lib/format";
 
@@ -107,6 +109,7 @@ export default function ConnectorsList() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Connector | null>(null);
   const [signalsFor, setSignalsFor] = useState<Connector | null>(null);
+  const [historyFor, setHistoryFor] = useState<Connector | null>(null);
 
   const { data: connectors, isLoading } = useListConnectors(id, {
     query: { enabled: !!id, queryKey: getListConnectorsQueryKey(id) },
@@ -285,6 +288,14 @@ export default function ConnectorsList() {
                             onClick={() => setSignalsFor(connector)}
                           >
                             <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Run history"
+                            onClick={() => setHistoryFor(connector)}
+                          >
+                            <History className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"

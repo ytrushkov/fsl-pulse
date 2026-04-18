@@ -143,31 +143,136 @@ async function runGithub(
     });
   }
 
-  // PR review activity heuristic
-  let prsReviewed = 0;
+  // ---- DORA-style normalized signals ----------------------------------
+  // We sample up to 5 repos and a 30-day window to keep runs cheap. Each
+  // metric gets its own evidence row tagged to the right dimension so the
+  // scoring engine can pick them up consistently across providers.
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  let workflowRunsTotal = 0;
+  let workflowRunsFailed = 0;
+  let workflowRunsSucceeded = 0;
+  let prsSampled = 0;
   let prsMerged = 0;
+  let prLeadTimeSumMs = 0;
+  let prLeadTimeCount = 0;
+  let prsWithReviews = 0;
+
   for (const r of repos.slice(0, 5)) {
     try {
-      const prs = await ghFetch<Array<{ number: number; merged_at: string | null }>>(
+      // Workflow runs in the last 30 days → deployment frequency proxy +
+      // change-failure-rate proxy. We use `created` as an upper bound on
+      // both so the same call serves both metrics.
+      const wfr = await ghFetch<{
+        total_count: number;
+        workflow_runs: Array<{ conclusion: string | null; created_at: string }>;
+      }>(
         token,
-        `https://api.github.com/repos/${org}/${r.name}/pulls?state=closed&per_page=20`,
+        `https://api.github.com/repos/${org}/${r.name}/actions/runs?per_page=100&created=>=${since}`,
       );
-      prsReviewed += prs.length;
-      prsMerged += prs.filter((p) => p.merged_at).length;
+      workflowRunsTotal += wfr.workflow_runs.length;
+      workflowRunsSucceeded += wfr.workflow_runs.filter(
+        (w) => w.conclusion === "success",
+      ).length;
+      workflowRunsFailed += wfr.workflow_runs.filter(
+        (w) => w.conclusion === "failure",
+      ).length;
+      recordsCollected += wfr.workflow_runs.length;
+    } catch {
+      // ignore — repo may not have Actions enabled
+    }
+    try {
+      const prs = await ghFetch<
+        Array<{
+          number: number;
+          merged_at: string | null;
+          created_at: string;
+          requested_reviewers?: unknown[];
+        }>
+      >(
+        token,
+        `https://api.github.com/repos/${org}/${r.name}/pulls?state=closed&per_page=30`,
+      );
+      prsSampled += prs.length;
+      for (const p of prs) {
+        if (p.merged_at) {
+          prsMerged += 1;
+          const lead =
+            new Date(p.merged_at).getTime() - new Date(p.created_at).getTime();
+          if (lead > 0) {
+            prLeadTimeSumMs += lead;
+            prLeadTimeCount += 1;
+          }
+        }
+        // Get review count for this PR (one call per PR is too many; sample
+        // by checking requested_reviewers presence as a cheap proxy for
+        // "code review automation/process is in place").
+        if (
+          Array.isArray(p.requested_reviewers) &&
+          p.requested_reviewers.length > 0
+        ) {
+          prsWithReviews += 1;
+        }
+      }
     } catch {
       // ignore
     }
   }
-  summary.prsSampled = prsReviewed;
-  summary.prsMerged = prsMerged;
-  if (prsMerged > 0) {
+
+  // Deployment frequency (workflow runs / day, last 30 days) — proxy for
+  // DORA "deployment frequency" since CI runs are the closest universal
+  // signal we have without per-repo deploy-environment config.
+  const deploysPerDay = workflowRunsTotal / 30;
+  summary.workflowRuns30d = workflowRunsTotal;
+  summary.workflowRunsSucceeded30d = workflowRunsSucceeded;
+  summary.workflowRunsFailed30d = workflowRunsFailed;
+  summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
+  if (workflowRunsTotal > 0) {
     evidence.push({
       dimension: "process",
-      signalType: "strength",
-      stageHint: 3,
-      text: `${prsMerged} merged PRs across sampled repos — active code review process.`,
+      signalType: deploysPerDay >= 1 ? "strength" : "gap",
+      stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
+      text: `Deployment frequency proxy: ~${deploysPerDay.toFixed(2)} CI runs/day across sampled repos (30d).`,
     });
   }
+
+  // Change failure rate — failed runs / total runs. Industry "elite" ~0–15%.
+  if (workflowRunsTotal > 0) {
+    const cfr = workflowRunsFailed / workflowRunsTotal;
+    summary.changeFailureRate = Number(cfr.toFixed(3));
+    evidence.push({
+      dimension: "measurement",
+      signalType: cfr <= 0.15 ? "strength" : "gap",
+      stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
+      text: `Change failure rate proxy: ${(cfr * 100).toFixed(1)}% (${workflowRunsFailed}/${workflowRunsTotal} CI runs failed, 30d).`,
+    });
+  }
+
+  // Lead time for changes — median PR created→merged across the sample.
+  if (prLeadTimeCount > 0) {
+    const avgHours = prLeadTimeSumMs / prLeadTimeCount / 3_600_000;
+    summary.leadTimeHoursAvg = Number(avgHours.toFixed(1));
+    evidence.push({
+      dimension: "process",
+      signalType: avgHours <= 48 ? "strength" : "gap",
+      stageHint: avgHours <= 24 ? 5 : avgHours <= 48 ? 4 : avgHours <= 168 ? 3 : 2,
+      text: `Lead time for changes: avg ${avgHours.toFixed(1)} hours from PR open to merge (n=${prLeadTimeCount}).`,
+    });
+  }
+
+  // Code-review automation / process — share of merged PRs that had at
+  // least one requested reviewer.
+  if (prsMerged > 0) {
+    const reviewRate = prsWithReviews / prsMerged;
+    summary.prReviewRate = Number(reviewRate.toFixed(2));
+    evidence.push({
+      dimension: "process",
+      signalType: reviewRate >= 0.7 ? "strength" : "gap",
+      stageHint: reviewRate >= 0.9 ? 5 : reviewRate >= 0.7 ? 4 : 2,
+      text: `Code review automation: ${(reviewRate * 100).toFixed(0)}% of merged PRs had requested reviewers (n=${prsMerged}).`,
+    });
+  }
+  summary.prsSampled = prsSampled;
+  summary.prsMerged = prsMerged;
 
   return { recordsCollected, summary, evidence };
 }
@@ -180,10 +285,27 @@ async function verifyGitlab(
   const baseUrl = String(config.baseUrl ?? "https://gitlab.com").replace(/\/$/, "");
   try {
     await assertSafeUrl(baseUrl);
+    // 1. baseUrl reachable + credentials valid (GET /user).
     const r = await fetch(`${baseUrl}/api/v4/user`, { headers: { "PRIVATE-TOKEN": token } });
-    if (!r.ok) throw new Error(`GitLab ${r.status}`);
+    if (!r.ok) throw new Error(`GitLab auth ${r.status}`);
     const me = (await r.json()) as { username: string };
-    return { ok: true, message: `Authenticated as ${me.username}` };
+    // 2. If a group is configured, confirm the credential can actually see it
+    //    — otherwise verify would falsely report green for a token that has no
+    //    access to the data we need to collect.
+    const group = String(config.group ?? "");
+    if (group) {
+      const gr = await fetch(
+        `${baseUrl}/api/v4/groups/${encodeURIComponent(group)}`,
+        { headers: { "PRIVATE-TOKEN": token } },
+      );
+      if (!gr.ok) {
+        return {
+          ok: false,
+          message: `Authenticated as ${me.username}, but cannot access group "${group}" (HTTP ${gr.status})`,
+        };
+      }
+    }
+    return { ok: true, message: `Authenticated as ${me.username}`, details: { username: me.username, group } };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Verify failed" };
   }
@@ -230,12 +352,30 @@ async function verifyJira(
   try {
     await assertSafeUrl(baseUrl);
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
-    const r = await fetch(`${baseUrl}/rest/api/3/myself`, {
-      headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-    });
-    if (!r.ok) throw new Error(`Jira ${r.status}`);
+    const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
+    // 1. baseUrl reachable + credentials valid (GET /myself).
+    const r = await fetch(`${baseUrl}/rest/api/3/myself`, { headers });
+    if (!r.ok) throw new Error(`Jira auth ${r.status}`);
     const me = (await r.json()) as { displayName: string };
-    return { ok: true, message: `Authenticated as ${me.displayName}` };
+    // 2. If a project key is configured, confirm the credential can read it.
+    const project = String(config.project ?? "");
+    if (project) {
+      const pr = await fetch(
+        `${baseUrl}/rest/api/3/project/${encodeURIComponent(project)}`,
+        { headers },
+      );
+      if (!pr.ok) {
+        return {
+          ok: false,
+          message: `Authenticated as ${me.displayName}, but cannot access project "${project}" (HTTP ${pr.status})`,
+        };
+      }
+    }
+    return {
+      ok: true,
+      message: `Authenticated as ${me.displayName}`,
+      details: { displayName: me.displayName, project },
+    };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Verify failed" };
   }
@@ -272,18 +412,49 @@ async function runJira(
   };
 }
 
-async function verifyLinear(token: string): Promise<ConnectorVerifyResult> {
+async function verifyLinear(
+  token: string,
+  config: Record<string, unknown> = {},
+): Promise<ConnectorVerifyResult> {
   if (!token) return { ok: false, message: "Token required" };
   try {
+    // Combined query: viewer (auth check) + teams (workspace membership +
+    // optional team-key access check). Linear has no separate base URL; the
+    // GraphQL endpoint is fixed.
     const r = await fetch("https://api.linear.app/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: token },
-      body: JSON.stringify({ query: "{ viewer { name email } }" }),
+      body: JSON.stringify({
+        query:
+          "{ viewer { name email } teams(first: 50) { nodes { id key name } } }",
+      }),
     });
     if (!r.ok) throw new Error(`Linear ${r.status}`);
-    const data = (await r.json()) as { data?: { viewer?: { name: string } } };
+    const data = (await r.json()) as {
+      data?: {
+        viewer?: { name: string };
+        teams?: { nodes: Array<{ id: string; key: string; name: string }> };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    if (data.errors?.length) throw new Error(data.errors[0]!.message);
     if (!data.data?.viewer) throw new Error("Invalid response");
-    return { ok: true, message: `Authenticated as ${data.data.viewer.name}` };
+    const teams = data.data.teams?.nodes ?? [];
+    const teamKey = String(config.teamKey ?? "").toUpperCase();
+    if (teamKey) {
+      const found = teams.some((t) => t.key.toUpperCase() === teamKey);
+      if (!found) {
+        return {
+          ok: false,
+          message: `Authenticated as ${data.data.viewer.name}, but no team with key "${teamKey}" is visible (saw ${teams.length} teams).`,
+        };
+      }
+    }
+    return {
+      ok: true,
+      message: `Authenticated as ${data.data.viewer.name}`,
+      details: { name: data.data.viewer.name, teams: teams.length },
+    };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Verify failed" };
   }
@@ -449,7 +620,7 @@ export async function verifyConnector(
         result = await verifyJira(token, cfg);
         break;
       case "linear":
-        result = await verifyLinear(token);
+        result = await verifyLinear(token, cfg);
         break;
       case "cicd":
         result = await verifyCicd(token, cfg);

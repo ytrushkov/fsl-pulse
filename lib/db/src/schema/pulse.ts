@@ -102,7 +102,10 @@ export const connectorsTable = pgTable(
     // (default 1440 = daily) and writes a connector_runs row exactly as if
     // POST /connectors/:id/run had been invoked. `nextRunAt` is the watermark
     // the scheduler queries against; it is bumped after each tick.
-    scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
+    // Default ON so adding a connector is a one-step action: configure it,
+    // and the scheduler keeps signals fresh on a daily cadence without the
+    // assessor having to remember a follow-up step. They can disable later.
+    scheduleEnabled: boolean("schedule_enabled").notNull().default(true),
     scheduleCadenceMinutes: integer("schedule_cadence_minutes")
       .notNull()
       .default(1440),
