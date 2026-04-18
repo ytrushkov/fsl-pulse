@@ -829,6 +829,10 @@ components:
         kind: { type: string }
         message: { type: string }
         createdAt: { type: string }
+        actorUserId: { type: string, nullable: true }
+        actorName: { type: string, nullable: true }
+        actorEmail: { type: string, nullable: true }
+        actorAvatarUrl: { type: string, nullable: true }
 
     Connector:
       type: object

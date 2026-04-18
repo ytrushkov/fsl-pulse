@@ -1,10 +1,11 @@
 import type { Request, Response, NextFunction } from "express";
 import { getAuth, clerkClient } from "@clerk/express";
-import { eq, and, or } from "drizzle-orm";
+import { eq, and, or, isNull, sql } from "drizzle-orm";
 import {
   db,
   usersTable,
   engagementMembersTable,
+  engagementsTable,
 } from "@workspace/db";
 
 export interface AuthedUser {
@@ -73,6 +74,35 @@ async function loadOrUpsertUser(clerkUserId: string): Promise<AuthedUser> {
           eq(engagementMembersTable.email, profile.email),
         ),
       );
+    // Backfill: if this is the first user in the system (the FullStack
+    // operator bringing Pulse online for the first time), claim ownership of
+    // every existing engagement that has no members yet. This rescues the
+    // pre-auth demo data that would otherwise be invisible to everyone.
+    const userCountRow = await db
+      .select({ c: sql<number>`count(*)::int` })
+      .from(usersTable);
+    const userCount = userCountRow[0]?.c ?? 0;
+    if (userCount === 1) {
+      const orphans = await db
+        .select({ id: engagementsTable.id })
+        .from(engagementsTable)
+        .leftJoin(
+          engagementMembersTable,
+          eq(engagementMembersTable.engagementId, engagementsTable.id),
+        )
+        .where(isNull(engagementMembersTable.id));
+      if (orphans.length > 0) {
+        await db.insert(engagementMembersTable).values(
+          orphans.map((o) => ({
+            engagementId: o.id,
+            userId: user!.id,
+            email: profile!.email,
+            role: "owner" as const,
+            invitedBy: user!.id,
+          })),
+        );
+      }
+    }
   } else if (user && profile) {
     const needsUpdate =
       user.email !== profile.email ||

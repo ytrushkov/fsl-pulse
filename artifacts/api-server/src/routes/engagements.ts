@@ -288,8 +288,18 @@ router.get(
       return;
     }
     const rows = await db
-      .select()
+      .select({
+        id: activityEventsTable.id,
+        kind: activityEventsTable.kind,
+        message: activityEventsTable.message,
+        createdAt: activityEventsTable.createdAt,
+        actorUserId: activityEventsTable.actorUserId,
+        actorName: activityEventsTable.actorName,
+        actorEmail: activityEventsTable.actorEmail,
+        actorAvatarUrl: usersTable.avatarUrl,
+      })
       .from(activityEventsTable)
+      .leftJoin(usersTable, eq(usersTable.id, activityEventsTable.actorUserId))
       .where(eq(activityEventsTable.engagementId, id))
       .orderBy(desc(activityEventsTable.createdAt))
       .limit(50);

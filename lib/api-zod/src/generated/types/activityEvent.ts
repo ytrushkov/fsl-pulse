@@ -11,4 +11,8 @@ export interface ActivityEvent {
   kind: string;
   message: string;
   createdAt: string;
+  actorUserId?: string | null;
+  actorName?: string | null;
+  actorEmail?: string | null;
+  actorAvatarUrl?: string | null;
 }

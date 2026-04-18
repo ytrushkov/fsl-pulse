@@ -1,4 +1,9 @@
-import { useGetEngagement, useGetEngagementDashboard } from "@workspace/api-client-react";
+import {
+  useGetEngagement,
+  useGetEngagementDashboard,
+  useListEngagementActivity,
+} from "@workspace/api-client-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useParams } from "wouter";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -242,6 +247,82 @@ export default function EngagementOverview() {
       </div>
 
       <MembersPanel engagementId={id} />
+
+      <ActivityFeed engagementId={id} />
     </AppLayout>
+  );
+}
+
+function ActivityFeed({ engagementId }: { engagementId: string }) {
+  const { data: events, isLoading } = useListEngagementActivity(engagementId, {
+    query: { enabled: !!engagementId },
+  });
+  const initials = (s: string) =>
+    s
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase() ?? "")
+      .join("") || "?";
+  return (
+    <Card className="mt-8">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Activity className="h-5 w-5 text-primary" />
+          Recent activity
+        </CardTitle>
+        <CardDescription>
+          Who did what across this engagement
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : !events || events.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No activity yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {events.map((e) => {
+              const actor = e.actorName || e.actorEmail || "System";
+              const isOverride = e.kind === "score_override";
+              return (
+                <li
+                  key={e.id}
+                  className="flex items-start gap-3 text-sm"
+                  data-testid={`activity-event-${e.id}`}
+                >
+                  <Avatar className="h-7 w-7 mt-0.5">
+                    {e.actorAvatarUrl ? (
+                      <AvatarImage src={e.actorAvatarUrl} alt={actor} />
+                    ) : null}
+                    <AvatarFallback className="text-xs">
+                      {initials(actor)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="font-medium">{actor}</span>
+                      {isOverride ? (
+                        <span className="rounded bg-amber-500/10 text-amber-500 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                          Override
+                        </span>
+                      ) : null}
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(e.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground">{e.message}</p>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }

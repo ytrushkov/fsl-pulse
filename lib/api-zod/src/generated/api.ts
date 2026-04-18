@@ -208,6 +208,10 @@ export const GetEngagementActivityResponseItem = zod.object({
   kind: zod.string(),
   message: zod.string(),
   createdAt: zod.string(),
+  actorUserId: zod.string().nullish(),
+  actorName: zod.string().nullish(),
+  actorEmail: zod.string().nullish(),
+  actorAvatarUrl: zod.string().nullish(),
 });
 export const GetEngagementActivityResponse = zod.array(
   GetEngagementActivityResponseItem,
