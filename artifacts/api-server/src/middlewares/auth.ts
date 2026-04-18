@@ -201,6 +201,57 @@ async function userIsOwner(
 }
 
 /**
+ * Practice-admin guard for global, non-engagement-scoped mutations such as
+ * rubric authoring/publishing and rubric upgrades on engagements. Authz
+ * model: comma-separated `PULSE_ADMIN_EMAILS` env var lists allowed emails.
+ * If unset, falls back to "first user in the system" — the bootstrap
+ * operator who first signed in to Pulse — so a fresh install isn't locked
+ * out. Must run after `requireAuth`.
+ */
+let cachedFirstUserId: string | null = null;
+export async function requirePulseAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const user = req.authedUser;
+  if (!user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const allowlist = (process.env["PULSE_ADMIN_EMAILS"] ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowlist.length > 0) {
+    if (!allowlist.includes(user.email.toLowerCase())) {
+      res.status(403).json({ error: "Practice admin only" });
+      return;
+    }
+    next();
+    return;
+  }
+  // No explicit allowlist configured: only the bootstrap user (first row in
+  // users by createdAt) is treated as the practice admin.
+  if (!cachedFirstUserId) {
+    const [first] = await db
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .orderBy(usersTable.createdAt)
+      .limit(1);
+    cachedFirstUserId = first?.id ?? null;
+  }
+  if (!cachedFirstUserId || cachedFirstUserId !== user.id) {
+    res.status(403).json({
+      error:
+        "Practice admin only. Set PULSE_ADMIN_EMAILS to grant additional admins.",
+    });
+    return;
+  }
+  next();
+}
+
+/**
  * Owner-only guard for membership management. Must run after `requireAuth`.
  * Engagement id is read from `:id` route param.
  */

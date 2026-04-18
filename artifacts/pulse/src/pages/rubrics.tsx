@@ -49,12 +49,12 @@ import {
 } from "lucide-react";
 
 const DIMENSIONS = [
-  "strategy",
-  "data",
-  "platform",
-  "operations",
-  "governance",
+  "tooling",
+  "measurement",
+  "process",
   "people",
+  "governance",
+  "culture",
 ] as const;
 
 export default function RubricsPage() {

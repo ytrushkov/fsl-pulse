@@ -11,6 +11,28 @@ import {
 import { DIMENSIONS, type Dimension } from "./rubric";
 import { DEFAULT_SURVEY_QUESTIONS } from "./survey-template";
 import { resolveRubricForScoring, type RubricVersionRow } from "./rubric-store";
+import { rubricVersionsTable } from "@workspace/db";
+
+/**
+ * Resolve a legacy `rubricVersion` *string* (e.g. "1.0.0") to a published
+ * rubric version id, so plain recompute on engagements scored before the
+ * rubric pin column existed never silently jumps to a different rubric.
+ */
+async function findPublishedByVersionString(
+  version: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: rubricVersionsTable.id })
+    .from(rubricVersionsTable)
+    .where(
+      and(
+        eq(rubricVersionsTable.version, version),
+        eq(rubricVersionsTable.status, "published"),
+      ),
+    )
+    .limit(1);
+  return row?.id ?? null;
+}
 
 const ANONYMITY_FLOOR = 5;
 
@@ -146,11 +168,22 @@ export async function computeEngagementScoring(
   let rubricVersionId = opts.rubricVersionId ?? null;
   if (!rubricVersionId) {
     const [existing] = await db
-      .select({ rubricVersionId: scoringTable.rubricVersionId })
+      .select({
+        rubricVersionId: scoringTable.rubricVersionId,
+        rubricVersion: scoringTable.rubricVersion,
+      })
       .from(scoringTable)
       .where(eq(scoringTable.engagementId, engagementId));
     if (existing?.rubricVersionId) {
       rubricVersionId = existing.rubricVersionId;
+    } else if (existing?.rubricVersion) {
+      // Legacy backfill: scoring rows written before the version pin column
+      // existed only have a rubricVersion *string* (e.g. "1.0.0"). Resolve
+      // that to a published rubric id so this engagement stays anchored to
+      // the same rubric across recomputes instead of silently jumping to
+      // whatever is the current latest published.
+      const matched = await findPublishedByVersionString(existing.rubricVersion);
+      if (matched) rubricVersionId = matched;
     }
   }
   const rubric = await resolveRubricForScoring(rubricVersionId);

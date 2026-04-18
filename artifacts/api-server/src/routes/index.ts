@@ -17,7 +17,11 @@ import rubricsRouter from "./rubrics";
 import deliverablesRouter from "./deliverables";
 import exportsRouter from "./exports";
 import aiRouter from "./ai";
-import { requireAuth, requireEngagementMember } from "../middlewares/auth";
+import {
+  requireAuth,
+  requireEngagementMember,
+  requirePulseAdmin,
+} from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -55,6 +59,16 @@ router.use(interviewsRouter);
 router.use(artifactsRouter);
 router.use(evidenceRouter);
 router.use(scoringRouter);
+// Rubric authoring is practice-wide and affects every engagement, so all
+// /rubrics* mutations require the practice-admin guard. GETs stay
+// auth-only so any assessor can see which rubric versions exist.
+router.use(
+  "/rubrics",
+  (req: Request, res: Response, next: NextFunction) => {
+    if (req.method === "GET" || req.method === "HEAD") return next();
+    return requirePulseAdmin(req, res, next);
+  },
+);
 router.use(rubricsRouter);
 router.use(deliverablesRouter);
 router.use(exportsRouter);

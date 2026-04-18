@@ -9,6 +9,7 @@ import { paramId } from "../lib/util";
 import { computeEngagementScoring } from "../lib/scoring";
 import { recordActivity } from "../lib/audit";
 import { getRubricVersion } from "../lib/rubric-store";
+import { requirePulseAdmin } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -113,7 +114,7 @@ router.post("/engagements/:id/scoring/preview", async (req, res): Promise<void> 
  * Recompute scoring under a newer published rubric and persist the result.
  * Drafts are refused — only a published version can be pinned.
  */
-router.post("/engagements/:id/scoring/upgrade", async (req, res): Promise<void> => {
+router.post("/engagements/:id/scoring/upgrade", requirePulseAdmin, async (req, res): Promise<void> => {
   const id = paramId(req.params.id);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
