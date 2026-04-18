@@ -637,6 +637,7 @@ export const GetSurveyAggregatesResponse = zod.object({
     zod.object({
       team: zod.string(),
       completedCount: zod.number().nullish(),
+      invitedCount: zod.number().optional(),
       suppressed: zod.boolean(),
       dimensionAverages: zod.record(zod.string(), zod.number()).optional(),
     }),

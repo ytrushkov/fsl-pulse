@@ -10,6 +10,7 @@ import type { SurveyAggregatesByTeamItemDimensionAverages } from "./surveyAggreg
 export type SurveyAggregatesByTeamItem = {
   team: string;
   completedCount?: number | null;
+  invitedCount?: number;
   suppressed: boolean;
   dimensionAverages?: SurveyAggregatesByTeamItemDimensionAverages;
 };

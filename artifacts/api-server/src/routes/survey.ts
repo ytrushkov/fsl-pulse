@@ -298,22 +298,34 @@ router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> 
     };
   });
 
-  // By team
+  // By team. We need invitedCount per team so the dashboard can render a
+  // completion bar (completed / invited) and not just a count.
+  const invitedByTeam = new Map<string, number>();
+  for (const inv of invites) {
+    invitedByTeam.set(inv.team, (invitedByTeam.get(inv.team) ?? 0) + 1);
+  }
   const teamMap = new Map<string, typeof responses>();
   for (const r of responses) {
     if (!teamMap.has(r.team)) teamMap.set(r.team, [] as unknown as typeof responses);
     teamMap.get(r.team)!.push(r);
   }
+  // Make sure teams that were invited but had zero completions still appear
+  // (otherwise they silently vanish from the breakdown).
+  for (const team of invitedByTeam.keys()) {
+    if (!teamMap.has(team)) teamMap.set(team, [] as unknown as typeof responses);
+  }
   const byTeam = Array.from(teamMap.entries()).map(([team, rs]) => {
     const completedCount = rs.length;
+    const invitedCount = invitedByTeam.get(team) ?? 0;
     const suppressed = completedCount < ANONYMITY_FLOOR;
     if (suppressed) {
       // Omit `completedCount` for suppressed cells. Returning the exact
       // sub-floor count is itself an anonymity leak (it tells the assessor
       // a team has "3 respondents" rather than "fewer than 5"). The cell is
       // still listed so the assessor knows which teams exist, but no
-      // metric is attached.
-      return { team, completedCount: null, suppressed: true };
+      // metric is attached. `invitedCount` is safe to expose since it is
+      // public information (the assessor sent the invites).
+      return { team, completedCount: null, invitedCount, suppressed: true };
     }
     const dimSums: Record<string, { sum: number; n: number }> = {};
     for (const r of rs) {
@@ -333,7 +345,13 @@ router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> 
     for (const [d, s] of Object.entries(dimSums)) {
       dimensionAverages[d] = Number((s.sum / s.n).toFixed(2));
     }
-    return { team, completedCount, suppressed: false, dimensionAverages };
+    return {
+      team,
+      completedCount,
+      invitedCount,
+      suppressed: false,
+      dimensionAverages,
+    };
   });
 
   // By role — derived from invite-time role on completed invites. Each cell

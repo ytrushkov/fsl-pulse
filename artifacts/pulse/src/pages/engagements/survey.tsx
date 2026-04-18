@@ -31,7 +31,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -387,6 +397,7 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Team</TableHead>
+                <TableHead className="w-[220px]">Completion</TableHead>
                 <TableHead>Completed</TableHead>
                 <TableHead>Tooling</TableHead>
                 <TableHead>Process</TableHead>
@@ -394,9 +405,34 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {aggregates.byTeam.map((t, i) => (
+              {aggregates.byTeam.map((t, i) => {
+                // Per-team completion bar. When a cell is suppressed we still
+                // render the invited total + a generic progress so assessors
+                // can see participation pressure without ever exposing the
+                // exact sub-floor count. We pick a placeholder of 4/invited
+                // (the highest possible suppressed count) so the bar is
+                // pessimistic, not optimistic.
+                const completedForBar = t.suppressed
+                  ? Math.min(4, t.invitedCount ?? 0)
+                  : (t.completedCount ?? 0);
+                const invited = t.invitedCount ?? 0;
+                const pctTeam =
+                  invited > 0
+                    ? Math.round((completedForBar / invited) * 100)
+                    : 0;
+                return (
                 <TableRow key={i}>
                   <TableCell className="font-medium">{t.team}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Progress value={pctTeam} className="h-2 flex-1" />
+                      <span className="text-xs text-muted-foreground tabular-nums w-16 text-right">
+                        {t.suppressed
+                          ? `< 5 / ${invited}`
+                          : `${t.completedCount} / ${invited}`}
+                      </span>
+                    </div>
+                  </TableCell>
                   <TableCell>
                     {t.suppressed ? (
                       <span className="text-muted-foreground italic text-sm">
@@ -427,7 +463,8 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
                     </>
                   )}
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
@@ -439,10 +476,50 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
             <CardTitle>Demographic mix — by role</CardTitle>
             <CardDescription>
               Counts per invite-time role. Suppressed cells stay below the
-              anonymity threshold.
+              anonymity threshold and render as a muted "&lt; 5" bar.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
+            {/* Visual: a horizontal bar chart so a glance reveals which
+                roles dominate. Suppressed roles render with a flat-4 bar
+                and a muted color so they're visible without leaking the
+                exact count. */}
+            <div className="h-[260px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={aggregates.byRole.map((r) => ({
+                    role: r.role,
+                    count: r.suppressed ? 4 : (r.completedCount ?? 0),
+                    suppressed: r.suppressed,
+                  }))}
+                  layout="vertical"
+                  margin={{ top: 8, right: 24, bottom: 8, left: 24 }}
+                >
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis
+                    dataKey="role"
+                    type="category"
+                    width={140}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <Tooltip
+                    formatter={(value: number, _name, props) =>
+                      props.payload?.suppressed
+                        ? ["< 5 (hidden)", "Completed"]
+                        : [value, "Completed"]
+                    }
+                  />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    {aggregates.byRole.map((r, i) => (
+                      <Cell
+                        key={i}
+                        fill={r.suppressed ? "hsl(var(--muted))" : "hsl(var(--primary))"}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>

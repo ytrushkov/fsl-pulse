@@ -1286,6 +1286,10 @@ components:
               # Null when `suppressed` is true — the exact sub-floor count is
               # itself an anonymity leak and is intentionally hidden.
               completedCount: { type: integer, nullable: true }
+              # Number of invites sent to this team. Always exposed (the
+              # assessor sent the invites), and used by the dashboard to
+              # render per-team completion bars.
+              invitedCount: { type: integer }
               suppressed: { type: boolean }
               dimensionAverages:
                 type: object

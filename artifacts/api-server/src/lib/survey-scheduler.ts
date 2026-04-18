@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, inArray, sql } from "drizzle-orm";
+import { and, eq, isNull, inArray } from "drizzle-orm";
 import {
   db,
   surveysTable,
@@ -123,5 +123,3 @@ export function stopSurveyScheduler(): void {
 // Exported for tests.
 export const __testing = { tick };
 
-// Silence unused import warning for sql (kept for potential future use).
-void sql;
