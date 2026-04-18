@@ -14,6 +14,15 @@ import { Label } from "@/components/ui/label";
 import { Calculator, Target, Info, AlertTriangle, FileText, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatRelative } from "@/lib/format";
+import {
+  Radar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
 
 export default function ScoringView() {
   const params = useParams();
@@ -127,6 +136,16 @@ export default function ScoringView() {
           </Button>
         </div>
       ) : (
+        <>
+          <Card className="mb-8">
+            <CardHeader>
+              <CardTitle className="text-lg">Maturity Radar</CardTitle>
+              <p className="text-sm text-muted-foreground">All 6 dimensions on a 1–5 scale.</p>
+            </CardHeader>
+            <CardContent>
+              <DimensionRadar dimensions={scoring.byDimension} />
+            </CardContent>
+          </Card>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {scoring.byDimension.map((dim) => (
             <OverrideDialog 
@@ -172,8 +191,61 @@ export default function ScoringView() {
             />
           ))}
         </div>
+        </>
       )}
     </AppLayout>
+  );
+}
+
+function DimensionRadar({ dimensions }: { dimensions: Array<{ dimension: string; score: number; stage: number }> }) {
+  const data = dimensions.map((d) => ({
+    dimension: d.dimension.charAt(0).toUpperCase() + d.dimension.slice(1),
+    score: Number((d.score ?? 0).toFixed(2)),
+    fullMark: 5,
+  }));
+  return (
+    <div className="w-full h-[380px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <RadarChart data={data} outerRadius="78%">
+          <PolarGrid stroke="hsl(var(--border))" />
+          <PolarAngleAxis
+            dataKey="dimension"
+            tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 600 }}
+          />
+          <PolarRadiusAxis
+            angle={90}
+            domain={[0, 5]}
+            tickCount={6}
+            tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+            stroke="hsl(var(--border))"
+          />
+          <Radar
+            name="Maturity"
+            dataKey="score"
+            stroke="hsl(var(--primary))"
+            fill="hsl(var(--primary))"
+            fillOpacity={0.35}
+            strokeWidth={2}
+            dot={{ r: 4, fill: "hsl(var(--accent))", stroke: "hsl(var(--primary))", strokeWidth: 2 }}
+            label={{
+              fill: "hsl(var(--foreground))",
+              fontSize: 12,
+              fontWeight: 700,
+              offset: 8,
+            }}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "hsl(var(--card))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 8,
+              color: "hsl(var(--foreground))",
+            }}
+            formatter={(v: number) => [`${v.toFixed(2)} / 5`, "Score"]}
+          />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
