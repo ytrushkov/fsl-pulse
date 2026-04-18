@@ -42,7 +42,7 @@ class GatewayClient:
         import json
 
         import anthropic
-        from anthropic.types import MessageParam, TextBlock
+        from anthropic.types import MessageParam  # noqa: TCH002 — needed at call site
 
         client = anthropic.AsyncAnthropic(api_key=self._api_key)
         used_model = model or self._default_model
@@ -64,7 +64,11 @@ class GatewayClient:
         )
 
         first_block = response.content[0] if response.content else None
-        content = first_block.text if isinstance(first_block, TextBlock) else ""
+        content = (
+            str(first_block.text)
+            if first_block is not None and hasattr(first_block, "text")
+            else ""
+        )
         response_hash = "sha256:" + hashlib.sha256(content.encode()).hexdigest()[:16]
 
         logger.info(
