@@ -3,34 +3,1282 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Pulse — Agentic Maturity Assessment Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: engagements
+  - name: connectors
+  - name: survey
+  - name: interviews
+  - name: artifacts
+  - name: evidence
+  - name: scoring
+  - name: deliverables
+  - name: exports
+  - name: ai
+  - name: dashboard
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/HealthStatus" }
+
+  /engagements:
+    get:
+      operationId: listEngagements
+      tags: [engagements]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
               schema:
-                $ref: "#/components/schemas/HealthStatus"
+                type: array
+                items: { $ref: "#/components/schemas/Engagement" }
+    post:
+      operationId: createEngagement
+      tags: [engagements]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateEngagementInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Engagement" }
+
+  /engagements/{id}:
+    get:
+      operationId: getEngagement
+      tags: [engagements]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Engagement" }
+    patch:
+      operationId: updateEngagement
+      tags: [engagements]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateEngagementInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Engagement" }
+
+  /engagements/{id}/dashboard:
+    get:
+      operationId: getEngagementDashboard
+      tags: [dashboard]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EngagementDashboard" }
+
+  /engagements/{id}/activity:
+    get:
+      operationId: getEngagementActivity
+      tags: [dashboard]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ActivityEvent" }
+
+  /engagements/{id}/connectors:
+    get:
+      operationId: listConnectors
+      tags: [connectors]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Connector" }
+    post:
+      operationId: createConnector
+      tags: [connectors]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateConnectorInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Connector" }
+
+  /connectors/{connectorId}:
+    patch:
+      operationId: updateConnector
+      tags: [connectors]
+      parameters:
+        - { name: connectorId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateConnectorInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Connector" }
+    delete:
+      operationId: deleteConnector
+      tags: [connectors]
+      parameters:
+        - { name: connectorId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Deleted
+
+  /connectors/{connectorId}/verify:
+    post:
+      operationId: verifyConnector
+      tags: [connectors]
+      parameters:
+        - { name: connectorId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectorVerifyResult" }
+
+  /connectors/{connectorId}/run:
+    post:
+      operationId: runConnector
+      tags: [connectors]
+      parameters:
+        - { name: connectorId, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectorRun" }
+
+  /connectors/{connectorId}/runs:
+    get:
+      operationId: listConnectorRuns
+      tags: [connectors]
+      parameters:
+        - { name: connectorId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ConnectorRun" }
+
+  /engagements/{id}/survey:
+    get:
+      operationId: getSurvey
+      tags: [survey]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Survey" }
+    patch:
+      operationId: updateSurvey
+      tags: [survey]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateSurveyInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Survey" }
+
+  /engagements/{id}/survey/invites:
+    get:
+      operationId: listSurveyInvites
+      tags: [survey]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SurveyInvite" }
+    post:
+      operationId: createSurveyInvites
+      tags: [survey]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSurveyInvitesInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SurveyInvite" }
+
+  /engagements/{id}/survey/responses:
+    get:
+      operationId: getSurveyAggregates
+      tags: [survey]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SurveyAggregates" }
+
+  /survey/respond/{token}:
+    get:
+      operationId: getSurveyByToken
+      tags: [survey]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicSurvey" }
+    post:
+      operationId: submitSurveyResponse
+      tags: [survey]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitSurveyResponseInput" }
+      responses:
+        "204":
+          description: Submitted
+
+  /engagements/{id}/interviews:
+    get:
+      operationId: listInterviews
+      tags: [interviews]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Interview" }
+    post:
+      operationId: createInterview
+      tags: [interviews]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInterviewInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Interview" }
+
+  /interviews/{interviewId}:
+    get:
+      operationId: getInterview
+      tags: [interviews]
+      parameters:
+        - { name: interviewId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Interview" }
+    patch:
+      operationId: updateInterview
+      tags: [interviews]
+      parameters:
+        - { name: interviewId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateInterviewInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Interview" }
+    delete:
+      operationId: deleteInterview
+      tags: [interviews]
+      parameters:
+        - { name: interviewId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Deleted
+
+  /interviews/{interviewId}/evidence:
+    get:
+      operationId: listInterviewEvidence
+      tags: [interviews]
+      parameters:
+        - { name: interviewId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Evidence" }
+    post:
+      operationId: addInterviewEvidence
+      tags: [interviews]
+      parameters:
+        - { name: interviewId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateEvidenceInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Evidence" }
+
+  /evidence/{evidenceId}:
+    delete:
+      operationId: deleteEvidence
+      tags: [evidence]
+      parameters:
+        - { name: evidenceId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Deleted
+
+  /interviews/{interviewId}/ai-suggest:
+    post:
+      operationId: suggestInterviewTags
+      tags: [ai]
+      parameters:
+        - { name: interviewId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InterviewTagSuggestions" }
+
+  /engagements/{id}/artifacts:
+    get:
+      operationId: listArtifacts
+      tags: [artifacts]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ArtifactDoc" }
+    post:
+      operationId: createArtifact
+      tags: [artifacts]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateArtifactInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArtifactDoc" }
+
+  /artifacts/{artifactId}:
+    delete:
+      operationId: deleteArtifactDoc
+      tags: [artifacts]
+      parameters:
+        - { name: artifactId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Deleted
+
+  /engagements/{id}/evidence:
+    get:
+      operationId: listEngagementEvidence
+      tags: [evidence]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Evidence" }
+
+  /engagements/{id}/scoring:
+    get:
+      operationId: getScoring
+      tags: [scoring]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Scoring" }
+    post:
+      operationId: computeScoring
+      tags: [scoring]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Scoring" }
+
+  /engagements/{id}/scoring/override:
+    post:
+      operationId: overrideDimensionScore
+      tags: [scoring]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScoreOverrideInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Scoring" }
+
+  /engagements/{id}/deliverables:
+    get:
+      operationId: getDeliverables
+      tags: [deliverables]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deliverables" }
+    patch:
+      operationId: updateDeliverables
+      tags: [deliverables]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateDeliverablesInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deliverables" }
+
+  /engagements/{id}/deliverables/draft:
+    post:
+      operationId: draftDeliverables
+      tags: [ai]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deliverables" }
+
+  /engagements/{id}/exports:
+    get:
+      operationId: listExports
+      tags: [exports]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExportRecord" }
+    post:
+      operationId: createExport
+      tags: [exports]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExportRecord" }
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
+        status: { type: string }
+
+    EngagementStatus:
+      type: string
+      enum: [draft, active, collecting, ready_for_analysis, exported, archived]
+
+    Dimension:
+      type: string
+      enum: [tooling, measurement, process, people, governance, culture]
+
+    Confidence:
+      type: string
+      enum: [low, medium, high]
+
+    SignalType:
+      type: string
+      enum: [strength, gap, risk, quote]
+
+    SourceType:
+      type: string
+      enum: [system, survey, interview, artifact, override]
+
+    DeliverableStatus:
+      type: string
+      enum: [draft, reviewed, locked]
+
+    ConnectorKind:
+      type: string
+      enum: [github, gitlab, jira, linear, cicd, ai_tooling]
+
+    Engagement:
+      type: object
+      required:
+        [id, clientName, sponsor, teamCount, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        clientName: { type: string }
+        sponsor: { type: string }
+        teamCount: { type: integer }
+        scope: { type: string }
+        teams:
+          type: array
+          items: { type: string }
+        kickoffDate: { type: string, nullable: true }
+        targetDeliveryDate: { type: string, nullable: true }
+        status: { $ref: "#/components/schemas/EngagementStatus" }
+        modules:
+          type: array
+          items: { type: string, enum: [security, data, platform, design] }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    CreateEngagementInput:
+      type: object
+      required: [clientName, sponsor, teamCount]
+      properties:
+        clientName: { type: string }
+        sponsor: { type: string }
+        teamCount: { type: integer, minimum: 1 }
+        scope: { type: string }
+        teams:
+          type: array
+          items: { type: string }
+        kickoffDate: { type: string, nullable: true }
+        targetDeliveryDate: { type: string, nullable: true }
+        modules:
+          type: array
+          items: { type: string, enum: [security, data, platform, design] }
+
+    UpdateEngagementInput:
+      type: object
+      properties:
+        clientName: { type: string }
+        sponsor: { type: string }
+        teamCount: { type: integer }
+        scope: { type: string }
+        teams:
+          type: array
+          items: { type: string }
+        kickoffDate: { type: string, nullable: true }
+        targetDeliveryDate: { type: string, nullable: true }
+        status: { $ref: "#/components/schemas/EngagementStatus" }
+        modules:
+          type: array
+          items: { type: string, enum: [security, data, platform, design] }
+
+    EngagementDashboard:
+      type: object
+      required:
+        [
+          engagementId,
+          surveyResponseRate,
+          surveySent,
+          surveyCompleted,
+          interviewsCompleted,
+          interviewsTotal,
+          artifactCount,
+          connectorsHealthy,
+          connectorsTotal,
+          daysToTarget,
+          deliverableStatuses,
+        ]
+      properties:
+        engagementId: { type: string }
+        surveyResponseRate: { type: number }
+        surveySent: { type: integer }
+        surveyCompleted: { type: integer }
+        interviewsCompleted: { type: integer }
+        interviewsTotal: { type: integer }
+        artifactCount: { type: integer }
+        connectorsHealthy: { type: integer }
+        connectorsTotal: { type: integer }
+        daysToTarget: { type: integer, nullable: true }
+        evidenceCount: { type: integer }
+        deliverableStatuses:
+          type: object
+          required: [heatmap, gapAnalysis, actionPlan, entryPoint, npv]
+          properties:
+            heatmap: { $ref: "#/components/schemas/DeliverableStatus" }
+            gapAnalysis: { $ref: "#/components/schemas/DeliverableStatus" }
+            actionPlan: { $ref: "#/components/schemas/DeliverableStatus" }
+            entryPoint: { $ref: "#/components/schemas/DeliverableStatus" }
+            npv: { $ref: "#/components/schemas/DeliverableStatus" }
+
+    ActivityEvent:
+      type: object
+      required: [id, kind, message, createdAt]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        message: { type: string }
+        createdAt: { type: string }
+
+    Connector:
+      type: object
+      required: [id, engagementId, kind, label, status, createdAt]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        kind: { $ref: "#/components/schemas/ConnectorKind" }
+        provider: { type: string }
+        label: { type: string }
         status:
           type: string
-      required:
-        - status
+          enum: [not_configured, configured, collecting, collected, failed]
+        config:
+          type: object
+          additionalProperties: true
+        lastRunAt: { type: string, nullable: true }
+        lastError: { type: string, nullable: true }
+        createdAt: { type: string }
 
+    CreateConnectorInput:
+      type: object
+      required: [kind, provider, label]
+      properties:
+        kind: { $ref: "#/components/schemas/ConnectorKind" }
+        provider: { type: string }
+        label: { type: string }
+        token: { type: string }
+        config:
+          type: object
+          additionalProperties: true
+
+    UpdateConnectorInput:
+      type: object
+      properties:
+        label: { type: string }
+        token: { type: string }
+        config:
+          type: object
+          additionalProperties: true
+
+    ConnectorVerifyResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+    ConnectorRun:
+      type: object
+      required: [id, connectorId, status, startedAt]
+      properties:
+        id: { type: string }
+        connectorId: { type: string }
+        status:
+          type: string
+          enum: [running, success, failed]
+        startedAt: { type: string }
+        finishedAt: { type: string, nullable: true }
+        recordsCollected: { type: integer }
+        error: { type: string, nullable: true }
+        summary:
+          type: object
+          additionalProperties: true
+
+    SurveyQuestion:
+      type: object
+      required: [id, section, dimension, type, prompt]
+      properties:
+        id: { type: string }
+        section: { type: string }
+        dimension: { type: string, nullable: true }
+        type:
+          type: string
+          enum: [single_select, multi_select, likert, rank, demographic]
+        prompt: { type: string }
+        options:
+          type: array
+          items: { type: string }
+        likertMin: { type: integer, nullable: true }
+        likertMax: { type: integer, nullable: true }
+        likertMinLabel: { type: string, nullable: true }
+        likertMaxLabel: { type: string, nullable: true }
+        rankCount: { type: integer, nullable: true }
+        moduleKey: { type: string, nullable: true }
+        conditionalOn: { type: string, nullable: true }
+
+    Survey:
+      type: object
+      required: [engagementId, templateVersion, modules, questions]
+      properties:
+        engagementId: { type: string }
+        templateVersion: { type: string }
+        modules:
+          type: array
+          items: { type: string, enum: [security, data, platform, design] }
+        questions:
+          type: array
+          items: { $ref: "#/components/schemas/SurveyQuestion" }
+        nudgeSchedule:
+          type: array
+          items: { type: integer }
+
+    UpdateSurveyInput:
+      type: object
+      properties:
+        modules:
+          type: array
+          items: { type: string, enum: [security, data, platform, design] }
+        questions:
+          type: array
+          items: { $ref: "#/components/schemas/SurveyQuestion" }
+        nudgeSchedule:
+          type: array
+          items: { type: integer }
+
+    SurveyInvite:
+      type: object
+      required: [id, engagementId, team, status, createdAt]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        team: { type: string }
+        emailHash: { type: string, nullable: true }
+        token: { type: string }
+        status:
+          type: string
+          enum: [sent, opened, started, completed]
+        createdAt: { type: string }
+        completedAt: { type: string, nullable: true }
+
+    CreateSurveyInvitesInput:
+      type: object
+      required: [invites]
+      properties:
+        invites:
+          type: array
+          items:
+            type: object
+            required: [team]
+            properties:
+              team: { type: string }
+              email: { type: string }
+
+    PublicSurvey:
+      type: object
+      required: [engagementClient, questions, status]
+      properties:
+        engagementClient: { type: string }
+        status:
+          type: string
+          enum: [open, completed, expired]
+        questions:
+          type: array
+          items: { $ref: "#/components/schemas/SurveyQuestion" }
+
+    SubmitSurveyResponseInput:
+      type: object
+      required: [answers, demographics]
+      properties:
+        answers:
+          type: array
+          items:
+            type: object
+            required: [questionId, value]
+            properties:
+              questionId: { type: string }
+              value:
+                oneOf:
+                  - { type: string }
+                  - { type: number }
+                  - { type: array, items: { type: string } }
+        demographics:
+          type: object
+          additionalProperties: { type: string }
+
+    SurveyAggregates:
+      type: object
+      required: [responseRate, totalSent, totalCompleted, byQuestion, byTeam]
+      properties:
+        responseRate: { type: number }
+        totalSent: { type: integer }
+        totalCompleted: { type: integer }
+        byQuestion:
+          type: array
+          items:
+            type: object
+            required: [questionId, distribution]
+            properties:
+              questionId: { type: string }
+              average: { type: number, nullable: true }
+              distribution:
+                type: array
+                items:
+                  type: object
+                  required: [value, count]
+                  properties:
+                    value: { type: string }
+                    count: { type: integer }
+        byTeam:
+          type: array
+          items:
+            type: object
+            required: [team, completedCount, suppressed]
+            properties:
+              team: { type: string }
+              completedCount: { type: integer }
+              suppressed: { type: boolean }
+              dimensionAverages:
+                type: object
+                additionalProperties: { type: number }
+
+    Interview:
+      type: object
+      required: [id, engagementId, interviewee, role, status, createdAt]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        interviewee: { type: string }
+        role: { type: string }
+        date: { type: string, nullable: true }
+        consent: { type: boolean }
+        notes: { type: string }
+        status: { type: string, enum: [draft, tagged, reviewed] }
+        evidenceCount: { type: integer }
+        createdAt: { type: string }
+
+    CreateInterviewInput:
+      type: object
+      required: [interviewee, role]
+      properties:
+        interviewee: { type: string }
+        role: { type: string }
+        date: { type: string, nullable: true }
+        consent: { type: boolean }
+        notes: { type: string }
+
+    UpdateInterviewInput:
+      type: object
+      properties:
+        interviewee: { type: string }
+        role: { type: string }
+        date: { type: string, nullable: true }
+        consent: { type: boolean }
+        notes: { type: string }
+        status: { type: string, enum: [draft, tagged, reviewed] }
+
+    Evidence:
+      type: object
+      required: [id, engagementId, sourceType, dimension, signalType, text, createdAt]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        interviewId: { type: string, nullable: true }
+        sourceType: { $ref: "#/components/schemas/SourceType" }
+        sourceRef: { type: string, nullable: true }
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        signalType: { $ref: "#/components/schemas/SignalType" }
+        stageHint: { type: integer, nullable: true }
+        text: { type: string }
+        createdBy: { type: string, nullable: true }
+        createdAt: { type: string }
+
+    CreateEvidenceInput:
+      type: object
+      required: [dimension, signalType, text]
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        signalType: { $ref: "#/components/schemas/SignalType" }
+        stageHint: { type: integer, nullable: true }
+        text: { type: string }
+
+    InterviewTagSuggestions:
+      type: object
+      required: [suggestions]
+      properties:
+        suggestions:
+          type: array
+          items:
+            type: object
+            required: [text, dimension, signalType]
+            properties:
+              text: { type: string }
+              dimension: { $ref: "#/components/schemas/Dimension" }
+              signalType: { $ref: "#/components/schemas/SignalType" }
+              stageHint: { type: integer, nullable: true }
+              rationale: { type: string }
+
+    ArtifactDoc:
+      type: object
+      required: [id, engagementId, filename, kind, createdAt]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        filename: { type: string }
+        kind: { type: string }
+        sizeBytes: { type: integer }
+        extractedSummary: { type: string }
+        createdAt: { type: string }
+
+    CreateArtifactInput:
+      type: object
+      required: [filename, kind, content]
+      properties:
+        filename: { type: string }
+        kind: { type: string }
+        content: { type: string }
+
+    DimensionScore:
+      type: object
+      required: [dimension, score, stage, confidence, evidenceIds, rationale]
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        score: { type: number }
+        stage: { type: integer, minimum: 1, maximum: 5 }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+        evidenceIds:
+          type: array
+          items: { type: string }
+        rationale: { type: string }
+        overrideJustification: { type: string, nullable: true }
+        signalsBySource:
+          type: object
+          properties:
+            system: { type: integer }
+            survey: { type: integer }
+            interview: { type: integer }
+            artifact: { type: integer }
+
+    Scoring:
+      type: object
+      required: [engagementId, rubricVersion, byDimension, overall, computedAt]
+      properties:
+        engagementId: { type: string }
+        rubricVersion: { type: string }
+        byDimension:
+          type: array
+          items: { $ref: "#/components/schemas/DimensionScore" }
+        overall:
+          type: object
+          required: [score, stage, confidence]
+          properties:
+            score: { type: number }
+            stage: { type: integer }
+            confidence: { $ref: "#/components/schemas/Confidence" }
+        computedAt: { type: string }
+
+    ScoreOverrideInput:
+      type: object
+      required: [dimension, stage, justification]
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        stage: { type: integer, minimum: 1, maximum: 5 }
+        score: { type: number, nullable: true }
+        justification: { type: string }
+
+    HeatmapCell:
+      type: object
+      required: [dimension, currentStage, targetStage, confidence]
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        currentStage: { type: integer }
+        targetStage: { type: integer }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+
+    GapAnalysisItem:
+      type: object
+      required: [dimension, currentStage, targetStage, narrativeMd, evidenceIds]
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        currentStage: { type: integer }
+        targetStage: { type: integer }
+        narrativeMd: { type: string }
+        gaps:
+          type: array
+          items: { type: string }
+        evidenceIds:
+          type: array
+          items: { type: string }
+
+    ActionItem:
+      type: object
+      required: [id, initiative, dimension, priority, effort, impact]
+      properties:
+        id: { type: string }
+        initiative: { type: string }
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        priority: { type: string, enum: [P0, P1, P2] }
+        effort: { type: string, enum: [S, M, L, XL] }
+        impact: { type: string, enum: [S, M, L, XL] }
+        ownerRole: { type: string }
+        successMetric: { type: string }
+        dependencies:
+          type: array
+          items: { type: string }
+
+    EntryPointRecommendation:
+      type: object
+      required: [recommendedStage, rationaleMd]
+      properties:
+        recommendedStage:
+          type: string
+          enum: [strategy, design, build, ship, run]
+        hyprAgents:
+          type: array
+          items:
+            type: object
+            required: [name, relevance]
+            properties:
+              name: { type: string }
+              relevance: { type: string }
+        rationaleMd: { type: string }
+        evidenceIds:
+          type: array
+          items: { type: string }
+
+    NpvInputs:
+      type: object
+      required:
+        [
+          fullyLoadedCost,
+          teamCount,
+          baselineCycleTimeDays,
+          aiAcceptanceRate,
+          reworkRate,
+          discountRate,
+        ]
+      properties:
+        fullyLoadedCost: { type: number }
+        teamCount: { type: integer }
+        baselineCycleTimeDays: { type: number }
+        aiAcceptanceRate: { type: number }
+        reworkRate: { type: number }
+        discountRate: { type: number }
+
+    NpvScenario:
+      type: object
+      required: [npv3yr, paybackMonths, irr]
+      properties:
+        npv3yr: { type: number }
+        paybackMonths: { type: number }
+        irr: { type: number }
+        annualSavings:
+          type: array
+          items: { type: number }
+
+    NpvResult:
+      type: object
+      required: [modelVersion, inputs, scenarios, leverBreakdown]
+      properties:
+        modelVersion: { type: string }
+        inputs: { $ref: "#/components/schemas/NpvInputs" }
+        scenarios:
+          type: object
+          required: [low, base, high]
+          properties:
+            low: { $ref: "#/components/schemas/NpvScenario" }
+            base: { $ref: "#/components/schemas/NpvScenario" }
+            high: { $ref: "#/components/schemas/NpvScenario" }
+        leverBreakdown:
+          type: array
+          items:
+            type: object
+            required: [lever, savings]
+            properties:
+              lever: { type: string }
+              savings: { type: number }
+
+    Deliverables:
+      type: object
+      required:
+        [engagementId, statuses, heatmap, gapAnalysis, actionPlan, entryPoint, npv]
+      properties:
+        engagementId: { type: string }
+        statuses:
+          type: object
+          required: [heatmap, gapAnalysis, actionPlan, entryPoint, npv]
+          properties:
+            heatmap: { $ref: "#/components/schemas/DeliverableStatus" }
+            gapAnalysis: { $ref: "#/components/schemas/DeliverableStatus" }
+            actionPlan: { $ref: "#/components/schemas/DeliverableStatus" }
+            entryPoint: { $ref: "#/components/schemas/DeliverableStatus" }
+            npv: { $ref: "#/components/schemas/DeliverableStatus" }
+        heatmap:
+          type: array
+          items: { $ref: "#/components/schemas/HeatmapCell" }
+        gapAnalysis:
+          type: array
+          items: { $ref: "#/components/schemas/GapAnalysisItem" }
+        actionPlan:
+          type: array
+          items: { $ref: "#/components/schemas/ActionItem" }
+        entryPoint: { $ref: "#/components/schemas/EntryPointRecommendation" }
+        npv: { $ref: "#/components/schemas/NpvResult" }
+
+    UpdateDeliverablesInput:
+      type: object
+      properties:
+        statuses:
+          type: object
+          properties:
+            heatmap: { $ref: "#/components/schemas/DeliverableStatus" }
+            gapAnalysis: { $ref: "#/components/schemas/DeliverableStatus" }
+            actionPlan: { $ref: "#/components/schemas/DeliverableStatus" }
+            entryPoint: { $ref: "#/components/schemas/DeliverableStatus" }
+            npv: { $ref: "#/components/schemas/DeliverableStatus" }
+        heatmap:
+          type: array
+          items: { $ref: "#/components/schemas/HeatmapCell" }
+        gapAnalysis:
+          type: array
+          items: { $ref: "#/components/schemas/GapAnalysisItem" }
+        actionPlan:
+          type: array
+          items: { $ref: "#/components/schemas/ActionItem" }
+        entryPoint: { $ref: "#/components/schemas/EntryPointRecommendation" }
+        npv: { $ref: "#/components/schemas/NpvResult" }
+
+    ExportRecord:
+      type: object
+      required: [id, engagementId, version, createdAt, files]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        version: { type: integer }
+        createdAt: { type: string }
+        signature: { type: string }
+        files:
+          type: array
+          items:
+            type: object
+            required: [name, sizeBytes]
+            properties:
+              name: { type: string }
+              sizeBytes: { type: integer }
+              downloadUrl: { type: string }

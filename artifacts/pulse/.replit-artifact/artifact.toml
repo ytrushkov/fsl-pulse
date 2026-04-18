@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Pulse — Agentic Maturity Assessment"
+version = "1.0.0"
+id = "artifacts/pulse"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23821
+
+[services.development]
+run = "pnpm --filter @workspace/pulse run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/pulse", "run", "build" ]
+publicDir = "artifacts/pulse/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23821"
+BASE_PATH = "/"
