@@ -2253,6 +2253,10 @@ export const CreateExportParams = zod.object({
   id: zod.coerce.string(),
 });
 
+export const FinalizeAndExportParams = zod.object({
+  id: zod.coerce.string(),
+});
+
 export const DownloadExportFileParams = zod.object({
   id: zod.coerce.string(),
   exportId: zod.coerce.string(),

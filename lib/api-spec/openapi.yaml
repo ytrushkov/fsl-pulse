@@ -996,6 +996,19 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExportRecord" }
 
+  /engagements/{id}/finalize-and-export:
+    post:
+      operationId: finalizeAndExport
+      tags: [exports]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExportRecord" }
+
   /engagements/{id}/exports/{exportId}/file/{fileName}:
     get:
       operationId: downloadExportFile

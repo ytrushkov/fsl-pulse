@@ -29,6 +29,9 @@ export default function NpvView({ engagementId, deliverables }: any) {
   // Local editable copy of the NPV result so recompute can re-render
   // immediately without waiting for the deliverables refetch.
   const [working, setWorking] = useState<any>(null);
+  // Track which inputs the assessor edited so we only auto-recompute
+  // when the assumptions change, not on every parent refetch.
+  const [pendingInputs, setPendingInputs] = useState<Record<string, number> | null>(null);
   useEffect(() => {
     if (deliverables?.npv) setWorking(deliverables.npv);
   }, [deliverables?.npv]);
@@ -55,8 +58,35 @@ export default function NpvView({ engagementId, deliverables }: any) {
     discountRate: Math.min(1, Math.max(0, Number(data.inputs.discountRate ?? 0.1))),
   });
 
-  const setInput = (key: string, value: number) =>
+  const setInput = (key: string, value: number) => {
     setWorking((w: any) => ({ ...w, inputs: { ...w.inputs, [key]: value } }));
+    setPendingInputs((p) => ({ ...(p ?? {}), [key]: value }));
+  };
+
+  // Live recompute: 400ms after the last keystroke, push the inputs at the
+  // pure server helper and splice the result back into the working copy.
+  // Save stays a separate explicit action so the assessor can iterate
+  // without persisting every intermediate state.
+  useEffect(() => {
+    if (!pendingInputs || isLocked) return;
+    const handle = setTimeout(() => {
+      recompute.mutate(
+        { id: engagementId, data: buildInputsBody() },
+        {
+          onSuccess: (res) => {
+            setWorking(res);
+            setPendingInputs(null);
+          },
+          onError: () => setPendingInputs(null),
+        },
+      );
+    }, 400);
+    return () => clearTimeout(handle);
+    // We deliberately depend only on the pendingInputs token so the
+    // debounce restarts on each new edit without re-firing for unrelated
+    // re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingInputs]);
 
   const handleRecompute = () => {
     recompute.mutate(

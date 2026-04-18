@@ -5237,6 +5237,84 @@ export const useCreateExport = <
   return useMutation(getCreateExportMutationOptions(options));
 };
 
+export const getFinalizeAndExportUrl = (id: string) => {
+  return `/api/engagements/${id}/finalize-and-export`;
+};
+
+export const finalizeAndExport = async (
+  id: string,
+  options?: RequestInit,
+): Promise<ExportRecord> => {
+  return customFetch<ExportRecord>(getFinalizeAndExportUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getFinalizeAndExportMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeAndExport>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof finalizeAndExport>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["finalizeAndExport"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof finalizeAndExport>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return finalizeAndExport(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type FinalizeAndExportMutationResult = NonNullable<
+  Awaited<ReturnType<typeof finalizeAndExport>>
+>;
+
+export type FinalizeAndExportMutationError = ErrorType<unknown>;
+
+export const useFinalizeAndExport = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeAndExport>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof finalizeAndExport>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getFinalizeAndExportMutationOptions(options));
+};
+
 export const getDownloadExportFileUrl = (
   id: string,
   exportId: string,

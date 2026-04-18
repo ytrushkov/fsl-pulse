@@ -19,7 +19,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { History, Lock, Sparkles, RotateCcw } from "lucide-react";
+import { History, Lock, Sparkles, RotateCcw, GitCompare } from "lucide-react";
 import { formatRelative } from "@/lib/format";
 
 type DeliverableKey =
@@ -127,6 +127,14 @@ function HistoryDialog({
     },
   });
   const revert = useRevertDeliverable();
+  // Compare picks two version rows and renders their snapshots side-by-side
+  // so the assessor can see what changed before deciding to revert. Kept
+  // intentionally simple — no inline diff highlight; pretty-printed JSON
+  // is enough for the kinds of small, structured deliverables we ship.
+  const [compareA, setCompareA] = useState<number | null>(null);
+  const [compareB, setCompareB] = useState<number | null>(null);
+  const snapshotFor = (n: number | null) =>
+    n === null ? null : versions?.find((v) => v.version === n)?.snapshot ?? null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -135,51 +143,101 @@ function HistoryDialog({
           <History className="h-4 w-4 mr-1" /> History
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>Version history</DialogTitle>
           <DialogDescription>
-            Each save snapshots the deliverable. Revert to bring an old draft back into play.
+            Each save snapshots the deliverable. Pick two versions to compare side-by-side, or revert to bring an old draft back into play.
           </DialogDescription>
         </DialogHeader>
-        <div className="max-h-[60vh] overflow-auto divide-y">
-          {!versions?.length ? (
-            <div className="py-12 text-center text-muted-foreground text-sm">No saved versions yet.</div>
-          ) : (
-            versions.map((v) => (
-              <div key={v.id} className="py-3 flex items-center justify-between gap-4">
-                <div>
-                  <div className="font-mono text-sm font-medium">v{v.version}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {formatRelative(v.createdAt)} {v.authorEmail ? `· ${v.authorEmail}` : ""}
-                    {v.finalized ? " · finalized" : ""}
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="max-h-[55vh] overflow-auto divide-y border rounded">
+            {!versions?.length ? (
+              <div className="py-12 text-center text-muted-foreground text-sm">No saved versions yet.</div>
+            ) : (
+              versions.map((v) => {
+                const role = compareA === v.version ? "A" : compareB === v.version ? "B" : null;
+                return (
+                  <div key={v.id} className="px-3 py-2 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-mono text-sm font-medium flex items-center gap-2">
+                        v{v.version}
+                        {role && <Badge variant="secondary" className="text-xs">{role}</Badge>}
+                        {v.finalized && <Badge className="text-xs">finalized</Badge>}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {formatRelative(v.createdAt)} {v.authorEmail ? `· ${v.authorEmail}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Set as compare A"
+                        onClick={() => setCompareA(v.version)}
+                      >
+                        A
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Set as compare B"
+                        onClick={() => setCompareB(v.version)}
+                      >
+                        B
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={revert.isPending}
+                        onClick={() =>
+                          revert.mutate(
+                            { id: engagementId, key: deliverableKey, data: { version: v.version } },
+                            {
+                              onSuccess: () => {
+                                onChanged();
+                                setOpen(false);
+                                toast({ title: `Reverted to v${v.version}` });
+                              },
+                              onError: () => toast({ variant: "destructive", title: "Revert failed" }),
+                            },
+                          )
+                        }
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={revert.isPending}
-                  onClick={() =>
-                    revert.mutate(
-                      { id: engagementId, key: deliverableKey, data: { version: v.version } },
-                      {
-                        onSuccess: () => {
-                          onChanged();
-                          setOpen(false);
-                          toast({ title: `Reverted to v${v.version}` });
-                        },
-                        onError: () => toast({ variant: "destructive", title: "Revert failed" }),
-                      },
-                    )
-                  }
-                >
-                  <RotateCcw className="h-4 w-4 mr-1" /> Revert
-                </Button>
+                );
+              })
+            )}
+          </div>
+          <div className="border rounded p-3 max-h-[55vh] overflow-auto bg-muted/20">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
+              <GitCompare className="h-3 w-3" /> Compare
+            </div>
+            {compareA === null && compareB === null ? (
+              <div className="text-xs text-muted-foreground">Pick two versions on the left.</div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                <CompareColumn label={compareA !== null ? `v${compareA}` : "—"} snapshot={snapshotFor(compareA)} />
+                <CompareColumn label={compareB !== null ? `v${compareB}` : "—"} snapshot={snapshotFor(compareB)} />
               </div>
-            ))
-          )}
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CompareColumn({ label, snapshot }: { label: string; snapshot: unknown }) {
+  return (
+    <div className="border rounded p-2 bg-background overflow-auto">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</div>
+      <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug">
+        {snapshot === null ? "—" : JSON.stringify(snapshot, null, 2)}
+      </pre>
+    </div>
   );
 }

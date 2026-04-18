@@ -1,5 +1,10 @@
 import { useParams } from "wouter";
-import { useListExports, useCreateExport, getListExportsQueryKey } from "@workspace/api-client-react";
+import {
+  useListExports,
+  useCreateExport,
+  useFinalizeAndExport,
+  getListExportsQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -11,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatRelative } from "@/lib/format";
 import { Download, Package, FileArchive, FileText, FileCode, FileBox } from "lucide-react";
 
-const BASE_URL = (import.meta as any).env?.BASE_URL ?? "/";
+const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
 function fileIcon(name: string) {
   if (name.endsWith(".pdf")) return <FileText className="h-4 w-4" />;
@@ -37,6 +42,7 @@ export default function ExportsView() {
   });
 
   const createExport = useCreateExport();
+  const finalizeAndExport = useFinalizeAndExport();
 
   const handleCreate = () => {
     createExport.mutate(
@@ -53,6 +59,24 @@ export default function ExportsView() {
     );
   };
 
+  const handleFinalizeAndExport = () => {
+    finalizeAndExport.mutate(
+      { id },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListExportsQueryKey(id) });
+          toast({
+            title: "Finalized & exported",
+            description: "All deliverables locked and a fresh signed bundle is ready.",
+          });
+        },
+        onError: () => {
+          toast({ variant: "destructive", title: "Error", description: "Finalize-and-export failed." });
+        },
+      },
+    );
+  };
+
   return (
     <AppLayout engagementId={id}>
       <div className="flex items-center justify-between mb-8">
@@ -60,10 +84,25 @@ export default function ExportsView() {
           <h1 className="text-3xl font-bold tracking-tight">Exports</h1>
           <p className="text-muted-foreground mt-1">Immutable, signed snapshots of the deliverables for client handoff.</p>
         </div>
-        <Button onClick={handleCreate} disabled={createExport.isPending} className="gap-2">
-          <Package className="h-4 w-4" />
-          {createExport.isPending ? "Compiling..." : "Create Bundle"}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={handleCreate}
+            disabled={createExport.isPending || finalizeAndExport.isPending}
+            variant="outline"
+            className="gap-2"
+          >
+            <Package className="h-4 w-4" />
+            {createExport.isPending ? "Compiling..." : "Create Bundle"}
+          </Button>
+          <Button
+            onClick={handleFinalizeAndExport}
+            disabled={createExport.isPending || finalizeAndExport.isPending}
+            className="gap-2"
+          >
+            <FileArchive className="h-4 w-4" />
+            {finalizeAndExport.isPending ? "Finalizing..." : "Finalize & Export"}
+          </Button>
+        </div>
       </div>
 
       <Card>

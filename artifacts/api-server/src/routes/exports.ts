@@ -24,8 +24,72 @@ import {
   renderEngagementDocx,
   type DeliverableBundle,
 } from "../lib/export-render";
+import { and, eq as eqOp } from "drizzle-orm";
+import { deliverableVersionsTable } from "@workspace/db";
 
 const router: IRouter = Router();
+
+const FINALIZABLE_KEYS = [
+  "heatmap",
+  "gapAnalysis",
+  "actionPlan",
+  "entryPoint",
+  "npv",
+] as const;
+
+/**
+ * Snapshot every versioned deliverable as a finalized version row and flip
+ * its status to "locked". Used by the single Finalize-and-Export action so
+ * the assessor doesn't have to lock each tab one by one before producing a
+ * client bundle.
+ */
+async function finalizeAllDeliverables(
+  engagementId: string,
+  authorEmail: string | null,
+): Promise<{ key: string; version: number }[]> {
+  const [d] = await db
+    .select()
+    .from(deliverablesTable)
+    .where(eq(deliverablesTable.engagementId, engagementId));
+  if (!d) return [];
+  const prevStatuses = (d.statuses ?? {}) as Record<string, string>;
+  const finalized: { key: string; version: number }[] = [];
+  const nextStatuses = { ...prevStatuses };
+  for (const key of FINALIZABLE_KEYS) {
+    if (prevStatuses[key] === "locked") continue;
+    const snapshot = (d as Record<string, unknown>)[key];
+    if (snapshot === null || snapshot === undefined) continue;
+    const [latest] = await db
+      .select({ version: deliverableVersionsTable.version })
+      .from(deliverableVersionsTable)
+      .where(
+        and(
+          eqOp(deliverableVersionsTable.engagementId, engagementId),
+          eqOp(deliverableVersionsTable.deliverableKey, key),
+        ),
+      )
+      .orderBy(desc(deliverableVersionsTable.version))
+      .limit(1);
+    const next = (latest?.version ?? 0) + 1;
+    await db.insert(deliverableVersionsTable).values({
+      engagementId,
+      deliverableKey: key,
+      version: next,
+      snapshot: snapshot as object,
+      authorEmail,
+      finalized: true,
+    });
+    nextStatuses[key] = "locked";
+    finalized.push({ key, version: next });
+  }
+  if (finalized.length > 0) {
+    await db
+      .update(deliverablesTable)
+      .set({ statuses: nextStatuses })
+      .where(eq(deliverablesTable.engagementId, engagementId));
+  }
+  return finalized;
+}
 
 router.get("/engagements/:id/exports", async (req, res): Promise<void> => {
   const id = paramId(req.params.id);
@@ -97,17 +161,15 @@ router.get(
   },
 );
 
-router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
-  const id = paramId(req.params.id);
-  if (!id) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+import type { Request } from "express";
+
+type ExportResult =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; status: number; body: { error: string } };
+
+async function buildAndPersistExport(req: Request, id: string): Promise<ExportResult> {
   const [eng] = await db.select().from(engagementsTable).where(eq(engagementsTable.id, id));
-  if (!eng) {
-    res.status(404).json({ error: "Not found" });
-    return;
-  }
+  if (!eng) return { ok: false, status: 404, body: { error: "Not found" } };
   const [scoring] = await db.select().from(scoringTable).where(eq(scoringTable.engagementId, id));
   const [deliverables] = await db
     .select()
@@ -234,17 +296,69 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
     },
   });
 
-  res.status(201).json({
-    id: exp.id,
-    engagementId: exp.engagementId,
-    version: exp.version,
-    createdAt: exp.createdAt.toISOString(),
-    signature: exp.signature,
-    signatureAlgorithm: "HMAC-SHA256",
-    keyFingerprint: exportKeyFingerprint(),
-    files: exp.files,
-  });
+  return {
+    ok: true,
+    payload: {
+      id: exp.id,
+      engagementId: exp.engagementId,
+      version: exp.version,
+      createdAt: exp.createdAt.toISOString(),
+      signature: exp.signature,
+      signatureAlgorithm: "HMAC-SHA256",
+      keyFingerprint: exportKeyFingerprint(),
+      files: exp.files,
+      finalizerEmail: exp.finalizerEmail,
+    },
+  };
+}
+
+router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
+  const id = paramId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const result = await buildAndPersistExport(req, id);
+  if (!result.ok) {
+    res.status(result.status).json(result.body);
+    return;
+  }
+  res.status(201).json(result.payload);
 });
+
+/**
+ * Single Finalize-and-Export action: snapshot every unlocked deliverable as
+ * a finalized version, flip its status to "locked", then build the branded
+ * PDF/DOCX/JSON bundle in one round-trip. This is the canonical
+ * client-handoff action — assessors don't have to lock each tab one by one.
+ */
+router.post(
+  "/engagements/:id/finalize-and-export",
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const actor = req.authedUser ?? null;
+    const finalized = await finalizeAllDeliverables(id, actor?.email ?? null);
+    if (finalized.length > 0) {
+      await recordActivity(req, {
+        engagementId: id,
+        kind: "deliverable_finalized",
+        severity: "critical",
+        message: `Finalized ${finalized.length} deliverable(s) for export`,
+        payload: { finalized },
+      });
+    }
+    const result = await buildAndPersistExport(req, id);
+    if (!result.ok) {
+      res.status(result.status).json(result.body);
+      return;
+    }
+    res.status(201).json({ ...result.payload, finalized });
+  },
+);
 
 // POST /engagements/:id/exports/:exportId/verify
 //
