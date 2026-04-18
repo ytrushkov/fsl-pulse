@@ -356,7 +356,11 @@ router.post(
       res.status(result.status).json(result.body);
       return;
     }
-    res.status(201).json({ ...result.payload, finalized });
+    // Contract: respond with the freshly-built ExportRecord exactly as
+    // documented in OpenAPI (no extra `finalized` payload). The list of
+    // newly-finalized keys is preserved in the audit log above for any
+    // downstream observers that need the detail.
+    res.status(201).json(result.payload);
   },
 );
 
