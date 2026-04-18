@@ -11,6 +11,7 @@ import type { ScoringOverall } from "./scoringOverall";
 export interface Scoring {
   engagementId: string;
   rubricVersion: string;
+  rubricVersionId?: string | null;
   byDimension: DimensionScore[];
   overall: ScoringOverall;
   computedAt: string;

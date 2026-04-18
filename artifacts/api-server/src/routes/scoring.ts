@@ -8,6 +8,7 @@ import {
 import { paramId } from "../lib/util";
 import { computeEngagementScoring } from "../lib/scoring";
 import { recordActivity } from "../lib/audit";
+import { getRubricVersion } from "../lib/rubric-store";
 
 const router: IRouter = Router();
 
@@ -52,6 +53,104 @@ router.post("/engagements/:id/scoring", async (req, res): Promise<void> => {
     payload: {
       rubricVersion: result.rubricVersion,
       overall: result.overall,
+    },
+  });
+  res.json(result);
+});
+
+/**
+ * Preview an engagement's scoring against any rubric version (typically a
+ * draft) without persisting. The frontend uses this to show "what would
+ * scoring look like under draft v1.1?" before publishing the rubric.
+ * The current persisted scoring is also returned so the UI can compute
+ * deltas.
+ */
+router.post("/engagements/:id/scoring/preview", async (req, res): Promise<void> => {
+  const id = paramId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const rubricVersionId =
+    typeof req.body?.rubricVersionId === "string"
+      ? req.body.rubricVersionId
+      : null;
+  if (!rubricVersionId) {
+    res.status(400).json({ error: "rubricVersionId required" });
+    return;
+  }
+  const rubric = await getRubricVersion(rubricVersionId);
+  if (!rubric) {
+    res.status(404).json({ error: "Rubric version not found" });
+    return;
+  }
+  const preview = await computeEngagementScoring(id, {
+    rubricVersionId,
+    persist: false,
+  });
+  const [current] = await db
+    .select()
+    .from(scoringTable)
+    .where(eq(scoringTable.engagementId, id));
+  res.json({
+    preview,
+    current: current
+      ? {
+          rubricVersion: current.rubricVersion,
+          rubricVersionId: current.rubricVersionId,
+          byDimension: current.byDimension,
+          overall: current.overall,
+          computedAt: current.computedAt.toISOString(),
+        }
+      : null,
+  });
+});
+
+/**
+ * Recompute scoring under a newer published rubric and persist the result.
+ * Drafts are refused — only a published version can be pinned.
+ */
+router.post("/engagements/:id/scoring/upgrade", async (req, res): Promise<void> => {
+  const id = paramId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const rubricVersionId =
+    typeof req.body?.rubricVersionId === "string"
+      ? req.body.rubricVersionId
+      : null;
+  if (!rubricVersionId) {
+    res.status(400).json({ error: "rubricVersionId required" });
+    return;
+  }
+  const rubric = await getRubricVersion(rubricVersionId);
+  if (!rubric) {
+    res.status(404).json({ error: "Rubric version not found" });
+    return;
+  }
+  if (rubric.status !== "published") {
+    res.status(400).json({ error: "Only published rubrics can be pinned" });
+    return;
+  }
+  const [previous] = await db
+    .select()
+    .from(scoringTable)
+    .where(eq(scoringTable.engagementId, id));
+  const result = await computeEngagementScoring(id, {
+    rubricVersionId,
+    persist: true,
+  });
+  await recordActivity(req, {
+    engagementId: id,
+    kind: "scoring_rubric_upgraded",
+    severity: "critical",
+    message: `Scoring upgraded to rubric ${rubric.version}`,
+    payload: {
+      from: previous
+        ? { rubricVersion: previous.rubricVersion, overall: previous.overall }
+        : null,
+      to: { rubricVersion: result.rubricVersion, overall: result.overall },
     },
   });
   res.json(result);

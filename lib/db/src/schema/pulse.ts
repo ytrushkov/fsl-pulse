@@ -272,11 +272,54 @@ export const artifactDocsTable = pgTable(
   (t) => ({ engIdx: index("artifact_docs_engagement_idx").on(t.engagementId) }),
 );
 
+// Versioned rubrics. The shipped v1.0.0 is bootstrapped on first server
+// start; practice leads can author additional drafts in the admin UI and
+// publish them. Published rows are immutable. Each engagement's scoring is
+// pinned to whichever rubric version produced its scores via
+// `scoringTable.rubricVersionId`, so historical scorings stay reproducible
+// even after a newer version ships.
+export const rubricVersionsTable = pgTable(
+  "rubric_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Human-readable semver-style label. Not unique on its own — a draft
+    // can hold the same `version` string as a published row of the same
+    // major number while it's being edited; uniqueness is only enforced
+    // among `published` rows via a partial index in application logic.
+    version: text("version").notNull(),
+    status: text("status", { enum: ["draft", "published"] })
+      .notNull()
+      .default("draft"),
+    // Full rubric body: { dimensions: DimensionRubric[], dimensionWeights?:
+    // Record<Dimension, number> }. dimensionWeights default to 1.0 each
+    // when omitted; they multiply each dimension's contribution to the
+    // overall score so a version can re-weight without changing
+    // per-dimension math.
+    body: jsonb("body").notNull().default({}),
+    notes: text("notes").notNull().default(""),
+    createdByEmail: text("created_by_email"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    statusIdx: index("rubric_versions_status_idx").on(t.status),
+  }),
+);
+
 export const scoringTable = pgTable("scoring", {
   engagementId: uuid("engagement_id")
     .primaryKey()
     .references(() => engagementsTable.id, { onDelete: "cascade" }),
   rubricVersion: text("rubric_version").notNull().default("1.0.0"),
+  // Hard pin to the rubric_versions row whose body was used. Nullable so
+  // pre-existing scorings (created before versioning shipped) still load;
+  // they're treated as "v1.0.0 (legacy)".
+  rubricVersionId: uuid("rubric_version_id").references(
+    () => rubricVersionsTable.id,
+    { onDelete: "set null" },
+  ),
   byDimension: jsonb("by_dimension").notNull().default([]),
   overall: jsonb("overall").notNull().default({}),
   computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),

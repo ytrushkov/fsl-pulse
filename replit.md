@@ -36,9 +36,10 @@ FullStack's internal product for diagnosing client engineering org agentic matur
 - `artifacts/mockup-sandbox` — design exploration sandbox
 
 ### Backend modules (`artifacts/api-server/src/lib`)
-- `rubric.ts` — 6 dimensions × 5 stages (versioned, RUBRIC_VERSION = 1.0.0)
+- `rubric.ts` — built-in 6 dimensions × 5 stages used as the seed body for rubric v1.0.0
+- `rubric-store.ts` — versioned rubric CRUD (`rubricVersionsTable`): seed/list/get/createDraft (with cloneFromId)/updateDraft/publishDraft/deleteDraft + `resolveRubricForScoring` (explicit id → latest published → seed); drafts editable, published rows immutable
 - `survey-template.ts` — 30 core Likert + 8 optional module questions
-- `scoring.ts` — evidence-weighted scoring engine; signal-source weights (system 1.5, artifact 1.2, interview 1.0, survey 0.8); signal-type weights (strength +1, gap −0.7, risk −1, quote +0.3); anonymity floor ≥5 enforced; overrides clamped to rubric bounds [1..5]; connector runs scoped per engagement
+- `scoring.ts` — evidence-weighted scoring engine; signal-source weights (system 1.5, artifact 1.2, interview 1.0, survey 0.8); signal-type weights (strength +1, gap −0.7, risk −1, quote +0.3); anonymity floor ≥5 enforced; overrides clamped to rubric bounds [1..5]; connector runs scoped per engagement; **per-rubric dimension weights** applied to the overall score (weights clamped ≥0, missing→1); accepts `{ rubricVersionId?, persist? }` so previews don't pollute persisted scoring
 - `connectors.ts` — 6 families: GitHub, GitLab, Jira, Linear, CI/CD, AI tooling; real verify + run with provider APIs
 - `ai-deliverables.ts` — claude-sonnet-4-6 narratives (heatmap, gap analysis, 90-day plan, PDLC entry-point, NPV) + interview tag suggester; JSON-mode prompts with regex fallback parsing
 - `util.ts` — AES-256-GCM connector-token envelope encryption (HKDF-derived key from `SESSION_SECRET`, override via `PULSE_TOKEN_KEY`), HMAC-SHA256 export signing (override via `PULSE_EXPORT_KEY`), magic-link token hashing, SSRF allow-list (`checkSafeUrl`)

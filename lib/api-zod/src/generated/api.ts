@@ -1004,6 +1004,7 @@ export const getScoringResponseByDimensionItemStageMax = 5;
 export const GetScoringResponse = zod.object({
   engagementId: zod.string(),
   rubricVersion: zod.string(),
+  rubricVersionId: zod.string().nullish(),
   byDimension: zod.array(
     zod.object({
       dimension: zod.enum([
@@ -1047,6 +1048,7 @@ export const computeScoringResponseByDimensionItemStageMax = 5;
 export const ComputeScoringResponse = zod.object({
   engagementId: zod.string(),
   rubricVersion: zod.string(),
+  rubricVersionId: zod.string().nullish(),
   byDimension: zod.array(
     zod.object({
       dimension: zod.enum([
@@ -1084,6 +1086,396 @@ export const ComputeScoringResponse = zod.object({
   computedAt: zod.string(),
 });
 
+export const PreviewScoringParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PreviewScoringBody = zod.object({
+  rubricVersionId: zod.string(),
+});
+
+export const previewScoringResponsePreviewByDimensionItemStageMax = 5;
+
+export const previewScoringResponseCurrentOneByDimensionItemStageMax = 5;
+
+export const PreviewScoringResponse = zod.object({
+  preview: zod.object({
+    engagementId: zod.string(),
+    rubricVersion: zod.string(),
+    rubricVersionId: zod.string().nullish(),
+    byDimension: zod.array(
+      zod.object({
+        dimension: zod.enum([
+          "tooling",
+          "measurement",
+          "process",
+          "people",
+          "governance",
+          "culture",
+        ]),
+        score: zod.number(),
+        stage: zod
+          .number()
+          .min(1)
+          .max(previewScoringResponsePreviewByDimensionItemStageMax),
+        confidence: zod.enum(["low", "medium", "high"]),
+        evidenceIds: zod.array(zod.string()),
+        rationale: zod.string(),
+        overrideJustification: zod.string().nullish(),
+        signalsBySource: zod
+          .object({
+            system: zod.number().optional(),
+            survey: zod.number().optional(),
+            interview: zod.number().optional(),
+            artifact: zod.number().optional(),
+          })
+          .optional(),
+      }),
+    ),
+    overall: zod.object({
+      score: zod.number(),
+      stage: zod.number(),
+      confidence: zod.enum(["low", "medium", "high"]),
+    }),
+    computedAt: zod.string(),
+  }),
+  current: zod
+    .object({
+      engagementId: zod.string(),
+      rubricVersion: zod.string(),
+      rubricVersionId: zod.string().nullish(),
+      byDimension: zod.array(
+        zod.object({
+          dimension: zod.enum([
+            "tooling",
+            "measurement",
+            "process",
+            "people",
+            "governance",
+            "culture",
+          ]),
+          score: zod.number(),
+          stage: zod
+            .number()
+            .min(1)
+            .max(previewScoringResponseCurrentOneByDimensionItemStageMax),
+          confidence: zod.enum(["low", "medium", "high"]),
+          evidenceIds: zod.array(zod.string()),
+          rationale: zod.string(),
+          overrideJustification: zod.string().nullish(),
+          signalsBySource: zod
+            .object({
+              system: zod.number().optional(),
+              survey: zod.number().optional(),
+              interview: zod.number().optional(),
+              artifact: zod.number().optional(),
+            })
+            .optional(),
+        }),
+      ),
+      overall: zod.object({
+        score: zod.number(),
+        stage: zod.number(),
+        confidence: zod.enum(["low", "medium", "high"]),
+      }),
+      computedAt: zod.string(),
+    })
+    .nullish(),
+});
+
+export const UpgradeScoringRubricParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const UpgradeScoringRubricBody = zod.object({
+  rubricVersionId: zod.string(),
+});
+
+export const upgradeScoringRubricResponseByDimensionItemStageMax = 5;
+
+export const UpgradeScoringRubricResponse = zod.object({
+  engagementId: zod.string(),
+  rubricVersion: zod.string(),
+  rubricVersionId: zod.string().nullish(),
+  byDimension: zod.array(
+    zod.object({
+      dimension: zod.enum([
+        "tooling",
+        "measurement",
+        "process",
+        "people",
+        "governance",
+        "culture",
+      ]),
+      score: zod.number(),
+      stage: zod
+        .number()
+        .min(1)
+        .max(upgradeScoringRubricResponseByDimensionItemStageMax),
+      confidence: zod.enum(["low", "medium", "high"]),
+      evidenceIds: zod.array(zod.string()),
+      rationale: zod.string(),
+      overrideJustification: zod.string().nullish(),
+      signalsBySource: zod
+        .object({
+          system: zod.number().optional(),
+          survey: zod.number().optional(),
+          interview: zod.number().optional(),
+          artifact: zod.number().optional(),
+        })
+        .optional(),
+    }),
+  ),
+  overall: zod.object({
+    score: zod.number(),
+    stage: zod.number(),
+    confidence: zod.enum(["low", "medium", "high"]),
+  }),
+  computedAt: zod.string(),
+});
+
+export const listRubricsResponseBodyDimensionsItemStagesItemStageMax = 5;
+
+export const ListRubricsResponseItem = zod.object({
+  id: zod.string(),
+  version: zod.string(),
+  status: zod.enum(["draft", "published"]),
+  body: zod.object({
+    dimensions: zod.array(
+      zod.object({
+        dimension: zod.enum([
+          "tooling",
+          "measurement",
+          "process",
+          "people",
+          "governance",
+          "culture",
+        ]),
+        description: zod.string().optional(),
+        stages: zod.array(
+          zod.object({
+            stage: zod
+              .number()
+              .min(1)
+              .max(listRubricsResponseBodyDimensionsItemStagesItemStageMax),
+            summary: zod.string(),
+            indicators: zod.array(zod.string()).optional(),
+          }),
+        ),
+      }),
+    ),
+    dimensionWeights: zod.record(zod.string(), zod.number()).optional(),
+  }),
+  notes: zod.string().optional(),
+  createdByEmail: zod.string().nullish(),
+  publishedAt: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListRubricsResponse = zod.array(ListRubricsResponseItem);
+
+export const createRubricDraftBodyBodyDimensionsItemStagesItemStageMax = 5;
+
+export const CreateRubricDraftBody = zod.object({
+  version: zod.string(),
+  notes: zod.string().optional(),
+  cloneFromId: zod.string().optional(),
+  body: zod
+    .object({
+      dimensions: zod.array(
+        zod.object({
+          dimension: zod.enum([
+            "tooling",
+            "measurement",
+            "process",
+            "people",
+            "governance",
+            "culture",
+          ]),
+          description: zod.string().optional(),
+          stages: zod.array(
+            zod.object({
+              stage: zod
+                .number()
+                .min(1)
+                .max(createRubricDraftBodyBodyDimensionsItemStagesItemStageMax),
+              summary: zod.string(),
+              indicators: zod.array(zod.string()).optional(),
+            }),
+          ),
+        }),
+      ),
+      dimensionWeights: zod.record(zod.string(), zod.number()).optional(),
+    })
+    .optional(),
+});
+
+export const GetRubricParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const getRubricResponseBodyDimensionsItemStagesItemStageMax = 5;
+
+export const GetRubricResponse = zod.object({
+  id: zod.string(),
+  version: zod.string(),
+  status: zod.enum(["draft", "published"]),
+  body: zod.object({
+    dimensions: zod.array(
+      zod.object({
+        dimension: zod.enum([
+          "tooling",
+          "measurement",
+          "process",
+          "people",
+          "governance",
+          "culture",
+        ]),
+        description: zod.string().optional(),
+        stages: zod.array(
+          zod.object({
+            stage: zod
+              .number()
+              .min(1)
+              .max(getRubricResponseBodyDimensionsItemStagesItemStageMax),
+            summary: zod.string(),
+            indicators: zod.array(zod.string()).optional(),
+          }),
+        ),
+      }),
+    ),
+    dimensionWeights: zod.record(zod.string(), zod.number()).optional(),
+  }),
+  notes: zod.string().optional(),
+  createdByEmail: zod.string().nullish(),
+  publishedAt: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+export const UpdateRubricDraftParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const updateRubricDraftBodyBodyDimensionsItemStagesItemStageMax = 5;
+
+export const UpdateRubricDraftBody = zod.object({
+  version: zod.string().optional(),
+  notes: zod.string().optional(),
+  body: zod
+    .object({
+      dimensions: zod.array(
+        zod.object({
+          dimension: zod.enum([
+            "tooling",
+            "measurement",
+            "process",
+            "people",
+            "governance",
+            "culture",
+          ]),
+          description: zod.string().optional(),
+          stages: zod.array(
+            zod.object({
+              stage: zod
+                .number()
+                .min(1)
+                .max(updateRubricDraftBodyBodyDimensionsItemStagesItemStageMax),
+              summary: zod.string(),
+              indicators: zod.array(zod.string()).optional(),
+            }),
+          ),
+        }),
+      ),
+      dimensionWeights: zod.record(zod.string(), zod.number()).optional(),
+    })
+    .optional(),
+});
+
+export const updateRubricDraftResponseBodyDimensionsItemStagesItemStageMax = 5;
+
+export const UpdateRubricDraftResponse = zod.object({
+  id: zod.string(),
+  version: zod.string(),
+  status: zod.enum(["draft", "published"]),
+  body: zod.object({
+    dimensions: zod.array(
+      zod.object({
+        dimension: zod.enum([
+          "tooling",
+          "measurement",
+          "process",
+          "people",
+          "governance",
+          "culture",
+        ]),
+        description: zod.string().optional(),
+        stages: zod.array(
+          zod.object({
+            stage: zod
+              .number()
+              .min(1)
+              .max(
+                updateRubricDraftResponseBodyDimensionsItemStagesItemStageMax,
+              ),
+            summary: zod.string(),
+            indicators: zod.array(zod.string()).optional(),
+          }),
+        ),
+      }),
+    ),
+    dimensionWeights: zod.record(zod.string(), zod.number()).optional(),
+  }),
+  notes: zod.string().optional(),
+  createdByEmail: zod.string().nullish(),
+  publishedAt: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+export const DeleteRubricDraftParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PublishRubricParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const publishRubricResponseBodyDimensionsItemStagesItemStageMax = 5;
+
+export const PublishRubricResponse = zod.object({
+  id: zod.string(),
+  version: zod.string(),
+  status: zod.enum(["draft", "published"]),
+  body: zod.object({
+    dimensions: zod.array(
+      zod.object({
+        dimension: zod.enum([
+          "tooling",
+          "measurement",
+          "process",
+          "people",
+          "governance",
+          "culture",
+        ]),
+        description: zod.string().optional(),
+        stages: zod.array(
+          zod.object({
+            stage: zod
+              .number()
+              .min(1)
+              .max(publishRubricResponseBodyDimensionsItemStagesItemStageMax),
+            summary: zod.string(),
+            indicators: zod.array(zod.string()).optional(),
+          }),
+        ),
+      }),
+    ),
+    dimensionWeights: zod.record(zod.string(), zod.number()).optional(),
+  }),
+  notes: zod.string().optional(),
+  createdByEmail: zod.string().nullish(),
+  publishedAt: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
 export const OverrideDimensionScoreParams = zod.object({
   id: zod.coerce.string(),
 });
@@ -1109,6 +1501,7 @@ export const overrideDimensionScoreResponseByDimensionItemStageMax = 5;
 export const OverrideDimensionScoreResponse = zod.object({
   engagementId: zod.string(),
   rubricVersion: zod.string(),
+  rubricVersionId: zod.string().nullish(),
   byDimension: zod.array(
     zod.object({
       dimension: zod.enum([

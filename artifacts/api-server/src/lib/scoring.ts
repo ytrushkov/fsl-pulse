@@ -8,8 +8,9 @@ import {
   connectorsTable,
   connectorRunsTable,
 } from "@workspace/db";
-import { DIMENSIONS, RUBRIC_VERSION, type Dimension } from "./rubric";
+import { DIMENSIONS, type Dimension } from "./rubric";
 import { DEFAULT_SURVEY_QUESTIONS } from "./survey-template";
+import { resolveRubricForScoring, type RubricVersionRow } from "./rubric-store";
 
 const ANONYMITY_FLOOR = 5;
 
@@ -121,7 +122,32 @@ async function getSystemSignals(engagementId: string): Promise<Record<Dimension,
   return out as Record<Dimension, number>;
 }
 
-export async function computeEngagementScoring(engagementId: string) {
+/**
+ * Compute scoring for an engagement.
+ *
+ * @param engagementId - the engagement
+ * @param opts.rubricVersionId - explicit rubric to score against. When
+ *   omitted the latest published rubric is used. Drafts are valid here
+ *   for preview flows; the route layer is responsible for refusing to
+ *   *persist* a draft pin.
+ * @param opts.persist - when false, the result is returned but not written
+ *   to scoringTable. Used by the "preview against draft" feature so an
+ *   assessor can see deltas without overwriting the live scoring.
+ */
+export async function computeEngagementScoring(
+  engagementId: string,
+  opts: { rubricVersionId?: string | null; persist?: boolean } = {},
+) {
+  const persist = opts.persist !== false;
+  const rubric = await resolveRubricForScoring(opts.rubricVersionId);
+  return computeWithRubric(engagementId, rubric, persist);
+}
+
+async function computeWithRubric(
+  engagementId: string,
+  rubric: RubricVersionRow,
+  persist: boolean,
+) {
   const evidenceRows = await db
     .select()
     .from(evidenceTable)
@@ -208,8 +234,22 @@ export async function computeEngagementScoring(engagementId: string) {
     });
   }
 
+  // Apply per-dimension weights from the rubric body. Default weight is 1
+  // for each dimension when the rubric omits the map. We compute a
+  // weighted average so a rubric version that re-balances the practice
+  // (e.g. doubles governance) actually shifts the headline number.
+  const weights = rubric.body.dimensionWeights ?? {};
+  // Clamp weights to >= 0 so a hostile or fat-fingered negative weight can't
+  // produce a nonsensical (e.g. negative) maturity score. NaN/missing
+  // entries fall back to 1.
+  const wPairs = aggregates.map((a) => {
+    const raw = weights[a.dimension];
+    const w = Number.isFinite(raw) ? Math.max(0, Number(raw)) : 1;
+    return { score: a.rawScore, w };
+  });
+  const wSum = wPairs.reduce((s, p) => s + p.w, 0) || aggregates.length;
   const overallScore =
-    aggregates.reduce((s, a) => s + a.rawScore, 0) / aggregates.length;
+    wPairs.reduce((s, p) => s + p.score * p.w, 0) / wSum;
   const overallStage = Math.round(overallScore);
   const overallConfidence: "low" | "medium" | "high" = aggregates.every(
     (a) => a.confidence === "high",
@@ -221,7 +261,9 @@ export async function computeEngagementScoring(engagementId: string) {
 
   const result = {
     engagementId,
-    rubricVersion: RUBRIC_VERSION,
+    rubricVersion: rubric.version,
+    rubricVersionId: rubric.id,
+    rubricStatus: rubric.status,
     byDimension: aggregates.map((a) => ({
       dimension: a.dimension,
       score: Number(a.rawScore.toFixed(2)),
@@ -240,6 +282,8 @@ export async function computeEngagementScoring(engagementId: string) {
     computedAt: new Date().toISOString(),
   };
 
+  if (!persist) return result;
+
   // Upsert
   const existing = await db
     .select()
@@ -249,6 +293,7 @@ export async function computeEngagementScoring(engagementId: string) {
     await db.insert(scoringTable).values({
       engagementId,
       rubricVersion: result.rubricVersion,
+      rubricVersionId: result.rubricVersionId,
       byDimension: result.byDimension,
       overall: result.overall,
       computedAt: new Date(),
@@ -258,6 +303,7 @@ export async function computeEngagementScoring(engagementId: string) {
       .update(scoringTable)
       .set({
         rubricVersion: result.rubricVersion,
+        rubricVersionId: result.rubricVersionId,
         byDimension: result.byDimension,
         overall: result.overall,
         computedAt: new Date(),

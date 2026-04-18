@@ -701,9 +701,52 @@ export type ScoringOverall = {
 export interface Scoring {
   engagementId: string;
   rubricVersion: string;
+  rubricVersionId?: string | null;
   byDimension: DimensionScore[];
   overall: ScoringOverall;
   computedAt: string;
+}
+
+export type RubricBodyDimensionsItemStagesItem = {
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  stage: number;
+  summary: string;
+  indicators?: string[];
+};
+
+export type RubricBodyDimensionsItem = {
+  dimension: Dimension;
+  description?: string;
+  stages: RubricBodyDimensionsItemStagesItem[];
+};
+
+export type RubricBodyDimensionWeights = { [key: string]: number };
+
+export interface RubricBody {
+  dimensions: RubricBodyDimensionsItem[];
+  dimensionWeights?: RubricBodyDimensionWeights;
+}
+
+export type RubricVersionStatus =
+  (typeof RubricVersionStatus)[keyof typeof RubricVersionStatus];
+
+export const RubricVersionStatus = {
+  draft: "draft",
+  published: "published",
+} as const;
+
+export interface RubricVersion {
+  id: string;
+  version: string;
+  status: RubricVersionStatus;
+  body: RubricBody;
+  notes?: string;
+  createdByEmail?: string | null;
+  publishedAt?: string | null;
+  createdAt: string;
 }
 
 export interface ScoreOverrideInput {
@@ -940,4 +983,30 @@ export type ListConnectorRunsParams = {
    * @minimum 0
    */
   offset?: number;
+};
+
+export type PreviewScoringBody = {
+  rubricVersionId: string;
+};
+
+export type PreviewScoring200 = {
+  preview: Scoring;
+  current?: Scoring | null;
+};
+
+export type UpgradeScoringRubricBody = {
+  rubricVersionId: string;
+};
+
+export type CreateRubricDraftBody = {
+  version: string;
+  notes?: string;
+  cloneFromId?: string;
+  body?: RubricBody;
+};
+
+export type UpdateRubricDraftBody = {
+  version?: string;
+  notes?: string;
+  body?: RubricBody;
 };

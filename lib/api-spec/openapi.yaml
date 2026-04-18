@@ -691,6 +691,145 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Scoring" }
 
+  /engagements/{id}/scoring/preview:
+    post:
+      operationId: previewScoring
+      tags: [scoring]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rubricVersionId]
+              properties:
+                rubricVersionId: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [preview]
+                properties:
+                  preview: { $ref: "#/components/schemas/Scoring" }
+                  current:
+                    nullable: true
+                    allOf: [{ $ref: "#/components/schemas/Scoring" }]
+
+  /engagements/{id}/scoring/upgrade:
+    post:
+      operationId: upgradeScoringRubric
+      tags: [scoring]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rubricVersionId]
+              properties:
+                rubricVersionId: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Scoring" }
+
+  /rubrics:
+    get:
+      operationId: listRubrics
+      tags: [rubrics]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RubricVersion" }
+    post:
+      operationId: createRubricDraft
+      tags: [rubrics]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: string }
+                notes: { type: string }
+                cloneFromId: { type: string }
+                body: { $ref: "#/components/schemas/RubricBody" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RubricVersion" }
+
+  /rubrics/{id}:
+    get:
+      operationId: getRubric
+      tags: [rubrics]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RubricVersion" }
+    patch:
+      operationId: updateRubricDraft
+      tags: [rubrics]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version: { type: string }
+                notes: { type: string }
+                body: { $ref: "#/components/schemas/RubricBody" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RubricVersion" }
+    delete:
+      operationId: deleteRubricDraft
+      tags: [rubrics]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: No Content }
+
+  /rubrics/{id}/publish:
+    post:
+      operationId: publishRubric
+      tags: [rubrics]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RubricVersion" }
+
   /engagements/{id}/scoring/override:
     post:
       operationId: overrideDimensionScore
@@ -1427,6 +1566,7 @@ components:
       properties:
         engagementId: { type: string }
         rubricVersion: { type: string }
+        rubricVersionId: { type: string, nullable: true }
         byDimension:
           type: array
           items: { $ref: "#/components/schemas/DimensionScore" }
@@ -1438,6 +1578,46 @@ components:
             stage: { type: integer }
             confidence: { $ref: "#/components/schemas/Confidence" }
         computedAt: { type: string }
+
+    RubricBody:
+      type: object
+      required: [dimensions]
+      properties:
+        dimensions:
+          type: array
+          items:
+            type: object
+            required: [dimension, stages]
+            properties:
+              dimension: { $ref: "#/components/schemas/Dimension" }
+              description: { type: string }
+              stages:
+                type: array
+                items:
+                  type: object
+                  required: [stage, summary]
+                  properties:
+                    stage: { type: integer, minimum: 1, maximum: 5 }
+                    summary: { type: string }
+                    indicators:
+                      type: array
+                      items: { type: string }
+        dimensionWeights:
+          type: object
+          additionalProperties: { type: number }
+
+    RubricVersion:
+      type: object
+      required: [id, version, status, body, createdAt]
+      properties:
+        id: { type: string }
+        version: { type: string }
+        status: { type: string, enum: [draft, published] }
+        body: { $ref: "#/components/schemas/RubricBody" }
+        notes: { type: string }
+        createdByEmail: { type: string, nullable: true }
+        publishedAt: { type: string, nullable: true }
+        createdAt: { type: string }
 
     ScoreOverrideInput:
       type: object

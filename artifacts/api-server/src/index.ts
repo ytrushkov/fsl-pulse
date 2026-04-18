@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { migrateLegacyConnectorTokens } from "./lib/migrations";
 import { startScheduler } from "./lib/scheduler";
 import { startSurveyScheduler } from "./lib/survey-scheduler";
+import { ensureSeedRubric } from "./lib/rubric-store";
 
 const rawPort = process.env["PORT"];
 
@@ -37,6 +38,11 @@ app.listen(port, (err) => {
       }
     })
     .catch((e) => logger.error({ err: e }, "Token migration failed"));
+
+  // Make sure a baseline rubric exists before scoring runs. Idempotent.
+  ensureSeedRubric().catch((e) =>
+    logger.error({ err: e }, "Rubric seed failed"),
+  );
 
   // Background scheduler for connector runs. Polls every minute for due
   // connectors (`scheduleEnabled = true AND nextRunAt <= now()`) and

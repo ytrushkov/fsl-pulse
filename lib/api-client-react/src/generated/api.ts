@@ -30,6 +30,7 @@ import type {
   CreateEngagementInput,
   CreateEvidenceInput,
   CreateInterviewInput,
+  CreateRubricDraftBody,
   CreateSurveyInvitesInput,
   Deliverables,
   Engagement,
@@ -45,7 +46,10 @@ import type {
   InvitePreview,
   ListConnectorRunsParams,
   PreviewInvitesInput,
+  PreviewScoring200,
+  PreviewScoringBody,
   PublicSurvey,
+  RubricVersion,
   SaveSurveyDraftInput,
   ScoreOverrideInput,
   Scoring,
@@ -57,7 +61,9 @@ import type {
   UpdateDeliverablesInput,
   UpdateEngagementInput,
   UpdateInterviewInput,
+  UpdateRubricDraftBody,
   UpdateSurveyInput,
+  UpgradeScoringRubricBody,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -3744,6 +3750,632 @@ export const useComputeScoring = <
   TContext
 > => {
   return useMutation(getComputeScoringMutationOptions(options));
+};
+
+export const getPreviewScoringUrl = (id: string) => {
+  return `/api/engagements/${id}/scoring/preview`;
+};
+
+export const previewScoring = async (
+  id: string,
+  previewScoringBody: PreviewScoringBody,
+  options?: RequestInit,
+): Promise<PreviewScoring200> => {
+  return customFetch<PreviewScoring200>(getPreviewScoringUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(previewScoringBody),
+  });
+};
+
+export const getPreviewScoringMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewScoring>>,
+    TError,
+    { id: string; data: BodyType<PreviewScoringBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof previewScoring>>,
+  TError,
+  { id: string; data: BodyType<PreviewScoringBody> },
+  TContext
+> => {
+  const mutationKey = ["previewScoring"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof previewScoring>>,
+    { id: string; data: BodyType<PreviewScoringBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return previewScoring(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PreviewScoringMutationResult = NonNullable<
+  Awaited<ReturnType<typeof previewScoring>>
+>;
+export type PreviewScoringMutationBody = BodyType<PreviewScoringBody>;
+export type PreviewScoringMutationError = ErrorType<unknown>;
+
+export const usePreviewScoring = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewScoring>>,
+    TError,
+    { id: string; data: BodyType<PreviewScoringBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof previewScoring>>,
+  TError,
+  { id: string; data: BodyType<PreviewScoringBody> },
+  TContext
+> => {
+  return useMutation(getPreviewScoringMutationOptions(options));
+};
+
+export const getUpgradeScoringRubricUrl = (id: string) => {
+  return `/api/engagements/${id}/scoring/upgrade`;
+};
+
+export const upgradeScoringRubric = async (
+  id: string,
+  upgradeScoringRubricBody: UpgradeScoringRubricBody,
+  options?: RequestInit,
+): Promise<Scoring> => {
+  return customFetch<Scoring>(getUpgradeScoringRubricUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(upgradeScoringRubricBody),
+  });
+};
+
+export const getUpgradeScoringRubricMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upgradeScoringRubric>>,
+    TError,
+    { id: string; data: BodyType<UpgradeScoringRubricBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof upgradeScoringRubric>>,
+  TError,
+  { id: string; data: BodyType<UpgradeScoringRubricBody> },
+  TContext
+> => {
+  const mutationKey = ["upgradeScoringRubric"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof upgradeScoringRubric>>,
+    { id: string; data: BodyType<UpgradeScoringRubricBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return upgradeScoringRubric(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpgradeScoringRubricMutationResult = NonNullable<
+  Awaited<ReturnType<typeof upgradeScoringRubric>>
+>;
+export type UpgradeScoringRubricMutationBody =
+  BodyType<UpgradeScoringRubricBody>;
+export type UpgradeScoringRubricMutationError = ErrorType<unknown>;
+
+export const useUpgradeScoringRubric = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upgradeScoringRubric>>,
+    TError,
+    { id: string; data: BodyType<UpgradeScoringRubricBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof upgradeScoringRubric>>,
+  TError,
+  { id: string; data: BodyType<UpgradeScoringRubricBody> },
+  TContext
+> => {
+  return useMutation(getUpgradeScoringRubricMutationOptions(options));
+};
+
+export const getListRubricsUrl = () => {
+  return `/api/rubrics`;
+};
+
+export const listRubrics = async (
+  options?: RequestInit,
+): Promise<RubricVersion[]> => {
+  return customFetch<RubricVersion[]>(getListRubricsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListRubricsQueryKey = () => {
+  return [`/api/rubrics`] as const;
+};
+
+export const getListRubricsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRubrics>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listRubrics>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListRubricsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listRubrics>>> = ({
+    signal,
+  }) => listRubrics({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRubrics>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListRubricsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRubrics>>
+>;
+export type ListRubricsQueryError = ErrorType<unknown>;
+
+export function useListRubrics<
+  TData = Awaited<ReturnType<typeof listRubrics>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listRubrics>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListRubricsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getCreateRubricDraftUrl = () => {
+  return `/api/rubrics`;
+};
+
+export const createRubricDraft = async (
+  createRubricDraftBody: CreateRubricDraftBody,
+  options?: RequestInit,
+): Promise<RubricVersion> => {
+  return customFetch<RubricVersion>(getCreateRubricDraftUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createRubricDraftBody),
+  });
+};
+
+export const getCreateRubricDraftMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createRubricDraft>>,
+    TError,
+    { data: BodyType<CreateRubricDraftBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createRubricDraft>>,
+  TError,
+  { data: BodyType<CreateRubricDraftBody> },
+  TContext
+> => {
+  const mutationKey = ["createRubricDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createRubricDraft>>,
+    { data: BodyType<CreateRubricDraftBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createRubricDraft(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateRubricDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createRubricDraft>>
+>;
+export type CreateRubricDraftMutationBody = BodyType<CreateRubricDraftBody>;
+export type CreateRubricDraftMutationError = ErrorType<unknown>;
+
+export const useCreateRubricDraft = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createRubricDraft>>,
+    TError,
+    { data: BodyType<CreateRubricDraftBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createRubricDraft>>,
+  TError,
+  { data: BodyType<CreateRubricDraftBody> },
+  TContext
+> => {
+  return useMutation(getCreateRubricDraftMutationOptions(options));
+};
+
+export const getGetRubricUrl = (id: string) => {
+  return `/api/rubrics/${id}`;
+};
+
+export const getRubric = async (
+  id: string,
+  options?: RequestInit,
+): Promise<RubricVersion> => {
+  return customFetch<RubricVersion>(getGetRubricUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRubricQueryKey = (id: string) => {
+  return [`/api/rubrics/${id}`] as const;
+};
+
+export const getGetRubricQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRubric>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRubric>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRubricQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRubric>>> = ({
+    signal,
+  }) => getRubric(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getRubric>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetRubricQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRubric>>
+>;
+export type GetRubricQueryError = ErrorType<unknown>;
+
+export function useGetRubric<
+  TData = Awaited<ReturnType<typeof getRubric>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRubric>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRubricQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getUpdateRubricDraftUrl = (id: string) => {
+  return `/api/rubrics/${id}`;
+};
+
+export const updateRubricDraft = async (
+  id: string,
+  updateRubricDraftBody: UpdateRubricDraftBody,
+  options?: RequestInit,
+): Promise<RubricVersion> => {
+  return customFetch<RubricVersion>(getUpdateRubricDraftUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateRubricDraftBody),
+  });
+};
+
+export const getUpdateRubricDraftMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRubricDraft>>,
+    TError,
+    { id: string; data: BodyType<UpdateRubricDraftBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateRubricDraft>>,
+  TError,
+  { id: string; data: BodyType<UpdateRubricDraftBody> },
+  TContext
+> => {
+  const mutationKey = ["updateRubricDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateRubricDraft>>,
+    { id: string; data: BodyType<UpdateRubricDraftBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateRubricDraft(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateRubricDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateRubricDraft>>
+>;
+export type UpdateRubricDraftMutationBody = BodyType<UpdateRubricDraftBody>;
+export type UpdateRubricDraftMutationError = ErrorType<unknown>;
+
+export const useUpdateRubricDraft = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRubricDraft>>,
+    TError,
+    { id: string; data: BodyType<UpdateRubricDraftBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateRubricDraft>>,
+  TError,
+  { id: string; data: BodyType<UpdateRubricDraftBody> },
+  TContext
+> => {
+  return useMutation(getUpdateRubricDraftMutationOptions(options));
+};
+
+export const getDeleteRubricDraftUrl = (id: string) => {
+  return `/api/rubrics/${id}`;
+};
+
+export const deleteRubricDraft = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteRubricDraftUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteRubricDraftMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRubricDraft>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteRubricDraft>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteRubricDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteRubricDraft>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteRubricDraft(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteRubricDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteRubricDraft>>
+>;
+
+export type DeleteRubricDraftMutationError = ErrorType<unknown>;
+
+export const useDeleteRubricDraft = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRubricDraft>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteRubricDraft>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteRubricDraftMutationOptions(options));
+};
+
+export const getPublishRubricUrl = (id: string) => {
+  return `/api/rubrics/${id}/publish`;
+};
+
+export const publishRubric = async (
+  id: string,
+  options?: RequestInit,
+): Promise<RubricVersion> => {
+  return customFetch<RubricVersion>(getPublishRubricUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPublishRubricMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof publishRubric>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof publishRubric>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["publishRubric"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof publishRubric>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return publishRubric(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PublishRubricMutationResult = NonNullable<
+  Awaited<ReturnType<typeof publishRubric>>
+>;
+
+export type PublishRubricMutationError = ErrorType<unknown>;
+
+export const usePublishRubric = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof publishRubric>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof publishRubric>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getPublishRubricMutationOptions(options));
 };
 
 export const getOverrideDimensionScoreUrl = (id: string) => {

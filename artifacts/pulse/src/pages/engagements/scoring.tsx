@@ -4,8 +4,13 @@ import {
   useGetScoring,
   useComputeScoring,
   useOverrideDimensionScore,
+  useListRubrics,
+  usePreviewScoring,
+  useUpgradeScoringRubric,
   getGetScoringQueryKey,
+  type Scoring,
 } from "@workspace/api-client-react";
+import { DeltaTable } from "@/pages/rubrics";
 import { useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Button } from "@/components/ui/button";
@@ -70,19 +75,30 @@ export default function ScoringView() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Scoring Dashboard</h1>
-          <p className="text-muted-foreground mt-1 flex items-center gap-2">
-            Maturity evaluation across 6 key dimensions. 
+          <p className="text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+            Maturity evaluation across 6 key dimensions.
             {scoring?.computedAt && (
               <span className="text-xs border rounded px-1.5 py-0.5 bg-muted/50">
                 Last computed {formatRelative(scoring.computedAt)}
               </span>
             )}
+            {scoring?.rubricVersion && (
+              <Badge variant="outline" className="font-mono text-xs">
+                Rubric v{scoring.rubricVersion}
+              </Badge>
+            )}
           </p>
         </div>
-        <Button onClick={handleCompute} disabled={computeScoring.isPending} className="gap-2">
-          <Calculator className="h-4 w-4" />
-          {computeScoring.isPending ? "Computing..." : "Score all"}
-        </Button>
+        <div className="flex gap-2">
+          <UpgradeRubricButton
+            engagementId={id}
+            scoring={scoring ?? null}
+          />
+          <Button onClick={handleCompute} disabled={computeScoring.isPending} className="gap-2">
+            <Calculator className="h-4 w-4" />
+            {computeScoring.isPending ? "Computing..." : "Score all"}
+          </Button>
+        </div>
       </div>
 
       <div className="mb-8 p-6 bg-primary text-primary-foreground rounded-lg shadow-sm">
@@ -367,6 +383,139 @@ function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: st
           <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
           <Button onClick={handleSave} disabled={overrideScore.isPending || !justification}>
             {overrideScore.isPending ? "Saving..." : "Save Override"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UpgradeRubricButton({
+  engagementId,
+  scoring,
+}: {
+  engagementId: string;
+  scoring: Scoring | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [targetId, setTargetId] = useState<string>("");
+  const [previewResult, setPreviewResult] = useState<{
+    preview: Scoring;
+    current?: Scoring | null;
+  } | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: rubrics } = useListRubrics();
+  const preview = usePreviewScoring();
+  const upgrade = useUpgradeScoringRubric();
+
+  const published = (rubrics ?? []).filter((r) => r.status === "published");
+  const candidates = published.filter(
+    (r) => r.id !== scoring?.rubricVersionId,
+  );
+
+  function handlePreview(rubricId: string) {
+    setTargetId(rubricId);
+    setPreviewResult(null);
+    preview.mutate(
+      { id: engagementId, data: { rubricVersionId: rubricId } },
+      {
+        onSuccess: (r) => setPreviewResult(r),
+        onError: (err) =>
+          toast({
+            variant: "destructive",
+            title: "Preview failed",
+            description: err instanceof Error ? err.message : "",
+          }),
+      },
+    );
+  }
+
+  function handleConfirm() {
+    if (!targetId) return;
+    upgrade.mutate(
+      { id: engagementId, data: { rubricVersionId: targetId } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({
+            queryKey: getGetScoringQueryKey(engagementId),
+          });
+          toast({ title: "Rubric upgraded" });
+          setOpen(false);
+          setPreviewResult(null);
+          setTargetId("");
+        },
+        onError: (err) =>
+          toast({
+            variant: "destructive",
+            title: "Upgrade failed",
+            description: err instanceof Error ? err.message : "",
+          }),
+      },
+    );
+  }
+
+  if (candidates.length === 0) return null;
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) {
+          setPreviewResult(null);
+          setTargetId("");
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="outline" className="gap-2">
+          <CheckCircle2 className="h-4 w-4" />
+          Upgrade rubric
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Upgrade scoring rubric</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1.5">
+            <Label>Target version</Label>
+            <div className="flex flex-wrap gap-2">
+              {candidates.map((r) => (
+                <Button
+                  key={r.id}
+                  variant={targetId === r.id ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handlePreview(r.id)}
+                  disabled={preview.isPending && targetId === r.id}
+                >
+                  v{r.version}
+                </Button>
+              ))}
+            </div>
+          </div>
+          {preview.isPending && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Info className="h-4 w-4" /> Previewing…
+            </div>
+          )}
+          {previewResult && (
+            <DeltaTable
+              preview={previewResult.preview}
+              current={previewResult.current ?? null}
+            />
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!previewResult || upgrade.isPending}
+            onClick={handleConfirm}
+          >
+            {upgrade.isPending ? "Upgrading…" : "Confirm upgrade"}
           </Button>
         </DialogFooter>
       </DialogContent>
