@@ -31,13 +31,32 @@ export function sha256(s: string): string {
 // PULSE_TOKEN_KEY / PULSE_EXPORT_KEY env vars (hex- or base64-encoded 32 bytes)
 // when migrating to a managed KMS.
 
-const ROOT_SECRET =
-  process.env.SESSION_SECRET ??
-  process.env.PULSE_ROOT_KEY ??
-  // Dev-only fallback so the server boots without a configured secret. This
-  // must NEVER ship to production: encryption keys derived from this value
-  // are not secret.
-  "pulse-dev-insecure-root-do-not-use-in-prod";
+function resolveRootSecret(): string {
+  const fromEnv =
+    process.env.SESSION_SECRET ?? process.env.PULSE_ROOT_KEY ?? "";
+  if (fromEnv && fromEnv.length >= 16) return fromEnv;
+  // In production, refuse to derive cryptographic keys from a known/empty
+  // value. Doing so would let anyone with the source code decrypt connector
+  // tokens or forge export signatures.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Refusing to start: SESSION_SECRET (or PULSE_ROOT_KEY) must be set to " +
+        "at least 16 characters in production. This secret is used to derive " +
+        "AES-256-GCM connector-token keys and HMAC export-signing keys.",
+    );
+  }
+  // Dev-only fallback so the server boots without a configured secret. NEVER
+  // used in production thanks to the guard above. We log loudly so a misset
+  // NODE_ENV doesn't sneak past unnoticed.
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[pulse] WARNING: using insecure dev fallback for SESSION_SECRET — " +
+      "set SESSION_SECRET (>= 16 chars) before deploying.",
+  );
+  return "pulse-dev-insecure-root-do-not-use-in-prod";
+}
+
+const ROOT_SECRET = resolveRootSecret();
 
 function decodeKey(raw: string): Buffer | null {
   try {

@@ -169,14 +169,18 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
   });
 });
 
-// Recipients (or FullStack delivery leads) hit this with the snapshot bytes
-// they were given, and we re-compute the HMAC to confirm the bundle is
-// untampered. The expected signature is read off the export record so the
-// caller never needs to learn the signing key.
+// POST /engagements/:id/exports/:exportId/verify
+//
+// Recipients (or FullStack delivery leads) submit the snapshot bytes they
+// were given as `{ snapshotJson }` and we re-compute the HMAC to confirm
+// the bundle is untampered. The expected signature is read off the export
+// record so the caller never needs to learn the signing key. The response
+// is `{ ok, expectedAlgorithm: "HMAC-SHA256", keyFingerprint }`.
 //
 // Mounted under /engagements/:id/... so the global engagement-member guard
 // in routes/index.ts applies — only members of the owning engagement may
-// verify its exports.
+// verify its exports. The handler also re-checks `exp.engagementId === id`
+// to defeat URL tampering.
 router.post(
   "/engagements/:id/exports/:exportId/verify",
   async (req, res): Promise<void> => {
