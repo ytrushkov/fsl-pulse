@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useUser } from "@clerk/react";
 import {
   useListEngagementMembers,
   useAddEngagementMember,
@@ -40,6 +41,10 @@ export function MembersPanel({ engagementId }: Props) {
   const [role, setRole] = useState<Role>("assessor");
 
   const { data: members, isLoading } = useListEngagementMembers(engagementId);
+  const { user } = useUser();
+  const myEmail = user?.primaryEmailAddress?.emailAddress?.toLowerCase() ?? "";
+  const me = members?.find((m) => m.email.toLowerCase() === myEmail);
+  const canManage = me?.role === "owner";
 
   const invalidate = () =>
     qc.invalidateQueries({
@@ -87,6 +92,7 @@ export function MembersPanel({ engagementId }: Props) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {canManage && (
         <form
           className="flex flex-col gap-2 sm:flex-row"
           onSubmit={(e) => {
@@ -119,6 +125,7 @@ export function MembersPanel({ engagementId }: Props) {
             Invite
           </Button>
         </form>
+        )}
 
         <div className="divide-y divide-border rounded-lg border border-border">
           {isLoading ? (
@@ -176,21 +183,23 @@ export function MembersPanel({ engagementId }: Props) {
                         pending
                       </Badge>
                     )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                      disabled={removeMember.isPending}
-                      onClick={() =>
-                        removeMember.mutate({
-                          id: engagementId,
-                          memberId: m.id,
-                        })
-                      }
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {canManage && m.id !== me?.id && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        disabled={removeMember.isPending}
+                        onClick={() =>
+                          removeMember.mutate({
+                            id: engagementId,
+                            memberId: m.id,
+                          })
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               );
