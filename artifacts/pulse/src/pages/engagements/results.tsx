@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useGetDeliverables } from "@workspace/api-client-react";
+import { useGetDeliverables, getGetDeliverablesQueryKey } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Import sub-views
@@ -22,7 +22,7 @@ export default function ResultsView() {
   const activeTab = match ? match[1] : "heatmap";
 
   const { data: deliverables, isLoading } = useGetDeliverables(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getGetDeliverablesQueryKey(id) },
   });
 
   const handleTabChange = (val: string) => {

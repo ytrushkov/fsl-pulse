@@ -26,7 +26,7 @@ export default function ArtifactsView() {
   const [content, setContent] = useState("");
 
   const { data: artifacts, isLoading } = useListArtifacts(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getListArtifactsQueryKey(id) },
   });
 
   const createArtifact = useCreateArtifact();
@@ -53,7 +53,7 @@ export default function ArtifactsView() {
 
   const handleDelete = (artifactId: string) => {
     if (confirm("Are you sure you want to delete this artifact?")) {
-      deleteArtifact.mutate({ id: artifactId }, {
+      deleteArtifact.mutate({ artifactId }, {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListArtifactsQueryKey(id) });
         }

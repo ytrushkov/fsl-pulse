@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useParams } from "wouter";
-import { useGetScoring, useComputeScoring, useOverrideDimensionScore, getGetScoringQueryKey } from "@workspace/api-client-react";
+import {
+  useGetScoring,
+  useComputeScoring,
+  useOverrideDimensionScore,
+  getGetScoringQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Button } from "@/components/ui/button";
@@ -31,7 +36,7 @@ export default function ScoringView() {
   const { toast } = useToast();
 
   const { data: scoring, isLoading } = useGetScoring(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getGetScoringQueryKey(id) },
   });
 
   const computeScoring = useComputeScoring();

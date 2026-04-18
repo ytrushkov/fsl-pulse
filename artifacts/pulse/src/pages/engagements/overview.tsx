@@ -1,8 +1,12 @@
 import {
   useGetEngagement,
   useGetEngagementDashboard,
-  useListEngagementActivity,
+  useGetEngagementActivity,
+  getGetEngagementQueryKey,
+  getGetEngagementDashboardQueryKey,
+  getGetEngagementActivityQueryKey,
 } from "@workspace/api-client-react";
+import type { ActivityEvent } from "@workspace/api-client-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useParams } from "wouter";
 import { AppLayout } from "@/components/layout/app-layout";
@@ -29,11 +33,11 @@ export default function EngagementOverview() {
   const id = params.id as string;
   
   const { data: engagement, isLoading: isLoadingEngagement } = useGetEngagement(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getGetEngagementQueryKey(id) },
   });
-  
+
   const { data: dashboard, isLoading: isLoadingDashboard } = useGetEngagementDashboard(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getGetEngagementDashboardQueryKey(id) },
   });
 
   const isLoading = isLoadingEngagement || isLoadingDashboard;
@@ -254,8 +258,11 @@ export default function EngagementOverview() {
 }
 
 function ActivityFeed({ engagementId }: { engagementId: string }) {
-  const { data: events, isLoading } = useListEngagementActivity(engagementId, {
-    query: { enabled: !!engagementId },
+  const { data: events, isLoading } = useGetEngagementActivity(engagementId, {
+    query: {
+      enabled: !!engagementId,
+      queryKey: getGetEngagementActivityQueryKey(engagementId),
+    },
   });
   const initials = (s: string) =>
     s
@@ -286,7 +293,7 @@ function ActivityFeed({ engagementId }: { engagementId: string }) {
           <p className="text-sm text-muted-foreground">No activity yet.</p>
         ) : (
           <ul className="space-y-3">
-            {events.map((e) => {
+            {events.map((e: ActivityEvent) => {
               const actor = e.actorName || e.actorEmail || "System";
               const isOverride = e.kind === "score_override";
               return (

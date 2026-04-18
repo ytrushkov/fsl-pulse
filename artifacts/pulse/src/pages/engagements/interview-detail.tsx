@@ -35,11 +35,11 @@ export default function InterviewDetailView() {
   const initializedForId = useRef<string | null>(null);
 
   const { data: interview, isLoading } = useGetInterview(interviewId, {
-    query: { enabled: !!interviewId }
+    query: { enabled: !!interviewId, queryKey: getGetInterviewQueryKey(interviewId) },
   });
 
   const { data: evidence } = useListInterviewEvidence(interviewId, {
-    query: { enabled: !!interviewId }
+    query: { enabled: !!interviewId, queryKey: getListInterviewEvidenceQueryKey(interviewId) },
   });
 
   const updateInterview = useUpdateInterview();
@@ -54,7 +54,7 @@ export default function InterviewDetailView() {
 
   const handleSaveNotes = () => {
     updateInterview.mutate(
-      { id: interviewId, data: { notes } },
+      { interviewId, data: { notes } },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetInterviewQueryKey(interviewId) });
@@ -67,7 +67,7 @@ export default function InterviewDetailView() {
   const handleDeleteEvidence = (id: string) => {
     if(confirm("Remove this evidence?")) {
       deleteEvidence.mutate(
-        { id },
+        { evidenceId: id },
         {
           onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: getListInterviewEvidenceQueryKey(interviewId) });
@@ -204,7 +204,7 @@ function AddEvidenceDialog({ interviewId, open, onOpenChange, initialText, onCom
 
   const handleAdd = () => {
     addEvidence.mutate(
-      { id: interviewId, data: { dimension: dimension as any, signalType: signalType as any, text: initialText } },
+      { interviewId, data: { dimension: dimension as any, signalType: signalType as any, text: initialText } },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListInterviewEvidenceQueryKey(interviewId) });
@@ -264,7 +264,7 @@ function AISuggestTagsButton({ interviewId, notes }: { interviewId: string, note
   const { toast } = useToast();
 
   const handleSuggest = () => {
-    suggestTags.mutate({ id: interviewId }, {
+    suggestTags.mutate({ interviewId }, {
       onSuccess: () => setOpen(true),
       onError: () => toast({ variant: "destructive", title: "Error running AI suggestion" })
     });
@@ -272,7 +272,7 @@ function AISuggestTagsButton({ interviewId, notes }: { interviewId: string, note
 
   const handleAccept = (suggestion: any, index: number) => {
     addEvidence.mutate(
-      { id: interviewId, data: { dimension: suggestion.dimension, signalType: suggestion.signalType, text: suggestion.text, stageHint: suggestion.stageHint } },
+      { interviewId, data: { dimension: suggestion.dimension, signalType: suggestion.signalType, text: suggestion.text, stageHint: suggestion.stageHint } },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListInterviewEvidenceQueryKey(interviewId) });

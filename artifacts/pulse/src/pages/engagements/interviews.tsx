@@ -27,7 +27,7 @@ export default function InterviewsView() {
   const { toast } = useToast();
 
   const { data: interviews, isLoading } = useListInterviews(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getListInterviewsQueryKey(id) },
   });
 
   const deleteInterview = useDeleteInterview();
@@ -35,7 +35,7 @@ export default function InterviewsView() {
   const handleDelete = (interviewId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm("Delete this interview?")) {
-      deleteInterview.mutate({ id: interviewId }, {
+      deleteInterview.mutate({ interviewId }, {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListInterviewsQueryKey(id) });
           toast({ title: "Interview deleted" });

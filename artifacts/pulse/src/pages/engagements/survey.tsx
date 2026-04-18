@@ -64,7 +64,7 @@ export default function SurveyView() {
 
 function SurveyBuilder({ engagementId }: { engagementId: string }) {
   const { data: survey, isLoading } = useGetSurvey(engagementId, {
-    query: { enabled: !!engagementId }
+    query: { enabled: !!engagementId, queryKey: getGetSurveyQueryKey(engagementId) },
   });
 
   if (isLoading) {
@@ -134,7 +134,7 @@ function SurveyBuilder({ engagementId }: { engagementId: string }) {
 
 function SurveyResponses({ engagementId }: { engagementId: string }) {
   const { data: aggregates, isLoading } = useGetSurveyAggregates(engagementId, {
-    query: { enabled: !!engagementId }
+    query: { enabled: !!engagementId, queryKey: getGetSurveyAggregatesQueryKey(engagementId) },
   });
 
   if (isLoading) {

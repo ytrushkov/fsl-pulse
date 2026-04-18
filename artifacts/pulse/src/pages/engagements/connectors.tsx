@@ -19,14 +19,14 @@ export default function ConnectorsList() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
   const { data: connectors, isLoading } = useListConnectors(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getListConnectorsQueryKey(id) },
   });
 
   const deleteConnector = useDeleteConnector();
 
   const handleDelete = (connectorId: string) => {
     if (confirm("Are you sure you want to remove this connector?")) {
-      deleteConnector.mutate({ id: connectorId }, {
+      deleteConnector.mutate({ connectorId }, {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListConnectorsQueryKey(id) });
         }

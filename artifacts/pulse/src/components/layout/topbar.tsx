@@ -1,6 +1,9 @@
 import { Link, useLocation } from "wouter";
 import { UserButton } from "@clerk/react";
-import { useGetEngagement } from "@workspace/api-client-react";
+import {
+  useGetEngagement,
+  getGetEngagementQueryKey,
+} from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 
@@ -11,7 +14,10 @@ interface TopbarProps {
 export function Topbar({ engagementId }: TopbarProps) {
   const [location] = useLocation();
   const { data: engagement, isLoading } = useGetEngagement(engagementId || "", {
-    query: { enabled: !!engagementId },
+    query: {
+      enabled: !!engagementId,
+      queryKey: getGetEngagementQueryKey(engagementId || ""),
+    },
   });
 
   const tabs = engagementId

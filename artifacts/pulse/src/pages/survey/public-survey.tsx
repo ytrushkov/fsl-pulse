@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams } from "wouter";
-import { useGetSurveyByToken, useSubmitSurveyResponse } from "@workspace/api-client-react";
+import { useGetSurveyByToken, useSubmitSurveyResponse, getGetSurveyByTokenQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -19,7 +19,7 @@ export default function PublicSurveyForm() {
   const [submitted, setSubmitted] = useState(false);
 
   const { data: survey, isLoading, error } = useGetSurveyByToken(token, {
-    query: { enabled: !!token, retry: false }
+    query: { enabled: !!token, retry: false, queryKey: getGetSurveyByTokenQueryKey(token) },
   });
 
   const submitSurvey = useSubmitSurveyResponse();

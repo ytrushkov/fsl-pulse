@@ -19,7 +19,7 @@ export default function ExportsView() {
   const { toast } = useToast();
 
   const { data: exports, isLoading } = useListExports(id, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getListExportsQueryKey(id) },
   });
 
   const createExport = useCreateExport();
