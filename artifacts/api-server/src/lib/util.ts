@@ -260,12 +260,33 @@ function isPrivateV4(ip: string): boolean {
 function isPrivateV6(ip: string): boolean {
   const lower = ip.toLowerCase();
   if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fe80:")) return true; // link-local
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA fc00::/7
-  // IPv4-mapped (::ffff:a.b.c.d) — extract and re-check
-  const m = /^::ffff:([0-9.]+)$/.exec(lower);
-  if (m && m[1] && isPrivateV4(m[1])) return true;
+  // IPv4-mapped (::ffff:a.b.c.d or ::ffff:aabb:ccdd) — re-check the v4 half.
+  const dotted = /^::ffff:([0-9.]+)$/.exec(lower);
+  if (dotted && dotted[1] && isPrivateV4(dotted[1])) return true;
+
+  // Compare the first 16 bits to enforce true CIDR prefixes (not string
+  // prefix matches, which miss e.g. fe90:: through febf:: in the
+  // fe80::/10 range).
+  const firstHextet = firstV6Hextet(lower);
+  if (firstHextet === null) return false;
+  // fe80::/10  → first 10 bits are 1111 1110 10xx xxxx → 0xfe80–0xfebf
+  if (firstHextet >= 0xfe80 && firstHextet <= 0xfebf) return true;
+  // fc00::/7   → first 7 bits are 1111 110x → 0xfc00–0xfdff (ULA)
+  if (firstHextet >= 0xfc00 && firstHextet <= 0xfdff) return true;
+  // ff00::/8   → multicast; not a routable destination for our connectors
+  if (firstHextet >= 0xff00 && firstHextet <= 0xffff) return true;
+  // ::ffff:0:0/96 mapped form parsed as plain v6 (not the dotted variant)
+  // is rare; we already handle the dotted form above.
   return false;
+}
+
+function firstV6Hextet(ip: string): number | null {
+  // Expand a leading "::" so the first group is always present.
+  const head = ip.startsWith("::") ? ip.slice(2) : ip;
+  const firstGroup = head.split(":", 1)[0] ?? "";
+  if (!firstGroup) return 0; // pure "::"
+  if (!/^[0-9a-f]{1,4}$/.test(firstGroup)) return null;
+  return parseInt(firstGroup, 16);
 }
 
 export interface SsrfCheck {
