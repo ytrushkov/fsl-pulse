@@ -1,0 +1,22 @@
+# --- Claude Code Specifics ---
+# Local settings that shouldn't be shared (API keys, personal hooks)
+.claude/settings.local.json
+
+# Optional: Local-only instructions if you don't want them in the repo
+CLAUDE.local.md
+
+# --- Secrets & Environment ---
+.env
+.env.local
+.env.*.local
+*.secret
+*.key
+
+# --- Common Noise (Optional but Recommended) ---
+# Prevents Claude from wasting tokens reading large dependency folders
+node_modules/
+__pycache__/
+dist/
+build/
+.DS_Store
+*.log
