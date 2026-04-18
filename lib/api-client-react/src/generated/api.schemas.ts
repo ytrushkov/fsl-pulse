@@ -765,6 +765,7 @@ export interface HeatmapCell {
   currentStage: number;
   targetStage: number;
   confidence: Confidence;
+  notes?: string | null;
 }
 
 export interface GapAnalysisItem {
@@ -920,7 +921,15 @@ export const DeliverableKey = {
   npv: "npv",
 } as const;
 
-export type DeliverableVersionSnapshot = { [key: string]: unknown };
+/**
+ * Frozen serialized form of the deliverable at this version. The shape
+depends on `key`: heatmap and actionPlan serialize as arrays, while
+gapAnalysis, entryPoint, and npv serialize as objects. Treat as
+opaque JSON and re-validate against the deliverable's typed schema
+on read.
+
+ */
+export type DeliverableVersionSnapshot = { [key: string]: unknown } | unknown[];
 
 export interface DeliverableVersion {
   id: string;
@@ -930,6 +939,12 @@ export interface DeliverableVersion {
   finalized: boolean;
   authorEmail?: string | null;
   createdAt: string;
+  /** Frozen serialized form of the deliverable at this version. The shape
+depends on `key`: heatmap and actionPlan serialize as arrays, while
+gapAnalysis, entryPoint, and npv serialize as objects. Treat as
+opaque JSON and re-validate against the deliverable's typed schema
+on read.
+ */
   snapshot: DeliverableVersionSnapshot;
 }
 

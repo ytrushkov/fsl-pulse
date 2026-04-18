@@ -6,4 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type DeliverableVersionSnapshot = { [key: string]: unknown };
+/**
+ * Frozen serialized form of the deliverable at this version. The shape
+depends on `key`: heatmap and actionPlan serialize as arrays, while
+gapAnalysis, entryPoint, and npv serialize as objects. Treat as
+opaque JSON and re-validate against the deliverable's typed schema
+on read.
+
+ */
+export type DeliverableVersionSnapshot = { [key: string]: unknown } | unknown[];

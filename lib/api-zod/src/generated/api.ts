@@ -1565,6 +1565,7 @@ export const GetDeliverablesResponse = zod.object({
       currentStage: zod.number(),
       targetStage: zod.number(),
       confidence: zod.enum(["low", "medium", "high"]),
+      notes: zod.string().nullish(),
     }),
   ),
   gapAnalysis: zod.array(
@@ -1684,6 +1685,7 @@ export const UpdateDeliverablesBody = zod.object({
         currentStage: zod.number(),
         targetStage: zod.number(),
         confidence: zod.enum(["low", "medium", "high"]),
+        notes: zod.string().nullish(),
       }),
     )
     .optional(),
@@ -1812,6 +1814,7 @@ export const UpdateDeliverablesResponse = zod.object({
       currentStage: zod.number(),
       targetStage: zod.number(),
       confidence: zod.enum(["low", "medium", "high"]),
+      notes: zod.string().nullish(),
     }),
   ),
   gapAnalysis: zod.array(
@@ -1929,6 +1932,7 @@ export const DraftDeliverablesResponse = zod.object({
       currentStage: zod.number(),
       targetStage: zod.number(),
       confidence: zod.enum(["low", "medium", "high"]),
+      notes: zod.string().nullish(),
     }),
   ),
   gapAnalysis: zod.array(
@@ -2033,7 +2037,11 @@ export const ListDeliverableVersionsResponseItem = zod.object({
   finalized: zod.boolean(),
   authorEmail: zod.string().nullish(),
   createdAt: zod.string(),
-  snapshot: zod.record(zod.string(), zod.unknown()),
+  snapshot: zod
+    .union([zod.record(zod.string(), zod.unknown()), zod.array(zod.unknown())])
+    .describe(
+      "Frozen serialized form of the deliverable at this version. The shape\ndepends on `key`: heatmap and actionPlan serialize as arrays, while\ngapAnalysis, entryPoint, and npv serialize as objects. Treat as\nopaque JSON and re-validate against the deliverable's typed schema\non read.\n",
+    ),
 });
 export const ListDeliverableVersionsResponse = zod.array(
   ListDeliverableVersionsResponseItem,
@@ -2070,6 +2078,7 @@ export const RevertDeliverableResponse = zod.object({
       currentStage: zod.number(),
       targetStage: zod.number(),
       confidence: zod.enum(["low", "medium", "high"]),
+      notes: zod.string().nullish(),
     }),
   ),
   gapAnalysis: zod.array(
@@ -2174,7 +2183,11 @@ export const FinalizeDeliverableResponse = zod.object({
   finalized: zod.boolean(),
   authorEmail: zod.string().nullish(),
   createdAt: zod.string(),
-  snapshot: zod.record(zod.string(), zod.unknown()),
+  snapshot: zod
+    .union([zod.record(zod.string(), zod.unknown()), zod.array(zod.unknown())])
+    .describe(
+      "Frozen serialized form of the deliverable at this version. The shape\ndepends on `key`: heatmap and actionPlan serialize as arrays, while\ngapAnalysis, entryPoint, and npv serialize as objects. Treat as\nopaque JSON and re-validate against the deliverable's typed schema\non read.\n",
+    ),
 });
 
 export const RecomputeNpvParams = zod.object({

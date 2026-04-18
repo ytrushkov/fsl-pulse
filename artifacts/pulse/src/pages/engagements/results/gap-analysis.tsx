@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { useUpdateDeliverables, getGetDeliverablesQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { RichTextEditor } from "@/components/deliverables/rich-text-editor";
 
 export default function GapAnalysisView({ engagementId, deliverables }: any) {
   const { toast } = useToast();
@@ -86,12 +86,14 @@ export default function GapAnalysisView({ engagementId, deliverables }: any) {
                   {(drafts[item.dimension] ?? item.narrativeMd).split('\n').map((p: string, i: number) => <p key={i}>{p}</p>)}
                 </div>
               ) : (
-                <Textarea
-                  value={drafts[item.dimension] ?? ""}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [item.dimension]: e.target.value }))}
-                  rows={8}
-                  className="font-mono text-sm mb-6"
-                />
+                <div className="mb-6">
+                  <RichTextEditor
+                    value={drafts[item.dimension] ?? ""}
+                    onChange={(v) => setDrafts((d) => ({ ...d, [item.dimension]: v }))}
+                    rows={8}
+                    placeholder="Narrative findings (markdown supported)"
+                  />
+                </div>
               )}
               
               <div className="bg-muted/30 p-4 rounded-md border border-muted">

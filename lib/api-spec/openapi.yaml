@@ -1744,6 +1744,7 @@ components:
         currentStage: { type: integer }
         targetStage: { type: integer }
         confidence: { $ref: "#/components/schemas/Confidence" }
+        notes: { type: string, nullable: true }
 
     GapAnalysisItem:
       type: object
@@ -1914,8 +1915,17 @@ components:
         authorEmail: { type: string, nullable: true }
         createdAt: { type: string }
         snapshot:
-          type: object
-          additionalProperties: true
+          description: |
+            Frozen serialized form of the deliverable at this version. The shape
+            depends on `key`: heatmap and actionPlan serialize as arrays, while
+            gapAnalysis, entryPoint, and npv serialize as objects. Treat as
+            opaque JSON and re-validate against the deliverable's typed schema
+            on read.
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              items: {}
 
     ExportRecord:
       type: object

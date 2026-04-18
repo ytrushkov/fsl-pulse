@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { useUpdateDeliverables, getGetDeliverablesQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { RichTextEditor } from "@/components/deliverables/rich-text-editor";
 
 export default function EntryPointView({ engagementId, deliverables }: any) {
   const { toast } = useToast();
@@ -83,7 +83,12 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
             </p>
           ) : (
             <div className="mt-4 not-prose">
-              <Textarea value={rationale} onChange={(e) => setRationale(e.target.value)} rows={10} className="font-mono text-sm" />
+              <RichTextEditor
+                value={rationale}
+                onChange={setRationale}
+                rows={10}
+                placeholder="Strategic rationale (markdown supported)"
+              />
               {dirty && (
                 <div className="mt-2 flex justify-end">
                   <Button size="sm" onClick={save} disabled={update.isPending}>

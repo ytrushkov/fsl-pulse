@@ -13,4 +13,5 @@ export interface HeatmapCell {
   currentStage: number;
   targetStage: number;
   confidence: Confidence;
+  notes?: string | null;
 }
