@@ -1,4 +1,13 @@
 import type { Dimension } from "./rubric";
+import { assertSafeUrlResolved } from "./util";
+
+// Defense-in-depth: even though connector create/patch validates baseUrl
+// syntactically, we re-check at fetch time *and* resolve DNS so an
+// attacker-controlled hostname that points at 169.254.169.254 / RFC1918 is
+// rejected before fetch().
+async function assertSafeUrl(url: string): Promise<void> {
+  await assertSafeUrlResolved(url);
+}
 
 export interface ConnectorVerifyResult {
   ok: boolean;
@@ -162,6 +171,7 @@ async function verifyGitlab(
   if (!token) return { ok: false, message: "Token required" };
   const baseUrl = String(config.baseUrl ?? "https://gitlab.com").replace(/\/$/, "");
   try {
+    await assertSafeUrl(baseUrl);
     const r = await fetch(`${baseUrl}/api/v4/user`, { headers: { "PRIVATE-TOKEN": token } });
     if (!r.ok) throw new Error(`GitLab ${r.status}`);
     const me = (await r.json()) as { username: string };
@@ -176,6 +186,7 @@ async function runGitlab(
   config: Record<string, unknown>,
 ): Promise<ConnectorRunResult> {
   const baseUrl = String(config.baseUrl ?? "https://gitlab.com").replace(/\/$/, "");
+  await assertSafeUrl(baseUrl);
   const group = String(config.group ?? "");
   const evidence: CollectedEvidence[] = [];
   if (!group)
@@ -209,6 +220,7 @@ async function verifyJira(
   if (!baseUrl || !email)
     return { ok: false, message: "baseUrl and email required in config" };
   try {
+    await assertSafeUrl(baseUrl);
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
     const r = await fetch(`${baseUrl}/rest/api/3/myself`, {
       headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
@@ -230,6 +242,7 @@ async function runJira(
   const project = String(config.project ?? "");
   if (!baseUrl || !email)
     return { recordsCollected: 0, summary: {}, evidence: [] };
+  await assertSafeUrl(baseUrl);
   const auth = Buffer.from(`${email}:${token}`).toString("base64");
   const jql = project ? `project=${project} ORDER BY updated DESC` : "ORDER BY updated DESC";
   const r = await fetch(`${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=50`, {

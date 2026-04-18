@@ -9,7 +9,13 @@ import {
   engagementsTable,
   activityEventsTable,
 } from "@workspace/db";
-import { paramId, newToken } from "../lib/util";
+import { paramId, newToken, hashInviteToken } from "../lib/util";
+
+// Magic-link invite TTL. Configurable via env so ops can shorten for sensitive
+// engagements without a code change.
+const INVITE_TTL_MS = Number(
+  process.env.PULSE_INVITE_TTL_MS ?? 30 * 24 * 3600 * 1000,
+);
 import { DEFAULT_SURVEY_QUESTIONS } from "../lib/survey-template";
 
 const ANONYMITY_FLOOR = 5;
@@ -81,7 +87,9 @@ router.get("/engagements/:id/survey/invites", async (req, res): Promise<void> =>
     .select()
     .from(surveyInvitesTable)
     .where(eq(surveyInvitesTable.engagementId, id));
-  res.json(rows);
+  // Never expose the stored token hash. The plaintext is shown exactly once
+  // at creation time (POST response) — assessors must save the magic link then.
+  res.json(rows.map(({ token: _omit, ...rest }) => rest));
 });
 
 router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> => {
@@ -95,19 +103,38 @@ router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> =
     res.status(400).json({ error: "invites array required" });
     return;
   }
-  const rows = await db
-    .insert(surveyInvitesTable)
-    .values(
-      b.invites.map((i: { team: string; email?: string }) => ({
+  // Generate plaintext tokens, persist only their hash + expiry, return the
+  // plaintext to the assessor exactly once so they can mail the magic links.
+  const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+  const minted: Array<{
+    plain: string;
+    values: {
+      engagementId: string;
+      team: string;
+      emailHash: string | null;
+      token: string;
+      expiresAt: Date;
+      status: string;
+    };
+  }> = b.invites.map((i: { team: string; email?: string }) => {
+    const plain = newToken();
+    return {
+      plain,
+      values: {
         engagementId: id,
         team: i.team,
         emailHash: i.email
           ? createHash("sha256").update(i.email.toLowerCase()).digest("hex")
           : null,
-        token: newToken(),
+        token: hashInviteToken(plain),
+        expiresAt,
         status: "sent",
-      })),
-    )
+      },
+    };
+  });
+  const rows = await db
+    .insert(surveyInvitesTable)
+    .values(minted.map((m) => m.values))
     .returning();
   const actor = req.authedUser!;
   await db.insert(activityEventsTable).values({
@@ -118,7 +145,14 @@ router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> =
     kind: "invites_sent",
     message: `Created ${rows.length} survey invites`,
   });
-  res.status(201).json(rows);
+  // Return rows joined with the plaintext token so the UI can build the magic
+  // link URL. Do NOT echo the stored hash back.
+  res.status(201).json(
+    rows.map((r, i) => {
+      const { token: _omit, ...rest } = r;
+      return { ...rest, magicLinkToken: minted[i]!.plain };
+    }),
+  );
 });
 
 router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> => {
@@ -218,15 +252,20 @@ router.get("/engagements/:id/survey/responses", async (req, res): Promise<void> 
 router.get("/survey/respond/:token", async (req, res): Promise<void> => {
   const token = paramId(req.params.token);
   if (!token) {
-    res.status(400).json({ error: "Invalid token" });
+    res.status(400).json({ error: "Link is invalid or has expired" });
     return;
   }
   const [inv] = await db
     .select()
     .from(surveyInvitesTable)
-    .where(eq(surveyInvitesTable.token, token));
+    .where(eq(surveyInvitesTable.token, hashInviteToken(token)));
   if (!inv) {
-    res.status(404).json({ error: "Invite not found" });
+    // Generic message — do not reveal whether the token is unknown vs revoked.
+    res.status(404).json({ error: "Link is invalid or has expired" });
+    return;
+  }
+  if (inv.expiresAt && inv.expiresAt.getTime() < Date.now()) {
+    res.status(404).json({ error: "Link is invalid or has expired" });
     return;
   }
   const [eng] = await db
@@ -254,7 +293,7 @@ router.get("/survey/respond/:token", async (req, res): Promise<void> => {
 router.post("/survey/respond/:token", async (req, res): Promise<void> => {
   const token = paramId(req.params.token);
   if (!token) {
-    res.status(400).json({ error: "Invalid token" });
+    res.status(400).json({ error: "Link is invalid or has expired" });
     return;
   }
   const b = req.body ?? {};
@@ -265,9 +304,13 @@ router.post("/survey/respond/:token", async (req, res): Promise<void> => {
   const [inv] = await db
     .select()
     .from(surveyInvitesTable)
-    .where(eq(surveyInvitesTable.token, token));
+    .where(eq(surveyInvitesTable.token, hashInviteToken(token)));
   if (!inv) {
-    res.status(404).json({ error: "Invite not found" });
+    res.status(404).json({ error: "Link is invalid or has expired" });
+    return;
+  }
+  if (inv.expiresAt && inv.expiresAt.getTime() < Date.now()) {
+    res.status(404).json({ error: "Link is invalid or has expired" });
     return;
   }
   if (inv.status === "completed") {

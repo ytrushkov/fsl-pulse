@@ -141,7 +141,11 @@ export const surveyInvitesTable = pgTable(
       .references(() => engagementsTable.id, { onDelete: "cascade" }),
     team: text("team").notNull(),
     emailHash: text("email_hash"),
+    // Stored value is HMAC-SHA256(plaintext, EXPORT_KEY). The plaintext token
+    // is returned to the assessor exactly once at creation time (POST response)
+    // so they can build the magic link; thereafter we never see it again.
     token: text("token").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     status: text("status").notNull().default("sent"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),

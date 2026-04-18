@@ -7,7 +7,13 @@ import {
   evidenceTable,
   activityEventsTable,
 } from "@workspace/db";
-import { paramId, obfuscateToken, deobfuscateToken, maskToken } from "../lib/util";
+import {
+  paramId,
+  encryptToken,
+  decryptToken,
+  maskToken,
+  checkSafeUrl,
+} from "../lib/util";
 import {
   runConnector as runConnectorImpl,
   verifyConnector as verifyConnectorImpl,
@@ -69,6 +75,15 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
     res.status(400).json({ error: "kind, provider, label required" });
     return;
   }
+  // SSRF guard: any user-supplied base URL must point at a public host.
+  const cfg = (b.config ?? {}) as Record<string, unknown>;
+  if (typeof cfg.baseUrl === "string" && cfg.baseUrl.length > 0) {
+    const ssrf = checkSafeUrl(cfg.baseUrl);
+    if (!ssrf.ok) {
+      res.status(400).json({ error: `Invalid base URL: ${ssrf.reason}` });
+      return;
+    }
+  }
   const [c] = await db
     .insert(connectorsTable)
     .values({
@@ -76,8 +91,8 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
       kind: b.kind,
       provider: b.provider,
       label: b.label,
-      encryptedToken: b.token ? obfuscateToken(b.token) : null,
-      config: b.config ?? {},
+      encryptedToken: b.token ? encryptToken(b.token) : null,
+      config: cfg,
       status: b.token ? "configured" : "not_configured",
     })
     .returning();
@@ -102,9 +117,19 @@ router.patch("/connectors/:connectorId", requireConnectorMember, async (req, res
   const b = req.body ?? {};
   const set: Record<string, unknown> = {};
   if ("label" in b) set.label = b.label;
-  if ("config" in b) set.config = b.config;
+  if ("config" in b) {
+    const cfg = (b.config ?? {}) as Record<string, unknown>;
+    if (typeof cfg.baseUrl === "string" && cfg.baseUrl.length > 0) {
+      const ssrf = checkSafeUrl(cfg.baseUrl);
+      if (!ssrf.ok) {
+        res.status(400).json({ error: `Invalid base URL: ${ssrf.reason}` });
+        return;
+      }
+    }
+    set.config = cfg;
+  }
   if ("token" in b && b.token) {
-    set.encryptedToken = obfuscateToken(b.token);
+    set.encryptedToken = encryptToken(b.token);
     set.status = "configured";
   }
   const [c] = await db
@@ -140,7 +165,19 @@ router.post("/connectors/:connectorId/verify", requireConnectorMember, async (re
     res.status(404).json({ error: "Not found" });
     return;
   }
-  const token = c.encryptedToken ? deobfuscateToken(c.encryptedToken) : "";
+  let token = "";
+  if (c.encryptedToken) {
+    try {
+      token = decryptToken(c.encryptedToken);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "decryption failed";
+      res.status(400).json({
+        ok: false,
+        message: `Stored token is unreadable (${msg}); please re-enter the token.`,
+      });
+      return;
+    }
+  }
   const result = await verifyConnectorImpl(c.kind, c.provider, token, c.config as Record<string, unknown>);
   res.json(result);
 });
@@ -166,7 +203,7 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
     .where(eq(connectorsTable.id, id));
 
   try {
-    const token = c.encryptedToken ? deobfuscateToken(c.encryptedToken) : "";
+    const token = c.encryptedToken ? decryptToken(c.encryptedToken) : "";
     const out = await runConnectorImpl(
       c.kind,
       c.provider,

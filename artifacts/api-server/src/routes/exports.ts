@@ -13,7 +13,12 @@ import {
   connectorsTable,
   activityEventsTable,
 } from "@workspace/db";
-import { paramId, sha256 } from "../lib/util";
+import {
+  paramId,
+  signExportPayload,
+  verifyExportSignature,
+  exportKeyFingerprint,
+} from "../lib/util";
 
 const router: IRouter = Router();
 
@@ -86,7 +91,10 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
     exportedAt: new Date().toISOString(),
   };
   const json = JSON.stringify(bundle, null, 2);
-  const signature = sha256(json);
+  // Keyed signature so recipients can detect tampering. The verification
+  // endpoint is GET /exports/:exportId/verify (see route below) and the
+  // public key fingerprint is `exportKeyFingerprint()`.
+  const signature = signExportPayload(json);
 
   const previousCount = (
     await db.select().from(exportsTable).where(eq(exportsTable.engagementId, id))
@@ -155,8 +163,52 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
     version: exp.version,
     createdAt: exp.createdAt.toISOString(),
     signature: exp.signature,
+    signatureAlgorithm: "HMAC-SHA256",
+    keyFingerprint: exportKeyFingerprint(),
     files: exp.files,
   });
 });
+
+// Recipients (or FullStack delivery leads) hit this with the snapshot bytes
+// they were given, and we re-compute the HMAC to confirm the bundle is
+// untampered. The expected signature is read off the export record so the
+// caller never needs to learn the signing key.
+//
+// Mounted under /engagements/:id/... so the global engagement-member guard
+// in routes/index.ts applies — only members of the owning engagement may
+// verify its exports.
+router.post(
+  "/engagements/:id/exports/:exportId/verify",
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    const exportId = paramId(req.params.exportId);
+    if (!id || !exportId) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const [exp] = await db
+      .select()
+      .from(exportsTable)
+      .where(eq(exportsTable.id, exportId));
+    // Belt-and-suspenders: enforce that the export belongs to the engagement
+    // in the URL, in addition to the member-of-engagement check that already
+    // ran upstream.
+    if (!exp || exp.engagementId !== id) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const submitted = (req.body?.snapshotJson ?? "") as string;
+    if (typeof submitted !== "string" || submitted.length === 0) {
+      res.status(400).json({ error: "snapshotJson required" });
+      return;
+    }
+    const ok = verifyExportSignature(submitted, exp.signature);
+    res.json({
+      ok,
+      expectedAlgorithm: "HMAC-SHA256",
+      keyFingerprint: exportKeyFingerprint(),
+    });
+  },
+);
 
 export default router;
