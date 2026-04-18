@@ -16,6 +16,15 @@ const ANONYMITY_FLOOR = 5;
 
 const router: IRouter = Router();
 
+// Single source of truth: serve live PRD template, filtered by enabled optional modules.
+// Persisted snapshot is preserved for audit but not authoritative for v1.
+function questionsForEngagement(modules: string[] | null | undefined) {
+  const enabled = new Set((modules ?? []) as string[]);
+  return DEFAULT_SURVEY_QUESTIONS.filter(
+    (q) => !q.moduleKey || enabled.has(q.moduleKey),
+  );
+}
+
 router.get("/engagements/:id/survey", async (req, res): Promise<void> => {
   const id = paramId(req.params.id);
   if (!id) {
@@ -27,11 +36,12 @@ router.get("/engagements/:id/survey", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Not found" });
     return;
   }
+  const questions = questionsForEngagement(s.modules as string[]);
   res.json({
     engagementId: s.engagementId,
     templateVersion: s.templateVersion,
     modules: s.modules,
-    questions: s.questions,
+    questions,
     nudgeSchedule: s.nudgeSchedule,
   });
 });
@@ -229,10 +239,11 @@ router.get("/survey/respond/:token", async (req, res): Promise<void> => {
       .set({ status: "opened" })
       .where(eq(surveyInvitesTable.id, inv.id));
   }
+  const questions = questionsForEngagement(survey?.modules as string[]);
   res.json({
     engagementClient: eng?.clientName ?? "",
     status: inv.status === "completed" ? "completed" : "open",
-    questions: survey?.questions ?? [],
+    questions,
   });
 });
 

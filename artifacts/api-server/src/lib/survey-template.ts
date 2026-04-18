@@ -21,7 +21,10 @@ const likert = (
   section: string,
   dimension: Dimension | null,
   prompt: string,
+  minLabel: string,
+  maxLabel: string,
   moduleKey?: SurveyQuestionDef["moduleKey"],
+  conditionalOn?: string,
 ): SurveyQuestionDef => ({
   id,
   section,
@@ -30,63 +33,540 @@ const likert = (
   prompt,
   likertMin: 1,
   likertMax: 5,
-  likertMinLabel: "Strongly disagree",
-  likertMaxLabel: "Strongly agree",
+  likertMinLabel: minLabel,
+  likertMaxLabel: maxLabel,
   moduleKey,
+  conditionalOn,
 });
 
+/**
+ * v1 Survey Template — verbatim from the PRD.
+ * 30 core questions across 7 sections (Demographics not scored) + 4 optional modules of 3 questions each.
+ */
 export const DEFAULT_SURVEY_QUESTIONS: SurveyQuestionDef[] = [
-  // Demographics (4)
-  { id: "d1", section: "About you", dimension: null, type: "demographic", prompt: "Which team do you belong to?" },
-  { id: "d2", section: "About you", dimension: null, type: "single_select", prompt: "Your role", options: ["Engineer", "Tech Lead", "Engineering Manager", "Director+", "Product/Design", "Other"] },
-  { id: "d3", section: "About you", dimension: null, type: "single_select", prompt: "Years at the company", options: ["<1", "1-2", "3-5", "6-10", "10+"] },
-  { id: "d4", section: "About you", dimension: null, type: "single_select", prompt: "Frequency of AI tool use today", options: ["Never", "Monthly", "Weekly", "Daily", "Hourly"] },
+  // ────────────────────────────────────────────────────────────────────────────
+  // Section 0 — Demographics (4, not scored — used for team-level aggregation)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "q1",
+    section: "Demographics",
+    dimension: null,
+    type: "demographic",
+    prompt: "Which team are you on?",
+  },
+  {
+    id: "q2",
+    section: "Demographics",
+    dimension: null,
+    type: "single_select",
+    prompt: "What is your role?",
+    options: [
+      "IC Engineer",
+      "Senior or Staff Engineer",
+      "Tech Lead",
+      "Engineering Manager",
+      "Architect",
+      "Other",
+    ],
+  },
+  {
+    id: "q3",
+    section: "Demographics",
+    dimension: null,
+    type: "single_select",
+    prompt: "How long have you been at this company?",
+    options: ["<6 months", "6–12 months", "1–3 years", "3+ years"],
+  },
+  {
+    id: "q4",
+    section: "Demographics",
+    dimension: null,
+    type: "single_select",
+    prompt: "What best describes your primary work?",
+    options: [
+      "Backend",
+      "Frontend",
+      "Full-stack",
+      "Mobile",
+      "Data/ML",
+      "DevOps/Platform",
+      "QA/SDET",
+      "Other",
+    ],
+  },
 
-  // Tooling (5)
-  likert("t1", "Tooling", "tooling", "AI coding tools (Copilot/Cursor/etc.) are reliably available to my team."),
-  likert("t2", "Tooling", "tooling", "Our PR review process incorporates AI assistance."),
-  likert("t3", "Tooling", "tooling", "Our IDEs are configured for AI-assisted refactors and codegen."),
-  likert("t4", "Tooling", "tooling", "We have AI-aware testing tools (test gen, flake triage)."),
-  likert("t5", "Tooling", "tooling", "Agentic workflows run inside our CI/CD pipeline."),
+  // ────────────────────────────────────────────────────────────────────────────
+  // Section 1 — Tooling (6)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "q5",
+    section: "Tooling",
+    dimension: "tooling",
+    type: "multi_select",
+    prompt: "Which AI coding tools do you use at least weekly?",
+    options: [
+      "GitHub Copilot",
+      "Cursor",
+      "Claude Code",
+      "Windsurf",
+      "Amazon Q",
+      "ChatGPT",
+      "Gemini",
+      "Internal tool",
+      "None",
+      "Other",
+    ],
+  },
+  {
+    id: "q6",
+    section: "Tooling",
+    dimension: "tooling",
+    type: "single_select",
+    prompt: "How did you start using AI coding tools?",
+    options: [
+      "Company provided and mandated",
+      "Company provided, optional",
+      "I set it up myself",
+      "I don't use any",
+    ],
+  },
+  {
+    id: "q7",
+    section: "Tooling",
+    dimension: "tooling",
+    type: "single_select",
+    prompt:
+      "What percentage of your code is AI-assisted (generated or substantially edited by AI)?",
+    options: ["0%", "1–10%", "11–25%", "26–50%", "51–75%", "76%+"],
+  },
+  likert(
+    "q8",
+    "Tooling",
+    "tooling",
+    "How often do you accept AI-generated suggestions without significant edits?",
+    "Never",
+    "Almost always",
+  ),
+  {
+    id: "q9",
+    section: "Tooling",
+    dimension: "tooling",
+    type: "multi_select",
+    prompt: "In which parts of your workflow do AI tools save you the most time?",
+    options: [
+      "Writing new code",
+      "Writing tests",
+      "Code review",
+      "Debugging",
+      "Documentation",
+      "Refactoring",
+      "Architecture/design",
+      "CI/CD configuration",
+      "None — no meaningful time savings",
+    ],
+  },
+  {
+    id: "q10",
+    section: "Tooling",
+    dimension: "tooling",
+    type: "single_select",
+    prompt:
+      "Are any of your team's workflows fully automated end-to-end by AI agents (e.g., auto-generated PRs, autonomous test suites, self-healing pipelines)?",
+    options: [
+      "Yes, multiple workflows",
+      "Yes, one or two",
+      "Experimenting",
+      "No",
+      "Don't know",
+    ],
+  },
 
-  // Measurement (4)
-  likert("m1", "Measurement", "measurement", "We track DORA metrics for my team consistently."),
-  likert("m2", "Measurement", "measurement", "We measure AI suggestion acceptance rate."),
-  likert("m3", "Measurement", "measurement", "We can attribute cycle-time improvements to AI levers."),
-  likert("m4", "Measurement", "measurement", "Outcome metrics tied to AI use are visible to leadership."),
+  // ────────────────────────────────────────────────────────────────────────────
+  // Section 2 — Measurement (4)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "q11",
+    section: "Measurement",
+    dimension: "measurement",
+    type: "single_select",
+    prompt: "Does your team track developer productivity metrics today?",
+    options: [
+      "Yes, and I see the data regularly",
+      "Yes, but I rarely see results",
+      "I think so, but I'm not sure",
+      "No",
+      "Don't know",
+    ],
+  },
+  {
+    id: "q12",
+    section: "Measurement",
+    dimension: "measurement",
+    type: "multi_select",
+    prompt: "Which metrics does your team use?",
+    options: [
+      "Deployment frequency",
+      "Lead time for changes",
+      "Change failure rate",
+      "MTTR",
+      "Cycle time",
+      "Velocity / story points",
+      "Developer experience surveys",
+      "Code review turnaround",
+      "None that I'm aware of",
+      "Other",
+    ],
+  },
+  likert(
+    "q13",
+    "Measurement",
+    "measurement",
+    "How useful are the productivity metrics you see in improving your day-to-day work?",
+    "Not useful at all",
+    "Extremely useful",
+    undefined,
+    "q11", // shown only if Q11 ≠ "No" or "Don't know"
+  ),
+  likert(
+    "q14",
+    "Measurement",
+    "measurement",
+    "How comfortable are you that productivity metrics are used fairly (not punitively) at your company?",
+    "Very uncomfortable",
+    "Very comfortable",
+  ),
 
-  // Process (5)
-  likert("p1", "Process", "process", "AI tools are integrated into our planning/design steps."),
-  likert("p2", "Process", "process", "AI is used during code authoring on most tasks."),
-  likert("p3", "Process", "process", "AI assists with code review and merge gates."),
-  likert("p4", "Process", "process", "AI is part of our release / on-call workflow."),
-  likert("p5", "Process", "process", "We have documented entry points for AI in our PDLC."),
+  // ────────────────────────────────────────────────────────────────────────────
+  // Section 3 — Process (6)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "q15",
+    section: "Process",
+    dimension: "process",
+    type: "rank",
+    prompt: "Where in your delivery process does work get stuck most often? (rank top 3)",
+    rankCount: 3,
+    options: [
+      "Requirements / spec",
+      "Design",
+      "Coding",
+      "Code review",
+      "Testing",
+      "Deployment",
+      "Incident response",
+      "None — work flows smoothly",
+    ],
+  },
+  likert(
+    "q16",
+    "Process",
+    "process",
+    "How well-defined are your team's engineering standards (coding conventions, PR templates, architecture decision records)?",
+    "No standards",
+    "Comprehensive and enforced",
+  ),
+  likert(
+    "q17",
+    "Process",
+    "process",
+    "When you pick up a new task, how often do you have all the context you need to start without chasing people?",
+    "Rarely",
+    "Almost always",
+  ),
+  {
+    id: "q18",
+    section: "Process",
+    dimension: "process",
+    type: "single_select",
+    prompt: "How frequently does your team deploy to a QA/UAT environment?",
+    options: [
+      "Multiple times per day",
+      "Daily",
+      "A few times per week",
+      "Weekly",
+      "Biweekly or less",
+      "We don't have a pre-production environment",
+      "I don't know",
+    ],
+  },
+  {
+    id: "q19",
+    section: "Process",
+    dimension: "process",
+    type: "single_select",
+    prompt: "How frequently does your team ship to production?",
+    options: [
+      "Multiple times per day",
+      "Daily",
+      "A few times per week",
+      "Weekly",
+      "Biweekly",
+      "Monthly",
+      "Quarterly or less",
+      "I don't know",
+    ],
+  },
+  likert(
+    "q20",
+    "Process",
+    "process",
+    "How much rework (fixing things that should have been caught earlier) does your team do?",
+    "Almost none",
+    "A significant amount",
+  ),
 
-  // People (4)
-  likert("pe1", "People", "people", "I have received structured training on effective AI tool use."),
-  likert("pe2", "People", "people", "Our role descriptions reflect AI fluency expectations."),
-  likert("pe3", "People", "people", "We have career paths for AI-native engineering roles."),
-  likert("pe4", "People", "people", "Hiring criteria include AI / agent supervision skills."),
+  // ────────────────────────────────────────────────────────────────────────────
+  // Section 4 — People (4)
+  // ────────────────────────────────────────────────────────────────────────────
+  likert(
+    "q21",
+    "People",
+    "people",
+    "How confident are you in using AI tools effectively in your daily engineering work?",
+    "Not confident at all",
+    "Very confident",
+  ),
+  {
+    id: "q22",
+    section: "People",
+    dimension: "people",
+    type: "single_select",
+    prompt: "Has your company provided training or guidance on using AI in engineering?",
+    options: [
+      "Yes, structured program",
+      "Yes, informal guidance",
+      "No, but I'd want it",
+      "No, and I don't feel I need it",
+    ],
+  },
+  likert(
+    "q23",
+    "People",
+    "people",
+    "How often do you and your teammates share AI tips, prompts, or workflows with each other?",
+    "Never",
+    "Daily",
+  ),
+  {
+    id: "q24",
+    section: "People",
+    dimension: "people",
+    type: "multi_select",
+    prompt:
+      "If AI tools handle more routine coding, which skills do you think become most important for your role?",
+    options: [
+      "System design / architecture",
+      "Prompt engineering",
+      "Code review / quality judgment",
+      "Product thinking",
+      "Testing strategy",
+      "Security awareness",
+      "Communication",
+      "I'm not sure",
+    ],
+  },
 
-  // Governance (4)
-  likert("g1", "Governance", "governance", "We have a clear, current AI acceptable-use policy."),
-  likert("g2", "Governance", "governance", "Models and vendors go through formal evaluation before adoption."),
-  likert("g3", "Governance", "governance", "AI-generated code/output is logged and auditable."),
-  likert("g4", "Governance", "governance", "Security review covers AI tool integrations."),
+  // ────────────────────────────────────────────────────────────────────────────
+  // Section 5 — Governance (3)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "q25",
+    section: "Governance",
+    dimension: "governance",
+    type: "single_select",
+    prompt:
+      "Does your organization have clear policies on when and how AI-generated code can be used?",
+    options: [
+      "Yes, well-documented",
+      "Yes, but vague",
+      "No formal policy",
+      "I don't know",
+    ],
+  },
+  {
+    id: "q26",
+    section: "Governance",
+    dimension: "governance",
+    type: "single_select",
+    prompt: "How is AI-generated code reviewed before it reaches production?",
+    options: [
+      "Same review process as human code",
+      "Extra scrutiny for AI code",
+      "No special process",
+      "We don't track which code is AI-generated",
+    ],
+  },
+  likert(
+    "q27",
+    "Governance",
+    "governance",
+    "How concerned are you about security, IP, or quality risks from AI-generated code?",
+    "Not concerned at all",
+    "Very concerned",
+  ),
 
-  // Culture (4)
-  likert("c1", "Culture", "culture", "Leadership actively encourages experimentation with AI."),
-  likert("c2", "Culture", "culture", "I feel safe sharing AI failures and learnings."),
-  likert("c3", "Culture", "culture", "Teams share AI wins and patterns regularly."),
-  likert("c4", "Culture", "culture", "There is healthy skepticism — we don't adopt AI blindly."),
+  // ────────────────────────────────────────────────────────────────────────────
+  // Section 6 — Culture (3)
+  // ────────────────────────────────────────────────────────────────────────────
+  likert(
+    "q28",
+    "Culture",
+    "culture",
+    "How supportive is your leadership of adopting AI in engineering workflows?",
+    "Not supportive",
+    "Strongly supportive",
+  ),
+  {
+    id: "q29",
+    section: "Culture",
+    dimension: "culture",
+    type: "single_select",
+    prompt: "How would you describe your team's attitude toward AI tools?",
+    options: [
+      "Enthusiastic — we actively experiment",
+      "Cautiously optimistic",
+      "Neutral — we use what's provided",
+      "Skeptical — most people don't see the value",
+      "Resistant — people actively avoid AI tools",
+    ],
+  },
+  likert(
+    "q30",
+    "Culture",
+    "culture",
+    "Do you feel safe experimenting with AI tools at work, even if an experiment fails or produces a bad result?",
+    "Not at all safe",
+    "Completely safe",
+  ),
 
-  // Optional modules
-  likert("sec1", "Security module", "governance", "We have controls for prompt injection and data exfiltration via AI tools.", "security"),
-  likert("sec2", "Security module", "governance", "AI tool usage is covered by our SOC2/ISO controls.", "security"),
-  likert("data1", "Data module", "measurement", "We govern training and RAG data sources rigorously.", "data"),
-  likert("data2", "Data module", "tooling", "We have evals tied to data quality for AI-driven features.", "data"),
-  likert("plat1", "Platform module", "tooling", "We have an internal AI platform / gateway for model access.", "platform"),
-  likert("plat2", "Platform module", "process", "Our platform team supports AI-native developer workflows.", "platform"),
-  likert("des1", "Design module", "process", "Designers use AI in research and ideation.", "design"),
-  likert("des2", "Design module", "tooling", "Designers use AI in production handoff.", "design"),
+  // ────────────────────────────────────────────────────────────────────────────
+  // Optional Module A — Security (3)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "a1",
+    section: "Module — Security",
+    dimension: "governance",
+    type: "single_select",
+    prompt:
+      "How often does AI-generated code in your team go through a security-focused review (SAST, DAST, manual security review)?",
+    options: ["Always", "Usually", "Sometimes", "Rarely", "Never", "Don't know"],
+    moduleKey: "security",
+  },
+  {
+    id: "a2",
+    section: "Module — Security",
+    dimension: "governance",
+    type: "single_select",
+    prompt:
+      "Has your team experienced a security issue (vulnerability, secret leak, dependency risk) traced to AI-generated code?",
+    options: ["Yes", "No", "Don't know"],
+    moduleKey: "security",
+  },
+  likert(
+    "a3",
+    "Module — Security",
+    "governance",
+    "How confident are you that your current security tooling catches risks specific to AI-generated code?",
+    "Not confident at all",
+    "Very confident",
+    "security",
+  ),
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Optional Module B — Data & Analytics (3)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "b1",
+    section: "Module — Data & Analytics",
+    dimension: "measurement",
+    type: "single_select",
+    prompt:
+      "Does your team use AI/ML for data pipelines, analytics, or business intelligence (beyond coding tools)?",
+    options: ["Yes, in production", "Experimenting", "No", "Not applicable"],
+    moduleKey: "data",
+  },
+  likert(
+    "b2",
+    "Module — Data & Analytics",
+    "measurement",
+    "How accessible is production data for engineers building AI features?",
+    "Very restricted",
+    "Self-serve access with guardrails",
+    "data",
+  ),
+  {
+    id: "b3",
+    section: "Module — Data & Analytics",
+    dimension: "governance",
+    type: "single_select",
+    prompt:
+      "Does your organization have a data governance framework that covers AI model training and inference data?",
+    options: ["Yes", "Partially", "No", "Don't know"],
+    moduleKey: "data",
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Optional Module C — Platform Engineering (3)
+  // ────────────────────────────────────────────────────────────────────────────
+  {
+    id: "c1",
+    section: "Module — Platform Engineering",
+    dimension: "tooling",
+    type: "single_select",
+    prompt:
+      "Does your organization have an internal developer platform (IDP) or golden paths for common workflows?",
+    options: ["Yes, mature", "Yes, early stage", "No, but planned", "No"],
+    moduleKey: "platform",
+  },
+  likert(
+    "c2",
+    "Module — Platform Engineering",
+    "tooling",
+    "How much of your CI/CD pipeline is self-service (you can configure without waiting on another team)?",
+    "None",
+    "Fully self-service",
+    "platform",
+  ),
+  {
+    id: "c3",
+    section: "Module — Platform Engineering",
+    dimension: "tooling",
+    type: "single_select",
+    prompt:
+      "Are AI tools integrated into your platform (e.g., AI-assisted incident triage, auto-generated runbooks, intelligent deployment gates)?",
+    options: ["Yes, multiple integrations", "One or two", "No", "Don't know"],
+    moduleKey: "platform",
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Optional Module D — Product Design (3)
+  // ────────────────────────────────────────────────────────────────────────────
+  likert(
+    "d1",
+    "Module — Product Design",
+    "process",
+    "How well do design specs and requirements translate into implementable work by the time engineering picks them up?",
+    "Poorly",
+    "Excellently",
+    "design",
+  ),
+  {
+    id: "d2",
+    section: "Module — Product Design",
+    dimension: "process",
+    type: "single_select",
+    prompt:
+      "Are AI tools used in your design-to-code handover (e.g., design-to-component generation, spec-to-ticket automation)?",
+    options: ["Yes", "Experimenting", "No", "Not applicable"],
+    moduleKey: "design",
+  },
+  likert(
+    "d3",
+    "Module — Product Design",
+    "culture",
+    "How closely do product, design, and engineering collaborate on AI feature decisions?",
+    "Siloed",
+    "Deeply integrated",
+    "design",
+  ),
 ];
