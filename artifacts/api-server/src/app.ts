@@ -111,9 +111,12 @@ app.use("/api", router);
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(err);
   const requestId = (req as Request & { id?: string }).id ?? null;
-  const message = err instanceof Error ? err.message : "Internal Server Error";
+  // Always log the full error server-side (with requestId for correlation),
+  // but never leak internal error messages, stack traces, or query details
+  // back to clients. Operators can quote the requestId to look up the
+  // structured log line.
   logger.error({ err, requestId, url: req.url }, "Unhandled error");
-  res.status(500).json({ error: message, requestId });
+  res.status(500).json({ error: "Internal Server Error", requestId });
 });
 
 export default app;
