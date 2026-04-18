@@ -7,8 +7,33 @@ import {
   activityEventsTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
+import { requireResourceMember } from "../middlewares/auth";
 
 const router: IRouter = Router();
+
+const requireInterviewMember = requireResourceMember({
+  paramName: "interviewId",
+  resolveEngagementId: async (id) => {
+    const [row] = await db
+      .select({ engagementId: interviewsTable.engagementId })
+      .from(interviewsTable)
+      .where(eq(interviewsTable.id, id))
+      .limit(1);
+    return row?.engagementId;
+  },
+});
+
+const requireEvidenceMember = requireResourceMember({
+  paramName: "evidenceId",
+  resolveEngagementId: async (id) => {
+    const [row] = await db
+      .select({ engagementId: evidenceTable.engagementId })
+      .from(evidenceTable)
+      .where(eq(evidenceTable.id, id))
+      .limit(1);
+    return row?.engagementId;
+  },
+});
 
 async function shape(i: typeof interviewsTable.$inferSelect) {
   const [{ count }] = await db
@@ -74,7 +99,7 @@ router.post("/engagements/:id/interviews", async (req, res): Promise<void> => {
   res.status(201).json(await shape(iv));
 });
 
-router.get("/interviews/:interviewId", async (req, res): Promise<void> => {
+router.get("/interviews/:interviewId", requireInterviewMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.interviewId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -88,7 +113,7 @@ router.get("/interviews/:interviewId", async (req, res): Promise<void> => {
   res.json(await shape(iv));
 });
 
-router.patch("/interviews/:interviewId", async (req, res): Promise<void> => {
+router.patch("/interviews/:interviewId", requireInterviewMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.interviewId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -112,7 +137,7 @@ router.patch("/interviews/:interviewId", async (req, res): Promise<void> => {
   res.json(await shape(iv));
 });
 
-router.delete("/interviews/:interviewId", async (req, res): Promise<void> => {
+router.delete("/interviews/:interviewId", requireInterviewMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.interviewId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -122,7 +147,7 @@ router.delete("/interviews/:interviewId", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-router.get("/interviews/:interviewId/evidence", async (req, res): Promise<void> => {
+router.get("/interviews/:interviewId/evidence", requireInterviewMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.interviewId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -136,7 +161,7 @@ router.get("/interviews/:interviewId/evidence", async (req, res): Promise<void> 
   res.json(rows);
 });
 
-router.post("/interviews/:interviewId/evidence", async (req, res): Promise<void> => {
+router.post("/interviews/:interviewId/evidence", requireInterviewMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.interviewId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -169,7 +194,7 @@ router.post("/interviews/:interviewId/evidence", async (req, res): Promise<void>
   res.status(201).json(ev);
 });
 
-router.delete("/evidence/:evidenceId", async (req, res): Promise<void> => {
+router.delete("/evidence/:evidenceId", requireEvidenceMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.evidenceId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });

@@ -360,7 +360,11 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  // Default to sending cookies so session-cookie auth (e.g. Clerk in same-domain
+  // dev setups, or first-party sessions on production) just works.
+  const credentials = init.credentials ?? "include";
+
+  const response = await fetch(input, { ...init, method, headers, credentials });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);

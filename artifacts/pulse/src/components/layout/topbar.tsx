@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { UserButton } from "@clerk/react";
 import { useGetEngagement } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -51,7 +52,7 @@ export function Topbar({ engagementId }: TopbarProps) {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <a
             href="https://www.fullstack.com/ai-maturity-assessments"
             target="_blank"
@@ -60,6 +61,13 @@ export function Topbar({ engagementId }: TopbarProps) {
           >
             Get Started
           </a>
+          <UserButton
+            appearance={{
+              elements: {
+                userButtonAvatarBox: "h-9 w-9 ring-2 ring-accent/40",
+              },
+            }}
+          />
         </div>
       </div>
 

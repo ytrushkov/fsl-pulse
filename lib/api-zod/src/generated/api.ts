@@ -14,6 +14,49 @@ export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
 
+export const GetMeResponse = zod.object({
+  id: zod.string(),
+  email: zod.string(),
+  name: zod.string().nullish(),
+  avatarUrl: zod.string().nullish(),
+  role: zod.enum(["admin", "assessor", "viewer"]),
+  createdAt: zod.string(),
+});
+
+export const ListEngagementMembersParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const ListEngagementMembersResponseItem = zod.object({
+  id: zod.string(),
+  engagementId: zod.string(),
+  userId: zod.string().nullish(),
+  email: zod.string(),
+  name: zod.string().nullish(),
+  avatarUrl: zod.string().nullish(),
+  role: zod.enum(["owner", "assessor", "viewer"]),
+  status: zod.enum(["pending", "active"]),
+  invitedBy: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListEngagementMembersResponse = zod.array(
+  ListEngagementMembersResponseItem,
+);
+
+export const AddEngagementMemberParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const AddEngagementMemberBody = zod.object({
+  email: zod.string(),
+  role: zod.enum(["owner", "assessor", "viewer"]),
+});
+
+export const RemoveEngagementMemberParams = zod.object({
+  id: zod.coerce.string(),
+  memberId: zod.coerce.string(),
+});
+
 export const ListEngagementsResponseItem = zod.object({
   id: zod.string(),
   clientName: zod.string(),

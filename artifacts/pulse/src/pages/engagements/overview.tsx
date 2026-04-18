@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { Progress } from "@/components/ui/progress";
+import { MembersPanel } from "@/components/engagements/members-panel";
 
 export default function EngagementOverview() {
   const params = useParams();
@@ -239,7 +240,8 @@ export default function EngagementOverview() {
           </CardContent>
         </Card>
       </div>
-      
+
+      <MembersPanel engagementId={id} />
     </AppLayout>
   );
 }

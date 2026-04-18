@@ -12,8 +12,21 @@ import {
   runConnector as runConnectorImpl,
   verifyConnector as verifyConnectorImpl,
 } from "../lib/connectors";
+import { requireResourceMember } from "../middlewares/auth";
 
 const router: IRouter = Router();
+
+const requireConnectorMember = requireResourceMember({
+  paramName: "connectorId",
+  resolveEngagementId: async (id) => {
+    const [row] = await db
+      .select({ engagementId: connectorsTable.engagementId })
+      .from(connectorsTable)
+      .where(eq(connectorsTable.id, id))
+      .limit(1);
+    return row?.engagementId;
+  },
+});
 
 function shape(c: typeof connectorsTable.$inferSelect) {
   const cfg = (c.config as Record<string, unknown>) ?? {};
@@ -76,7 +89,7 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
   res.status(201).json(shape(c));
 });
 
-router.patch("/connectors/:connectorId", async (req, res): Promise<void> => {
+router.patch("/connectors/:connectorId", requireConnectorMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.connectorId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -102,7 +115,7 @@ router.patch("/connectors/:connectorId", async (req, res): Promise<void> => {
   res.json(shape(c));
 });
 
-router.delete("/connectors/:connectorId", async (req, res): Promise<void> => {
+router.delete("/connectors/:connectorId", requireConnectorMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.connectorId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -112,7 +125,7 @@ router.delete("/connectors/:connectorId", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-router.post("/connectors/:connectorId/verify", async (req, res): Promise<void> => {
+router.post("/connectors/:connectorId/verify", requireConnectorMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.connectorId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -128,7 +141,7 @@ router.post("/connectors/:connectorId/verify", async (req, res): Promise<void> =
   res.json(result);
 });
 
-router.post("/connectors/:connectorId/run", async (req, res): Promise<void> => {
+router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.connectorId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
@@ -207,7 +220,7 @@ router.post("/connectors/:connectorId/run", async (req, res): Promise<void> => {
   }
 });
 
-router.get("/connectors/:connectorId/runs", async (req, res): Promise<void> => {
+router.get("/connectors/:connectorId/runs", requireConnectorMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.connectorId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });

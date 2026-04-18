@@ -10,6 +10,28 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 
+export const usersTable = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clerkUserId: text("clerk_user_id").unique(),
+    email: text("email").notNull(),
+    name: text("name").notNull().default(""),
+    avatarUrl: text("avatar_url"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => ({
+    emailIdx: index("users_email_idx").on(t.email),
+    clerkIdx: index("users_clerk_idx").on(t.clerkUserId),
+  }),
+);
+
 export const engagementsTable = pgTable("engagements", {
   id: uuid("id").primaryKey().defaultRandom(),
   clientName: text("client_name").notNull(),
@@ -27,6 +49,34 @@ export const engagementsTable = pgTable("engagements", {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+export const engagementMembersTable = pgTable(
+  "engagement_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagementsTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    email: text("email").notNull(),
+    role: text("role", { enum: ["owner", "assessor", "viewer"] })
+      .notNull()
+      .default("assessor"),
+    invitedBy: uuid("invited_by").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    invitedAt: timestamp("invited_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    engIdx: index("engagement_members_engagement_idx").on(t.engagementId),
+    emailIdx: index("engagement_members_email_idx").on(t.email),
+    userIdx: index("engagement_members_user_idx").on(t.userId),
+  }),
+);
 
 export const connectorsTable = pgTable(
   "connectors",
@@ -243,6 +293,11 @@ export const activityEventsTable = pgTable(
     engagementId: uuid("engagement_id")
       .notNull()
       .references(() => engagementsTable.id, { onDelete: "cascade" }),
+    actorUserId: uuid("actor_user_id").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    actorName: text("actor_name"),
+    actorEmail: text("actor_email"),
     kind: text("kind").notNull(),
     message: text("message").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

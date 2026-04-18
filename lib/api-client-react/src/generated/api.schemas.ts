@@ -79,6 +79,68 @@ export const ConnectorKind = {
   ai_tooling: "ai_tooling",
 } as const;
 
+export type AuthedUserRole =
+  (typeof AuthedUserRole)[keyof typeof AuthedUserRole];
+
+export const AuthedUserRole = {
+  admin: "admin",
+  assessor: "assessor",
+  viewer: "viewer",
+} as const;
+
+export interface AuthedUser {
+  id: string;
+  email: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  role: AuthedUserRole;
+  createdAt: string;
+}
+
+export type EngagementMemberRole =
+  (typeof EngagementMemberRole)[keyof typeof EngagementMemberRole];
+
+export const EngagementMemberRole = {
+  owner: "owner",
+  assessor: "assessor",
+  viewer: "viewer",
+} as const;
+
+export type EngagementMemberStatus =
+  (typeof EngagementMemberStatus)[keyof typeof EngagementMemberStatus];
+
+export const EngagementMemberStatus = {
+  pending: "pending",
+  active: "active",
+} as const;
+
+export interface EngagementMember {
+  id: string;
+  engagementId: string;
+  userId?: string | null;
+  email: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  role: EngagementMemberRole;
+  status: EngagementMemberStatus;
+  invitedBy?: string | null;
+  createdAt: string;
+}
+
+export type AddEngagementMemberInputRole =
+  (typeof AddEngagementMemberInputRole)[keyof typeof AddEngagementMemberInputRole];
+
+export const AddEngagementMemberInputRole = {
+  owner: "owner",
+  assessor: "assessor",
+  viewer: "viewer",
+} as const;
+
+export interface AddEngagementMemberInput {
+  email: string;
+  role: AddEngagementMemberInputRole;
+}
+
 export type EngagementModulesItem =
   (typeof EngagementModulesItem)[keyof typeof EngagementModulesItem];
 

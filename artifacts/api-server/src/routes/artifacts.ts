@@ -7,8 +7,21 @@ import {
   activityEventsTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
+import { requireResourceMember } from "../middlewares/auth";
 
 const router: IRouter = Router();
+
+const requireArtifactMember = requireResourceMember({
+  paramName: "artifactId",
+  resolveEngagementId: async (id) => {
+    const [row] = await db
+      .select({ engagementId: artifactDocsTable.engagementId })
+      .from(artifactDocsTable)
+      .where(eq(artifactDocsTable.id, id))
+      .limit(1);
+    return row?.engagementId;
+  },
+});
 
 function shape(a: typeof artifactDocsTable.$inferSelect) {
   return {
@@ -67,7 +80,7 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
   res.status(201).json(shape(a));
 });
 
-router.delete("/artifacts/:artifactId", async (req, res): Promise<void> => {
+router.delete("/artifacts/:artifactId", requireArtifactMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.artifactId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });

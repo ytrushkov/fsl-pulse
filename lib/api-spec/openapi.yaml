@@ -34,6 +34,59 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/HealthStatus" }
 
+  /me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthedUser" }
+
+  /engagements/{id}/members:
+    get:
+      operationId: listEngagementMembers
+      tags: [engagements]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EngagementMember" }
+    post:
+      operationId: addEngagementMember
+      tags: [engagements]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddEngagementMemberInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EngagementMember" }
+
+  /engagements/{id}/members/{memberId}:
+    delete:
+      operationId: removeEngagementMember
+      tags: [engagements]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: memberId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Removed
+
   /engagements:
     get:
       operationId: listEngagements
@@ -640,6 +693,39 @@ components:
     ConnectorKind:
       type: string
       enum: [github, gitlab, jira, linear, cicd, ai_tooling]
+
+    AuthedUser:
+      type: object
+      required: [id, email, role, createdAt]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        name: { type: string, nullable: true }
+        avatarUrl: { type: string, nullable: true }
+        role: { type: string, enum: [admin, assessor, viewer] }
+        createdAt: { type: string }
+
+    EngagementMember:
+      type: object
+      required: [id, engagementId, email, role, status, createdAt]
+      properties:
+        id: { type: string }
+        engagementId: { type: string }
+        userId: { type: string, nullable: true }
+        email: { type: string }
+        name: { type: string, nullable: true }
+        avatarUrl: { type: string, nullable: true }
+        role: { type: string, enum: [owner, assessor, viewer] }
+        status: { type: string, enum: [pending, active] }
+        invitedBy: { type: string, nullable: true }
+        createdAt: { type: string }
+
+    AddEngagementMemberInput:
+      type: object
+      required: [email, role]
+      properties:
+        email: { type: string }
+        role: { type: string, enum: [owner, assessor, viewer] }
 
     Engagement:
       type: object

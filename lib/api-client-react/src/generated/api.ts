@@ -18,7 +18,9 @@ import type {
 
 import type {
   ActivityEvent,
+  AddEngagementMemberInput,
   ArtifactDoc,
+  AuthedUser,
   Connector,
   ConnectorRun,
   ConnectorVerifyResult,
@@ -31,6 +33,7 @@ import type {
   Deliverables,
   Engagement,
   EngagementDashboard,
+  EngagementMember,
   Evidence,
   ExportRecord,
   HealthStatus,
@@ -133,6 +136,304 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+export const getGetMeUrl = () => {
+  return `/api/me`;
+};
+
+export const getMe = async (options?: RequestInit): Promise<AuthedUser> => {
+  return customFetch<AuthedUser>(getGetMeUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetMeQueryKey = () => {
+  return [`/api/me`] as const;
+};
+
+export const getGetMeQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMe>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetMeQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMe>>> = ({
+    signal,
+  }) => getMe({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMe>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMeQueryResult = NonNullable<Awaited<ReturnType<typeof getMe>>>;
+export type GetMeQueryError = ErrorType<unknown>;
+
+export function useGetMe<
+  TData = Awaited<ReturnType<typeof getMe>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMeQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getListEngagementMembersUrl = (id: string) => {
+  return `/api/engagements/${id}/members`;
+};
+
+export const listEngagementMembers = async (
+  id: string,
+  options?: RequestInit,
+): Promise<EngagementMember[]> => {
+  return customFetch<EngagementMember[]>(getListEngagementMembersUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListEngagementMembersQueryKey = (id: string) => {
+  return [`/api/engagements/${id}/members`] as const;
+};
+
+export const getListEngagementMembersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEngagementMembers>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listEngagementMembers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListEngagementMembersQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEngagementMembers>>
+  > = ({ signal }) => listEngagementMembers(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEngagementMembers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListEngagementMembersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEngagementMembers>>
+>;
+export type ListEngagementMembersQueryError = ErrorType<unknown>;
+
+export function useListEngagementMembers<
+  TData = Awaited<ReturnType<typeof listEngagementMembers>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listEngagementMembers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListEngagementMembersQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getAddEngagementMemberUrl = (id: string) => {
+  return `/api/engagements/${id}/members`;
+};
+
+export const addEngagementMember = async (
+  id: string,
+  addEngagementMemberInput: AddEngagementMemberInput,
+  options?: RequestInit,
+): Promise<EngagementMember> => {
+  return customFetch<EngagementMember>(getAddEngagementMemberUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addEngagementMemberInput),
+  });
+};
+
+export const getAddEngagementMemberMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addEngagementMember>>,
+    TError,
+    { id: string; data: BodyType<AddEngagementMemberInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addEngagementMember>>,
+  TError,
+  { id: string; data: BodyType<AddEngagementMemberInput> },
+  TContext
+> => {
+  const mutationKey = ["addEngagementMember"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addEngagementMember>>,
+    { id: string; data: BodyType<AddEngagementMemberInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addEngagementMember(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddEngagementMemberMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addEngagementMember>>
+>;
+export type AddEngagementMemberMutationBody =
+  BodyType<AddEngagementMemberInput>;
+export type AddEngagementMemberMutationError = ErrorType<unknown>;
+
+export const useAddEngagementMember = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addEngagementMember>>,
+    TError,
+    { id: string; data: BodyType<AddEngagementMemberInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addEngagementMember>>,
+  TError,
+  { id: string; data: BodyType<AddEngagementMemberInput> },
+  TContext
+> => {
+  return useMutation(getAddEngagementMemberMutationOptions(options));
+};
+
+export const getRemoveEngagementMemberUrl = (id: string, memberId: string) => {
+  return `/api/engagements/${id}/members/${memberId}`;
+};
+
+export const removeEngagementMember = async (
+  id: string,
+  memberId: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRemoveEngagementMemberUrl(id, memberId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveEngagementMemberMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeEngagementMember>>,
+    TError,
+    { id: string; memberId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeEngagementMember>>,
+  TError,
+  { id: string; memberId: string },
+  TContext
+> => {
+  const mutationKey = ["removeEngagementMember"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeEngagementMember>>,
+    { id: string; memberId: string }
+  > = (props) => {
+    const { id, memberId } = props ?? {};
+
+    return removeEngagementMember(id, memberId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveEngagementMemberMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeEngagementMember>>
+>;
+
+export type RemoveEngagementMemberMutationError = ErrorType<unknown>;
+
+export const useRemoveEngagementMember = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeEngagementMember>>,
+    TError,
+    { id: string; memberId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeEngagementMember>>,
+  TError,
+  { id: string; memberId: string },
+  TContext
+> => {
+  return useMutation(getRemoveEngagementMemberMutationOptions(options));
+};
 
 export const getListEngagementsUrl = () => {
   return `/api/engagements`;

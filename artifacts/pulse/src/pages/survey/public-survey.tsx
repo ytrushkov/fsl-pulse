@@ -35,7 +35,7 @@ export default function PublicSurveyForm() {
     }));
 
     submitSurvey.mutate(
-      { data: { answers: formattedAnswers, demographics: {} } },
+      { token, data: { answers: formattedAnswers, demographics: {} } },
       {
         onSuccess: () => {
           setSubmitted(true);
