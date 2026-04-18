@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, and, or, inArray } from "drizzle-orm";
+import { eq, desc, and, or, inArray, gte, lte, sql } from "drizzle-orm";
 import {
   db,
   engagementsTable,
@@ -15,6 +15,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
+import { recordActivity } from "../lib/audit";
 import { DEFAULT_SURVEY_QUESTIONS } from "../lib/survey-template";
 import {
   requireAuth,
@@ -120,13 +121,16 @@ router.post("/engagements", async (req, res): Promise<void> => {
     entryPoint: null,
     npv: null,
   });
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: eng.id,
-    actorUserId: user.id,
-    actorName: user.name,
-    actorEmail: user.email,
     kind: "engagement_created",
     message: `Engagement created for ${eng.clientName}`,
+    payload: {
+      clientName: eng.clientName,
+      sponsor: eng.sponsor,
+      teamCount: eng.teamCount,
+      modules: eng.modules,
+    },
   });
   res.status(201).json(eng);
 });
@@ -277,6 +281,49 @@ router.get(
   },
 );
 
+/**
+ * Build the WHERE clause for /activity queries shared between the JSON list
+ * endpoint and the CSV export. Supported filters:
+ *   - kind:     comma-separated list of activity kinds
+ *   - actor:    matches actor name OR email (case-insensitive substring)
+ *   - severity: "critical" or "info"
+ *   - from/to:  ISO timestamps for createdAt range
+ */
+function buildActivityWhere(engagementId: string, q: Record<string, unknown>) {
+  const clauses = [eq(activityEventsTable.engagementId, engagementId)];
+  const kindRaw = typeof q.kind === "string" ? q.kind : undefined;
+  if (kindRaw) {
+    const kinds = kindRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (kinds.length > 0) clauses.push(inArray(activityEventsTable.kind, kinds));
+  }
+  const sev = typeof q.severity === "string" ? q.severity : undefined;
+  if (sev === "critical" || sev === "info") {
+    clauses.push(eq(activityEventsTable.severity, sev));
+  }
+  const actor = typeof q.actor === "string" ? q.actor.trim() : undefined;
+  if (actor) {
+    const like = `%${actor.toLowerCase()}%`;
+    clauses.push(
+      or(
+        sql`lower(coalesce(${activityEventsTable.actorName}, '')) like ${like}`,
+        sql`lower(coalesce(${activityEventsTable.actorEmail}, '')) like ${like}`,
+      )!,
+    );
+  }
+  const from = typeof q.from === "string" ? Date.parse(q.from) : NaN;
+  if (Number.isFinite(from)) {
+    clauses.push(gte(activityEventsTable.createdAt, new Date(from)));
+  }
+  const to = typeof q.to === "string" ? Date.parse(q.to) : NaN;
+  if (Number.isFinite(to)) {
+    clauses.push(lte(activityEventsTable.createdAt, new Date(to)));
+  }
+  return and(...clauses);
+}
+
 router.get(
   "/engagements/:id/activity",
   requireAuth,
@@ -287,6 +334,10 @@ router.get(
       res.status(400).json({ error: "Invalid id" });
       return;
     }
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(500, Math.floor(limitRaw))
+      : 50;
     const rows = await db
       .select({
         id: activityEventsTable.id,
@@ -297,13 +348,106 @@ router.get(
         actorName: activityEventsTable.actorName,
         actorEmail: activityEventsTable.actorEmail,
         actorAvatarUrl: usersTable.avatarUrl,
+        severity: activityEventsTable.severity,
+        payload: activityEventsTable.payload,
+        requestId: activityEventsTable.requestId,
       })
       .from(activityEventsTable)
       .leftJoin(usersTable, eq(usersTable.id, activityEventsTable.actorUserId))
-      .where(eq(activityEventsTable.engagementId, id))
+      .where(buildActivityWhere(id, req.query as Record<string, unknown>))
       .orderBy(desc(activityEventsTable.createdAt))
-      .limit(50);
+      .limit(limit);
     res.json(rows);
+  },
+);
+
+/**
+ * Admin-only CSV export of the audit log. Same filters as the JSON endpoint.
+ * Restricted to global `admin` users so engagement members can't bulk-export
+ * everyone else's activity even if they have engagement access.
+ */
+router.get(
+  "/engagements/:id/activity.csv",
+  requireAuth,
+  requireEngagementMember,
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const u = req.authedUser!;
+    const [me] = await db
+      .select({ role: usersTable.role })
+      .from(usersTable)
+      .where(eq(usersTable.id, u.id))
+      .limit(1);
+    if (me?.role !== "admin") {
+      res.status(403).json({ error: "Admin role required" });
+      return;
+    }
+    const rows = await db
+      .select({
+        id: activityEventsTable.id,
+        kind: activityEventsTable.kind,
+        severity: activityEventsTable.severity,
+        message: activityEventsTable.message,
+        createdAt: activityEventsTable.createdAt,
+        actorName: activityEventsTable.actorName,
+        actorEmail: activityEventsTable.actorEmail,
+        requestId: activityEventsTable.requestId,
+        payload: activityEventsTable.payload,
+      })
+      .from(activityEventsTable)
+      .where(buildActivityWhere(id, req.query as Record<string, unknown>))
+      .orderBy(desc(activityEventsTable.createdAt))
+      .limit(10_000);
+    const header = [
+      "id",
+      "createdAt",
+      "kind",
+      "severity",
+      "actorName",
+      "actorEmail",
+      "requestId",
+      "message",
+      "payload",
+    ];
+    // RFC4180-ish: wrap every cell in quotes, escape internal quotes by doubling.
+    // Also defend against spreadsheet formula injection by prefixing any cell
+    // whose value starts with =, +, -, @, tab, or CR with a single quote so
+    // Excel/Sheets treat it as text instead of evaluating it as a formula.
+    const esc = (v: unknown): string => {
+      let s = String(v ?? "");
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const lines = [header.map(esc).join(",")];
+    for (const r of rows) {
+      lines.push(
+        [
+          r.id,
+          r.createdAt.toISOString(),
+          r.kind,
+          r.severity,
+          r.actorName ?? "",
+          r.actorEmail ?? "",
+          r.requestId ?? "",
+          r.message,
+          JSON.stringify(r.payload ?? {}),
+        ]
+          .map(esc)
+          .join(","),
+      );
+    }
+    res
+      .status(200)
+      .setHeader("content-type", "text/csv; charset=utf-8")
+      .setHeader(
+        "content-disposition",
+        `attachment; filename="activity-${id}.csv"`,
+      )
+      .send(lines.join("\n") + "\n");
   },
 );
 
@@ -400,13 +544,12 @@ router.post(
         invitedBy: actor.id,
       })
       .returning();
-    await db.insert(activityEventsTable).values({
+    await recordActivity(req, {
       engagementId: id,
-      actorUserId: actor.id,
-      actorName: actor.name,
-      actorEmail: actor.email,
       kind: "member_added",
+      severity: "critical",
       message: `Added ${email} as ${role}`,
+      payload: { email, role, memberId: member.id, linkedUserId: maybeUser?.id ?? null },
     });
     res.status(201).json({
       id: member.id,
@@ -454,14 +597,12 @@ router.delete(
     await db
       .delete(engagementMembersTable)
       .where(eq(engagementMembersTable.id, memberId));
-    const actor = req.authedUser!;
-    await db.insert(activityEventsTable).values({
+    await recordActivity(req, {
       engagementId: id,
-      actorUserId: actor.id,
-      actorName: actor.name,
-      actorEmail: actor.email,
       kind: "member_removed",
+      severity: "critical",
       message: `Removed ${target.email} from the engagement`,
+      payload: { email: target.email, role: target.role, memberId: target.id },
     });
     res.sendStatus(204);
   },

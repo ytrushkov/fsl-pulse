@@ -203,6 +203,31 @@ export const GetEngagementActivityParams = zod.object({
   id: zod.coerce.string(),
 });
 
+export const getEngagementActivityQueryLimitDefault = 50;
+export const getEngagementActivityQueryLimitMax = 500;
+
+export const GetEngagementActivityQueryParams = zod.object({
+  kind: zod.coerce
+    .string()
+    .optional()
+    .describe("Comma-separated list of activity kinds to include."),
+  severity: zod.enum(["info", "critical"]).optional(),
+  actor: zod.coerce
+    .string()
+    .optional()
+    .describe("Case-insensitive substring match against actor name or email."),
+  from: zod
+    .date()
+    .optional()
+    .describe("ISO timestamp lower bound (inclusive)."),
+  to: zod.date().optional().describe("ISO timestamp upper bound (inclusive)."),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(getEngagementActivityQueryLimitMax)
+    .default(getEngagementActivityQueryLimitDefault),
+});
+
 export const GetEngagementActivityResponseItem = zod.object({
   id: zod.string(),
   kind: zod.string(),
@@ -212,10 +237,38 @@ export const GetEngagementActivityResponseItem = zod.object({
   actorName: zod.string().nullish(),
   actorEmail: zod.string().nullish(),
   actorAvatarUrl: zod.string().nullish(),
+  severity: zod.enum(["info", "critical"]),
+  payload: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe(
+      "Structured before\/after detail captured by the emitting route.",
+    ),
+  requestId: zod
+    .string()
+    .nullish()
+    .describe(
+      "Correlation id matching the x-request-id response header and pino logs.",
+    ),
 });
 export const GetEngagementActivityResponse = zod.array(
   GetEngagementActivityResponseItem,
 );
+
+/**
+ * @summary Admin-only CSV export of the audit log (same filters as GET /activity).
+ */
+export const ExportEngagementActivityCsvParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const ExportEngagementActivityCsvQueryParams = zod.object({
+  kind: zod.coerce.string().optional(),
+  severity: zod.enum(["info", "critical"]).optional(),
+  actor: zod.coerce.string().optional(),
+  from: zod.date().optional(),
+  to: zod.date().optional(),
+});
 
 export const ListConnectorsParams = zod.object({
   id: zod.coerce.string(),

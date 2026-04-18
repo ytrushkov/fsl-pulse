@@ -1,13 +1,13 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import {
   db,
   scoringTable,
   scoreOverridesTable,
-  activityEventsTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
 import { computeEngagementScoring } from "../lib/scoring";
+import { recordActivity } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -45,14 +45,14 @@ router.post("/engagements/:id/scoring", async (req, res): Promise<void> => {
     return;
   }
   const result = await computeEngagementScoring(id);
-  const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "scoring_computed",
     message: `Scoring computed (rubric ${result.rubricVersion})`,
+    payload: {
+      rubricVersion: result.rubricVersion,
+      overall: result.overall,
+    },
   });
   res.json(result);
 });
@@ -68,6 +68,20 @@ router.post("/engagements/:id/scoring/override", async (req, res): Promise<void>
     res.status(400).json({ error: "dimension, stage, justification required" });
     return;
   }
+  // Snapshot the previous override (if any) for the same dimension so the
+  // audit payload captures both before and after stages — useful for compliance
+  // review when an assessor walks back a finalized score.
+  const [previous] = await db
+    .select()
+    .from(scoreOverridesTable)
+    .where(
+      and(
+        eq(scoreOverridesTable.engagementId, id),
+        eq(scoreOverridesTable.dimension, b.dimension),
+      ),
+    )
+    .orderBy(desc(scoreOverridesTable.createdAt))
+    .limit(1);
   await db.insert(scoreOverridesTable).values({
     engagementId: id,
     dimension: b.dimension,
@@ -77,13 +91,19 @@ router.post("/engagements/:id/scoring/override", async (req, res): Promise<void>
   });
   const result = await computeEngagementScoring(id);
   const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "score_override",
+    severity: "critical",
     message: `Override applied to ${b.dimension}: stage ${b.stage} by ${actor.name || actor.email}`,
+    payload: {
+      dimension: b.dimension,
+      before: previous
+        ? { stage: previous.stage, score: previous.score }
+        : null,
+      after: { stage: b.stage, score: b.score ?? null },
+      justification: b.justification,
+    },
   });
   res.json(result);
 });

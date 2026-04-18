@@ -5,8 +5,8 @@ import {
   connectorsTable,
   connectorRunsTable,
   evidenceTable,
-  activityEventsTable,
 } from "@workspace/db";
+import { recordActivity } from "../lib/audit";
 import {
   paramId,
   encryptToken,
@@ -96,14 +96,17 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
       status: b.token ? "configured" : "not_configured",
     })
     .returning();
-  const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "connector_added",
     message: `Connector added: ${c.label} (${c.kind})`,
+    payload: {
+      connectorId: c.id,
+      kind: c.kind,
+      provider: c.provider,
+      label: c.label,
+      hasToken: Boolean(c.encryptedToken),
+    },
   });
   res.status(201).json(shape(c));
 });
@@ -132,6 +135,11 @@ router.patch("/connectors/:connectorId", requireConnectorMember, async (req, res
     set.encryptedToken = encryptToken(b.token);
     set.status = "configured";
   }
+  const [previous] = await db
+    .select()
+    .from(connectorsTable)
+    .where(eq(connectorsTable.id, id))
+    .limit(1);
   const [c] = await db
     .update(connectorsTable)
     .set(set)
@@ -141,6 +149,23 @@ router.patch("/connectors/:connectorId", requireConnectorMember, async (req, res
     res.status(404).json({ error: "Not found" });
     return;
   }
+  // Token rotation is treated as critical — the previous PAT is no longer
+  // recoverable and any future verify/run uses the new credential.
+  const tokenRotated = Boolean(set.encryptedToken);
+  await recordActivity(req, {
+    engagementId: c.engagementId,
+    kind: tokenRotated ? "connector_token_rotated" : "connector_updated",
+    severity: tokenRotated ? "critical" : "info",
+    message: tokenRotated
+      ? `Token rotated for ${c.label}`
+      : `Connector updated: ${c.label}`,
+    payload: {
+      connectorId: c.id,
+      changedFields: Object.keys(set),
+      labelBefore: previous?.label,
+      labelAfter: c.label,
+    },
+  });
   res.json(shape(c));
 });
 
@@ -150,7 +175,21 @@ router.delete("/connectors/:connectorId", requireConnectorMember, async (req, re
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  const [doomed] = await db
+    .select()
+    .from(connectorsTable)
+    .where(eq(connectorsTable.id, id))
+    .limit(1);
   await db.delete(connectorsTable).where(eq(connectorsTable.id, id));
+  if (doomed) {
+    await recordActivity(req, {
+      engagementId: doomed.engagementId,
+      kind: "connector_deleted",
+      severity: "critical",
+      message: `Connector deleted: ${doomed.label}`,
+      payload: { connectorId: doomed.id, label: doomed.label, kind: doomed.kind },
+    });
+  }
   res.sendStatus(204);
 });
 
@@ -178,6 +217,16 @@ router.post("/connectors/:connectorId/verify", requireConnectorMember, async (re
       return;
     }
   }
+  // Critical: every server-side use of a decrypted PAT is logged so
+  // compliance reviewers can answer "who used this credential, when, against
+  // which provider?" without scanning raw application logs.
+  await recordActivity(req, {
+    engagementId: c.engagementId,
+    kind: "connector_token_used",
+    severity: "critical",
+    message: `Token used to verify ${c.label}`,
+    payload: { connectorId: c.id, op: "verify", provider: c.provider },
+  });
   const result = await verifyConnectorImpl(c.kind, c.provider, token, c.config as Record<string, unknown>);
   res.json(result);
 });
@@ -204,6 +253,15 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
 
   try {
     const token = c.encryptedToken ? decryptToken(c.encryptedToken) : "";
+    if (c.encryptedToken) {
+      await recordActivity(req, {
+        engagementId: c.engagementId,
+        kind: "connector_token_used",
+        severity: "critical",
+        message: `Token used to run ${c.label}`,
+        payload: { connectorId: c.id, op: "run", provider: c.provider },
+      });
+    }
     const out = await runConnectorImpl(
       c.kind,
       c.provider,
@@ -240,14 +298,15 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
       .update(connectorsTable)
       .set({ status: "collected", lastRunAt: new Date(), lastError: null })
       .where(eq(connectorsTable.id, id));
-    const actor = req.authedUser!;
-    await db.insert(activityEventsTable).values({
+    await recordActivity(req, {
       engagementId: c.engagementId,
-      actorUserId: actor.id,
-      actorName: actor.name,
-      actorEmail: actor.email,
       kind: "connector_run",
       message: `Collected ${out.recordsCollected} records from ${c.label}`,
+      payload: {
+        connectorId: c.id,
+        runId: run.id,
+        recordsCollected: out.recordsCollected,
+      },
     });
     res.status(202).json(updated);
   } catch (err) {
@@ -261,6 +320,12 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
       .update(connectorsTable)
       .set({ status: "failed", lastError: msg })
       .where(eq(connectorsTable.id, id));
+    await recordActivity(req, {
+      engagementId: c.engagementId,
+      kind: "connector_run_failed",
+      message: `Connector run failed for ${c.label}: ${msg}`,
+      payload: { connectorId: c.id, runId: run.id, error: msg },
+    });
     res.status(202).json(updated);
   }
 });

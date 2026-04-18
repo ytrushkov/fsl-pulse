@@ -5,10 +5,10 @@ import {
   deliverablesTable,
   scoringTable,
   evidenceTable,
-  activityEventsTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
 import { draftDeliverablesAi } from "../lib/ai-deliverables";
+import { recordActivity } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -69,8 +69,8 @@ router.patch("/engagements/:id/deliverables", async (req, res): Promise<void> =>
     .set(set)
     .where(eq(deliverablesTable.engagementId, id))
     .returning();
-  // Activity attribution for deliverable edits, with extra emphasis on
-  // finalize/lock transitions so the activity feed shows "Finalized by X".
+  // Activity attribution for deliverable edits. Finalize/lock transitions
+  // are recorded as critical so they stand out in the audit timeline.
   const actor = req.authedUser!;
   const prevStatuses = (existing.statuses ?? {}) as Record<string, string>;
   const nextStatuses = (b.statuses ?? {}) as Record<string, string>;
@@ -81,24 +81,25 @@ router.patch("/engagements/:id/deliverables", async (req, res): Promise<void> =>
     )
     .map(([k]) => k);
   if (finalized.length > 0) {
-    await db.insert(activityEventsTable).values(
-      finalized.map((deliverable) => ({
+    for (const deliverable of finalized) {
+      await recordActivity(req, {
         engagementId: id,
-        actorUserId: actor.id,
-        actorName: actor.name,
-        actorEmail: actor.email,
-        kind: "deliverable_finalized" as const,
+        kind: "deliverable_finalized",
+        severity: "critical",
         message: `Finalized ${deliverable} by ${actor.name || actor.email}`,
-      })),
-    );
+        payload: {
+          deliverable,
+          previousStatus: prevStatuses[deliverable] ?? "draft",
+          newStatus: nextStatuses[deliverable],
+        },
+      });
+    }
   } else {
-    await db.insert(activityEventsTable).values({
+    await recordActivity(req, {
       engagementId: id,
-      actorUserId: actor.id,
-      actorName: actor.name,
-      actorEmail: actor.email,
       kind: "deliverable_updated",
-      message: `Updated deliverables`,
+      message: "Updated deliverables",
+      payload: { changedFields: Object.keys(set) },
     });
   }
   res.json(shape(d));
@@ -158,14 +159,15 @@ router.post("/engagements/:id/deliverables/draft", async (req, res): Promise<voi
     })
     .where(eq(deliverablesTable.engagementId, id))
     .returning();
-  const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "deliverables_drafted",
     message: "Deliverables drafted with AI assistance",
+    payload: {
+      heatmapRows: Array.isArray(drafted.heatmap) ? drafted.heatmap.length : 0,
+      gapRows: Array.isArray(drafted.gapAnalysis) ? drafted.gapAnalysis.length : 0,
+      planRows: Array.isArray(drafted.actionPlan) ? drafted.actionPlan.length : 0,
+    },
   });
   res.json(shape(d));
 });

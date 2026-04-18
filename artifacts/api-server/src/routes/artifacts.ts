@@ -4,10 +4,10 @@ import {
   db,
   artifactDocsTable,
   evidenceTable,
-  activityEventsTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
 import { requireResourceMember } from "../middlewares/auth";
+import { recordActivity } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -72,14 +72,11 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
       extractedSummary: summary,
     })
     .returning();
-  const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "artifact_uploaded",
     message: `Artifact uploaded: ${a.filename}`,
+    payload: { artifactId: a.id, filename: a.filename, kind: a.kind, sizeBytes: a.sizeBytes },
   });
   res.status(201).json(shape(a));
 });
@@ -90,7 +87,20 @@ router.delete("/artifacts/:artifactId", requireArtifactMember, async (req, res):
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  const [doomed] = await db
+    .select()
+    .from(artifactDocsTable)
+    .where(eq(artifactDocsTable.id, id))
+    .limit(1);
   await db.delete(artifactDocsTable).where(eq(artifactDocsTable.id, id));
+  if (doomed) {
+    await recordActivity(req, {
+      engagementId: doomed.engagementId,
+      kind: "artifact_deleted",
+      message: `Artifact deleted: ${doomed.filename}`,
+      payload: { artifactId: doomed.id, filename: doomed.filename },
+    });
+  }
   res.sendStatus(204);
 });
 

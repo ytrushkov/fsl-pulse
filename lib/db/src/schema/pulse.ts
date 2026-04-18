@@ -307,7 +307,25 @@ export const activityEventsTable = pgTable(
     actorEmail: text("actor_email"),
     kind: text("kind").notNull(),
     message: text("message").notNull(),
+    // Structured before/after payload describing the change. Free-form JSON
+    // so each route can capture what's relevant (e.g. score override
+    // before/after, connector config diff, finalized deliverable id).
+    payload: jsonb("payload").notNull().default({}),
+    // Severity flag — `critical` events (token use, score override,
+    // deliverable finalize, export download) get visual emphasis in the UI
+    // and may be filtered separately for compliance review.
+    severity: text("severity", { enum: ["info", "critical"] })
+      .notNull()
+      .default("info"),
+    // Request correlation id (matches the `req.id` value emitted in pino
+    // logs and the `x-request-id` response header), so on-call engineers can
+    // jump from a timeline entry to the full request trace.
+    requestId: text("request_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({ engIdx: index("activity_events_engagement_idx").on(t.engagementId) }),
+  (t) => ({
+    engIdx: index("activity_events_engagement_idx").on(t.engagementId),
+    createdIdx: index("activity_events_created_idx").on(t.createdAt),
+    kindIdx: index("activity_events_kind_idx").on(t.kind),
+  }),
 );

@@ -162,6 +162,34 @@ paths:
       tags: [dashboard]
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
+        - name: kind
+          in: query
+          required: false
+          description: Comma-separated list of activity kinds to include.
+          schema: { type: string }
+        - name: severity
+          in: query
+          required: false
+          schema: { type: string, enum: [info, critical] }
+        - name: actor
+          in: query
+          required: false
+          description: Case-insensitive substring match against actor name or email.
+          schema: { type: string }
+        - name: from
+          in: query
+          required: false
+          description: ISO timestamp lower bound (inclusive).
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: ISO timestamp upper bound (inclusive).
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
       responses:
         "200":
           description: OK
@@ -170,6 +198,27 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/ActivityEvent" }
+
+  /engagements/{id}/activity.csv:
+    get:
+      operationId: exportEngagementActivityCsv
+      tags: [dashboard]
+      summary: Admin-only CSV export of the audit log (same filters as GET /activity).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: kind, in: query, required: false, schema: { type: string } }
+        - { name: severity, in: query, required: false, schema: { type: string, enum: [info, critical] } }
+        - { name: actor, in: query, required: false, schema: { type: string } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+        "403":
+          description: Admin role required
 
   /engagements/{id}/connectors:
     get:
@@ -823,7 +872,7 @@ components:
 
     ActivityEvent:
       type: object
-      required: [id, kind, message, createdAt]
+      required: [id, kind, message, createdAt, severity]
       properties:
         id: { type: string }
         kind: { type: string }
@@ -833,6 +882,17 @@ components:
         actorName: { type: string, nullable: true }
         actorEmail: { type: string, nullable: true }
         actorAvatarUrl: { type: string, nullable: true }
+        severity:
+          type: string
+          enum: [info, critical]
+        payload:
+          type: object
+          additionalProperties: true
+          description: Structured before/after detail captured by the emitting route.
+        requestId:
+          type: string
+          nullable: true
+          description: Correlation id matching the x-request-id response header and pino logs.
 
     Connector:
       type: object

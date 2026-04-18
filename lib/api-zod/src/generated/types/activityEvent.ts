@@ -5,6 +5,8 @@
  * Pulse — Agentic Maturity Assessment Platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { ActivityEventPayload } from "./activityEventPayload";
+import type { ActivityEventSeverity } from "./activityEventSeverity";
 
 export interface ActivityEvent {
   id: string;
@@ -15,4 +17,9 @@ export interface ActivityEvent {
   actorName?: string | null;
   actorEmail?: string | null;
   actorAvatarUrl?: string | null;
+  severity: ActivityEventSeverity;
+  /** Structured before/after detail captured by the emitting route. */
+  payload?: ActivityEventPayload;
+  /** Correlation id matching the x-request-id response header and pino logs. */
+  requestId?: string | null;
 }

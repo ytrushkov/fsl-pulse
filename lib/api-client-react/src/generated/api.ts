@@ -35,7 +35,9 @@ import type {
   EngagementDashboard,
   EngagementMember,
   Evidence,
+  ExportEngagementActivityCsvParams,
   ExportRecord,
+  GetEngagementActivityParams,
   HealthStatus,
   Interview,
   InterviewTagSuggestions,
@@ -825,22 +827,44 @@ export function useGetEngagementDashboard<
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
-export const getGetEngagementActivityUrl = (id: string) => {
-  return `/api/engagements/${id}/activity`;
+export const getGetEngagementActivityUrl = (
+  id: string,
+  params?: GetEngagementActivityParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/engagements/${id}/activity?${stringifiedParams}`
+    : `/api/engagements/${id}/activity`;
 };
 
 export const getEngagementActivity = async (
   id: string,
+  params?: GetEngagementActivityParams,
   options?: RequestInit,
 ): Promise<ActivityEvent[]> => {
-  return customFetch<ActivityEvent[]>(getGetEngagementActivityUrl(id), {
+  return customFetch<ActivityEvent[]>(getGetEngagementActivityUrl(id, params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetEngagementActivityQueryKey = (id: string) => {
-  return [`/api/engagements/${id}/activity`] as const;
+export const getGetEngagementActivityQueryKey = (
+  id: string,
+  params?: GetEngagementActivityParams,
+) => {
+  return [
+    `/api/engagements/${id}/activity`,
+    ...(params ? [params] : []),
+  ] as const;
 };
 
 export const getGetEngagementActivityQueryOptions = <
@@ -848,6 +872,7 @@ export const getGetEngagementActivityQueryOptions = <
   TError = ErrorType<unknown>,
 >(
   id: string,
+  params?: GetEngagementActivityParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof getEngagementActivity>>,
@@ -860,11 +885,12 @@ export const getGetEngagementActivityQueryOptions = <
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey =
-    queryOptions?.queryKey ?? getGetEngagementActivityQueryKey(id);
+    queryOptions?.queryKey ?? getGetEngagementActivityQueryKey(id, params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof getEngagementActivity>>
-  > = ({ signal }) => getEngagementActivity(id, { signal, ...requestOptions });
+  > = ({ signal }) =>
+    getEngagementActivity(id, params, { signal, ...requestOptions });
 
   return {
     queryKey,
@@ -888,6 +914,7 @@ export function useGetEngagementActivity<
   TError = ErrorType<unknown>,
 >(
   id: string,
+  params?: GetEngagementActivityParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof getEngagementActivity>>,
@@ -897,7 +924,129 @@ export function useGetEngagementActivity<
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetEngagementActivityQueryOptions(id, options);
+  const queryOptions = getGetEngagementActivityQueryOptions(
+    id,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Admin-only CSV export of the audit log (same filters as GET /activity).
+ */
+export const getExportEngagementActivityCsvUrl = (
+  id: string,
+  params?: ExportEngagementActivityCsvParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/engagements/${id}/activity.csv?${stringifiedParams}`
+    : `/api/engagements/${id}/activity.csv`;
+};
+
+export const exportEngagementActivityCsv = async (
+  id: string,
+  params?: ExportEngagementActivityCsvParams,
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getExportEngagementActivityCsvUrl(id, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getExportEngagementActivityCsvQueryKey = (
+  id: string,
+  params?: ExportEngagementActivityCsvParams,
+) => {
+  return [
+    `/api/engagements/${id}/activity.csv`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getExportEngagementActivityCsvQueryOptions = <
+  TData = Awaited<ReturnType<typeof exportEngagementActivityCsv>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  params?: ExportEngagementActivityCsvParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportEngagementActivityCsv>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getExportEngagementActivityCsvQueryKey(id, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof exportEngagementActivityCsv>>
+  > = ({ signal }) =>
+    exportEngagementActivityCsv(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof exportEngagementActivityCsv>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ExportEngagementActivityCsvQueryResult = NonNullable<
+  Awaited<ReturnType<typeof exportEngagementActivityCsv>>
+>;
+export type ExportEngagementActivityCsvQueryError = ErrorType<void>;
+
+/**
+ * @summary Admin-only CSV export of the audit log (same filters as GET /activity).
+ */
+
+export function useExportEngagementActivityCsv<
+  TData = Awaited<ReturnType<typeof exportEngagementActivityCsv>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  params?: ExportEngagementActivityCsvParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportEngagementActivityCsv>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getExportEngagementActivityCsvQueryOptions(
+    id,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

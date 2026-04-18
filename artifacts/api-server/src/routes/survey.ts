@@ -7,9 +7,9 @@ import {
   surveyInvitesTable,
   surveyResponsesTable,
   engagementsTable,
-  activityEventsTable,
 } from "@workspace/db";
 import { paramId, newToken, hashInviteToken } from "../lib/util";
+import { recordActivity, recordAnonymousActivity } from "../lib/audit";
 
 // Magic-link invite TTL. Configurable via env so ops can shorten for sensitive
 // engagements without a code change.
@@ -68,6 +68,16 @@ router.patch("/engagements/:id/survey", async (req, res): Promise<void> => {
     .set(set)
     .where(eq(surveysTable.engagementId, id))
     .returning();
+  await recordActivity(req, {
+    engagementId: id,
+    kind: "survey_template_updated",
+    severity: "info",
+    message: `Survey template updated (${Object.keys(set).join(", ") || "no changes"})`,
+    payload: {
+      fields: Object.keys(set),
+      templateVersion: s.templateVersion,
+    },
+  });
   res.json({
     engagementId: s.engagementId,
     templateVersion: s.templateVersion,
@@ -136,14 +146,15 @@ router.post("/engagements/:id/survey/invites", async (req, res): Promise<void> =
     .insert(surveyInvitesTable)
     .values(minted.map((m) => m.values))
     .returning();
-  const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "invites_sent",
     message: `Created ${rows.length} survey invites`,
+    payload: {
+      count: rows.length,
+      teams: Array.from(new Set(rows.map((r) => r.team))),
+      expiresAt: expiresAt.toISOString(),
+    },
   });
   // Return rows joined with the plaintext token so the UI can build the magic
   // link URL. Do NOT echo the stored hash back.
@@ -328,6 +339,16 @@ router.post("/survey/respond/:token", async (req, res): Promise<void> => {
     .update(surveyInvitesTable)
     .set({ status: "completed", completedAt: new Date() })
     .where(eq(surveyInvitesTable.id, inv.id));
+  // Anonymous event — magic-link respondents have no authed user. We record
+  // the team but never the email so the activity feed can show response
+  // velocity without breaking the anonymity floor.
+  await recordAnonymousActivity(req, {
+    engagementId: inv.engagementId,
+    kind: "survey_response_submitted",
+    message: `Survey response submitted (team: ${inv.team})`,
+    payload: { team: inv.team, inviteId: inv.id },
+    actorLabel: `Respondent (${inv.team})`,
+  });
   res.sendStatus(204);
 });
 

@@ -2,11 +2,25 @@ import {
   useGetEngagement,
   useGetEngagementDashboard,
   useGetEngagementActivity,
+  useGetMe,
   getGetEngagementQueryKey,
   getGetEngagementDashboardQueryKey,
   getGetEngagementActivityQueryKey,
 } from "@workspace/api-client-react";
-import type { ActivityEvent } from "@workspace/api-client-react";
+import type {
+  ActivityEvent,
+  GetEngagementActivityParams,
+} from "@workspace/api-client-react";
+import { useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Download, AlertTriangle } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useParams } from "wouter";
 import { AppLayout } from "@/components/layout/app-layout";
@@ -258,12 +272,43 @@ export default function EngagementOverview() {
 }
 
 function ActivityFeed({ engagementId }: { engagementId: string }) {
-  const { data: events, isLoading } = useGetEngagementActivity(engagementId, {
-    query: {
-      enabled: !!engagementId,
-      queryKey: getGetEngagementActivityQueryKey(engagementId),
+  const [actor, setActor] = useState("");
+  const [severity, setSeverity] = useState<"all" | "critical" | "info">("all");
+  const [showRaw, setShowRaw] = useState<string | null>(null);
+
+  const { data: me } = useGetMe();
+  const isAdmin = me?.role === "admin";
+
+  // Filter params are sent as a single object so the query key changes when
+  // any filter does — react-query refetches automatically. `limit` is bumped
+  // to give the audit reviewer more history than the default dashboard view.
+  const params = useMemo<GetEngagementActivityParams>(() => {
+    const p: GetEngagementActivityParams = { limit: 200 };
+    if (actor.trim()) p.actor = actor.trim();
+    if (severity !== "all") p.severity = severity;
+    return p;
+  }, [actor, severity]);
+
+  const { data: events, isLoading } = useGetEngagementActivity(
+    engagementId,
+    params,
+    {
+      query: {
+        enabled: !!engagementId,
+        queryKey: getGetEngagementActivityQueryKey(engagementId, params),
+      },
     },
-  });
+  );
+
+  const downloadCsv = () => {
+    const qs = new URLSearchParams();
+    if (params.actor) qs.set("actor", params.actor);
+    if (params.severity) qs.set("severity", params.severity);
+    // Open in a new tab so the browser handles the file download cookie/auth.
+    const url = `/api/engagements/${engagementId}/activity.csv${qs.toString() ? `?${qs}` : ""}`;
+    window.open(url, "_blank");
+  };
+
   const initials = (s: string) =>
     s
       .split(/\s+/)
@@ -271,16 +316,58 @@ function ActivityFeed({ engagementId }: { engagementId: string }) {
       .slice(0, 2)
       .map((p) => p[0]?.toUpperCase() ?? "")
       .join("") || "?";
+
   return (
     <Card className="mt-8">
       <CardHeader>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Activity className="h-5 w-5 text-primary" />
-          Recent activity
-        </CardTitle>
-        <CardDescription>
-          Who did what across this engagement
-        </CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Activity className="h-5 w-5 text-primary" />
+              Activity timeline
+            </CardTitle>
+            <CardDescription>
+              Filter the audit log by actor or severity. Critical events are
+              flagged for compliance review.
+            </CardDescription>
+          </div>
+          {isAdmin ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={downloadCsv}
+              data-testid="button-activity-csv"
+            >
+              <Download className="h-4 w-4 mr-1.5" />
+              CSV
+            </Button>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-2 pt-3">
+          <Input
+            placeholder="Filter by actor name or email"
+            value={actor}
+            onChange={(e) => setActor(e.target.value)}
+            className="max-w-xs h-8 text-sm"
+            data-testid="input-activity-actor"
+          />
+          <Select
+            value={severity}
+            onValueChange={(v) => setSeverity(v as typeof severity)}
+          >
+            <SelectTrigger
+              className="w-[140px] h-8 text-sm"
+              data-testid="select-activity-severity"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All severities</SelectItem>
+              <SelectItem value="critical">Critical only</SelectItem>
+              <SelectItem value="info">Info only</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -290,39 +377,73 @@ function ActivityFeed({ engagementId }: { engagementId: string }) {
             <Skeleton className="h-10 w-full" />
           </div>
         ) : !events || events.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No activity yet.</p>
+          <p className="text-sm text-muted-foreground">
+            No activity matches these filters.
+          </p>
         ) : (
           <ul className="space-y-3">
             {events.map((e: ActivityEvent) => {
-              const actor = e.actorName || e.actorEmail || "System";
-              const isOverride = e.kind === "score_override";
+              const actorLabel = e.actorName || e.actorEmail || "System";
+              const isCritical = e.severity === "critical";
+              const hasPayload =
+                e.payload && Object.keys(e.payload).length > 0;
               return (
                 <li
                   key={e.id}
-                  className="flex items-start gap-3 text-sm"
+                  className={`flex items-start gap-3 text-sm rounded-md p-2 -mx-2 ${
+                    isCritical ? "bg-amber-500/5" : ""
+                  }`}
                   data-testid={`activity-event-${e.id}`}
                 >
                   <Avatar className="h-7 w-7 mt-0.5">
                     {e.actorAvatarUrl ? (
-                      <AvatarImage src={e.actorAvatarUrl} alt={actor} />
+                      <AvatarImage src={e.actorAvatarUrl} alt={actorLabel} />
                     ) : null}
                     <AvatarFallback className="text-xs">
-                      {initials(actor)}
+                      {initials(actorLabel)}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2 flex-wrap">
-                      <span className="font-medium">{actor}</span>
-                      {isOverride ? (
-                        <span className="rounded bg-amber-500/10 text-amber-500 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-                          Override
+                      <span className="font-medium">{actorLabel}</span>
+                      {isCritical ? (
+                        <span
+                          className="rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide flex items-center gap-0.5"
+                          data-testid={`badge-critical-${e.id}`}
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                          Critical
                         </span>
                       ) : null}
+                      <span className="text-[10px] font-mono text-muted-foreground/70 uppercase">
+                        {e.kind}
+                      </span>
                       <span className="text-xs text-muted-foreground">
                         {new Date(e.createdAt).toLocaleString()}
                       </span>
                     </div>
                     <p className="text-muted-foreground">{e.message}</p>
+                    {hasPayload ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowRaw(showRaw === e.id ? null : e.id)
+                        }
+                        className="text-[11px] text-muted-foreground/70 hover:text-foreground underline-offset-2 hover:underline mt-1"
+                        data-testid={`button-toggle-payload-${e.id}`}
+                      >
+                        {showRaw === e.id ? "Hide details" : "Show details"}
+                      </button>
+                    ) : null}
+                    {showRaw === e.id ? (
+                      <pre className="mt-1 text-[11px] bg-muted/50 rounded p-2 overflow-x-auto">
+                        {JSON.stringify(
+                          { payload: e.payload, requestId: e.requestId },
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    ) : null}
                   </div>
                 </li>
               );

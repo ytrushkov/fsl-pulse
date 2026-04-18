@@ -11,7 +11,6 @@ import {
   interviewsTable,
   artifactDocsTable,
   connectorsTable,
-  activityEventsTable,
 } from "@workspace/db";
 import {
   paramId,
@@ -19,6 +18,7 @@ import {
   verifyExportSignature,
   exportKeyFingerprint,
 } from "../lib/util";
+import { recordActivity } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -147,14 +147,17 @@ router.post("/engagements/:id/exports", async (req, res): Promise<void> => {
     .update(engagementsTable)
     .set({ status: "exported" })
     .where(eq(engagementsTable.id, id));
-  const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "export_created",
+    severity: "critical",
     message: `Export v${exp.version} created`,
+    payload: {
+      exportId: exp.id,
+      version: exp.version,
+      keyFingerprint: exportKeyFingerprint(),
+      bytes: Buffer.byteLength(json, "utf8"),
+    },
   });
 
   res.status(201).json({
@@ -207,6 +210,15 @@ router.post(
       return;
     }
     const ok = verifyExportSignature(submitted, exp.signature);
+    await recordActivity(req, {
+      engagementId: id,
+      kind: ok ? "export_verified" : "export_verify_failed",
+      severity: "critical",
+      message: ok
+        ? `Export v${exp.version} signature verified`
+        : `Export v${exp.version} signature mismatch`,
+      payload: { exportId: exp.id, version: exp.version, ok },
+    });
     res.json({
       ok,
       expectedAlgorithm: "HMAC-SHA256",

@@ -4,10 +4,10 @@ import {
   db,
   interviewsTable,
   evidenceTable,
-  activityEventsTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
 import { requireResourceMember } from "../middlewares/auth";
+import { recordActivity } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -91,14 +91,11 @@ router.post("/engagements/:id/interviews", async (req, res): Promise<void> => {
       status: "draft",
     })
     .returning();
-  const actor = req.authedUser!;
-  await db.insert(activityEventsTable).values({
+  await recordActivity(req, {
     engagementId: id,
-    actorUserId: actor.id,
-    actorName: actor.name,
-    actorEmail: actor.email,
     kind: "interview_created",
     message: `Interview added: ${iv.interviewee} (${iv.role})`,
+    payload: { interviewId: iv.id, interviewee: iv.interviewee, role: iv.role },
   });
   res.status(201).json(await shape(iv));
 });
@@ -138,6 +135,13 @@ router.patch("/interviews/:interviewId", requireInterviewMember, async (req, res
     res.status(404).json({ error: "Not found" });
     return;
   }
+  await recordActivity(req, {
+    engagementId: iv.engagementId,
+    kind: "interview_updated",
+    severity: "info",
+    message: `Interview with ${iv.interviewee ?? "unknown"} updated`,
+    payload: { interviewId: iv.id, fields: Object.keys(set) },
+  });
   res.json(await shape(iv));
 });
 
@@ -147,7 +151,21 @@ router.delete("/interviews/:interviewId", requireInterviewMember, async (req, re
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  // Read before delete so we can capture engagementId + interviewee for the audit row.
+  const [existing] = await db
+    .select()
+    .from(interviewsTable)
+    .where(eq(interviewsTable.id, id));
   await db.delete(interviewsTable).where(eq(interviewsTable.id, id));
+  if (existing) {
+    await recordActivity(req, {
+      engagementId: existing.engagementId,
+      kind: "interview_deleted",
+      severity: "critical",
+      message: `Interview with ${existing.interviewee ?? "unknown"} deleted`,
+      payload: { interviewId: existing.id, interviewee: existing.interviewee },
+    });
+  }
   res.sendStatus(204);
 });
 
@@ -195,6 +213,18 @@ router.post("/interviews/:interviewId/evidence", requireInterviewMember, async (
       createdBy: "assessor",
     })
     .returning();
+  await recordActivity(req, {
+    engagementId: iv.engagementId,
+    kind: "evidence_added",
+    severity: "info",
+    message: `Evidence added to ${b.dimension} (${b.signalType})`,
+    payload: {
+      evidenceId: ev.id,
+      interviewId: id,
+      dimension: b.dimension,
+      signalType: b.signalType,
+    },
+  });
   res.status(201).json(ev);
 });
 
@@ -204,7 +234,24 @@ router.delete("/evidence/:evidenceId", requireEvidenceMember, async (req, res): 
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  const [existing] = await db
+    .select()
+    .from(evidenceTable)
+    .where(eq(evidenceTable.id, id));
   await db.delete(evidenceTable).where(eq(evidenceTable.id, id));
+  if (existing) {
+    await recordActivity(req, {
+      engagementId: existing.engagementId,
+      kind: "evidence_deleted",
+      severity: "critical",
+      message: `Evidence removed from ${existing.dimension}`,
+      payload: {
+        evidenceId: existing.id,
+        dimension: existing.dimension,
+        signalType: existing.signalType,
+      },
+    });
+  }
   res.sendStatus(204);
 });
 

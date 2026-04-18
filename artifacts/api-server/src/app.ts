@@ -1,5 +1,6 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
+import { randomUUID } from "node:crypto";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import {
@@ -11,9 +12,28 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Accept incoming x-request-id from upstream proxies (so a caller can pre-mint
+// a correlation id and trace it across services), otherwise generate a v4
+// UUID. The same id is exposed on the response so clients/operators can
+// quote it back when reporting issues.
+function ensureRequestId(req: Request, res: Response, next: NextFunction) {
+  const incoming = req.headers["x-request-id"];
+  const provided = Array.isArray(incoming) ? incoming[0] : incoming;
+  const safe =
+    typeof provided === "string" && /^[A-Za-z0-9._:\-]{1,128}$/.test(provided)
+      ? provided
+      : randomUUID();
+  (req as Request & { id: string }).id = safe;
+  res.setHeader("x-request-id", safe);
+  next();
+}
+app.use(ensureRequestId);
+
 app.use(
   pinoHttp({
     logger,
+    // pino-http will respect req.id if it's already set by upstream middleware.
+    genReqId: (req) => (req as Request & { id?: string }).id ?? randomUUID(),
     serializers: {
       req(req) {
         return {
@@ -62,5 +82,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(clerkMiddleware());
 
 app.use("/api", router);
+
+// Global JSON error handler — surfaces the request id so clients can quote
+// it back when reporting issues, and logs the full error server-side. Keeps
+// the response body shape consistent with route-level 4xx replies.
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) return next(err);
+  const requestId = (req as Request & { id?: string }).id ?? null;
+  const message = err instanceof Error ? err.message : "Internal Server Error";
+  logger.error({ err, requestId, url: req.url }, "Unhandled error");
+  res.status(500).json({ error: message, requestId });
+});
 
 export default app;

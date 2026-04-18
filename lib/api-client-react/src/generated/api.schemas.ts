@@ -233,6 +233,19 @@ export interface EngagementDashboard {
   deliverableStatuses: EngagementDashboardDeliverableStatuses;
 }
 
+export type ActivityEventSeverity =
+  (typeof ActivityEventSeverity)[keyof typeof ActivityEventSeverity];
+
+export const ActivityEventSeverity = {
+  info: "info",
+  critical: "critical",
+} as const;
+
+/**
+ * Structured before/after detail captured by the emitting route.
+ */
+export type ActivityEventPayload = { [key: string]: unknown };
+
 export interface ActivityEvent {
   id: string;
   kind: string;
@@ -242,6 +255,11 @@ export interface ActivityEvent {
   actorName?: string | null;
   actorEmail?: string | null;
   actorAvatarUrl?: string | null;
+  severity: ActivityEventSeverity;
+  /** Structured before/after detail captured by the emitting route. */
+  payload?: ActivityEventPayload;
+  /** Correlation id matching the x-request-id response header and pino logs. */
+  requestId?: string | null;
 }
 
 export type ConnectorStatus =
@@ -773,3 +791,52 @@ export interface ExportRecord {
   signature?: string;
   files: ExportRecordFilesItem[];
 }
+
+export type GetEngagementActivityParams = {
+  /**
+   * Comma-separated list of activity kinds to include.
+   */
+  kind?: string;
+  severity?: GetEngagementActivitySeverity;
+  /**
+   * Case-insensitive substring match against actor name or email.
+   */
+  actor?: string;
+  /**
+   * ISO timestamp lower bound (inclusive).
+   */
+  from?: string;
+  /**
+   * ISO timestamp upper bound (inclusive).
+   */
+  to?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+};
+
+export type GetEngagementActivitySeverity =
+  (typeof GetEngagementActivitySeverity)[keyof typeof GetEngagementActivitySeverity];
+
+export const GetEngagementActivitySeverity = {
+  info: "info",
+  critical: "critical",
+} as const;
+
+export type ExportEngagementActivityCsvParams = {
+  kind?: string;
+  severity?: ExportEngagementActivityCsvSeverity;
+  actor?: string;
+  from?: string;
+  to?: string;
+};
+
+export type ExportEngagementActivityCsvSeverity =
+  (typeof ExportEngagementActivityCsvSeverity)[keyof typeof ExportEngagementActivityCsvSeverity];
+
+export const ExportEngagementActivityCsvSeverity = {
+  info: "info",
+  critical: "critical",
+} as const;
