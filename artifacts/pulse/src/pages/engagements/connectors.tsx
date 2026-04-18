@@ -345,6 +345,12 @@ export default function ConnectorsList() {
         open={Boolean(signalsFor)}
         onOpenChange={(o) => !o && setSignalsFor(null)}
       />
+      <RunHistoryDialog
+        connectorId={historyFor?.id ?? null}
+        connectorLabel={historyFor?.label ?? ""}
+        open={Boolean(historyFor)}
+        onOpenChange={(o) => !o && setHistoryFor(null)}
+      />
     </AppLayout>
   );
 }

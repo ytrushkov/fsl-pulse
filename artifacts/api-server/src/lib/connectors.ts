@@ -321,9 +321,10 @@ async function runGitlab(
   const evidence: CollectedEvidence[] = [];
   if (!group)
     return { recordsCollected: 0, summary: { error: "No group configured" }, evidence };
+  const headers = { "PRIVATE-TOKEN": token };
   const r = await fetch(
     `${baseUrl}/api/v4/groups/${encodeURIComponent(group)}/projects?per_page=30`,
-    { headers: { "PRIVATE-TOKEN": token } },
+    { headers },
   );
   if (!r.ok) throw new Error(`GitLab ${r.status}`);
   const projects = (await r.json()) as Array<{ name: string; id: number }>;
@@ -333,11 +334,95 @@ async function runGitlab(
     stageHint: 3,
     text: `Discovered ${projects.length} GitLab projects in group ${group}.`,
   });
-  return {
-    recordsCollected: projects.length,
-    summary: { projectCount: projects.length },
-    evidence,
+
+  // ---- DORA-style normalized signals (sample up to 5 projects, 30d) ---
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  let pipelinesTotal = 0;
+  let pipelinesFailed = 0;
+  let mrsMerged = 0;
+  let mrLeadSumMs = 0;
+  let mrLeadCount = 0;
+  let recordsCollected = projects.length;
+
+  for (const p of projects.slice(0, 5)) {
+    try {
+      const pl = await fetch(
+        `${baseUrl}/api/v4/projects/${p.id}/pipelines?updated_after=${since}&per_page=100`,
+        { headers },
+      );
+      if (pl.ok) {
+        const rows = (await pl.json()) as Array<{ status: string }>;
+        pipelinesTotal += rows.length;
+        pipelinesFailed += rows.filter((x) => x.status === "failed").length;
+        recordsCollected += rows.length;
+      }
+    } catch {
+      // ignore — project may have pipelines disabled
+    }
+    try {
+      const mr = await fetch(
+        `${baseUrl}/api/v4/projects/${p.id}/merge_requests?state=merged&updated_after=${since}&per_page=30`,
+        { headers },
+      );
+      if (mr.ok) {
+        const rows = (await mr.json()) as Array<{
+          created_at: string;
+          merged_at: string | null;
+        }>;
+        for (const m of rows) {
+          if (m.merged_at) {
+            mrsMerged += 1;
+            const lead =
+              new Date(m.merged_at).getTime() - new Date(m.created_at).getTime();
+            if (lead > 0) {
+              mrLeadSumMs += lead;
+              mrLeadCount += 1;
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const summary: Record<string, unknown> = {
+    projectCount: projects.length,
+    pipelines30d: pipelinesTotal,
+    pipelinesFailed30d: pipelinesFailed,
+    mrsMerged30d: mrsMerged,
   };
+
+  if (pipelinesTotal > 0) {
+    const deploysPerDay = pipelinesTotal / 30;
+    summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
+    evidence.push({
+      dimension: "process",
+      signalType: deploysPerDay >= 1 ? "strength" : "gap",
+      stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
+      text: `Deployment frequency proxy: ~${deploysPerDay.toFixed(2)} pipelines/day across sampled GitLab projects (30d).`,
+    });
+    const cfr = pipelinesFailed / pipelinesTotal;
+    summary.changeFailureRate = Number(cfr.toFixed(3));
+    evidence.push({
+      dimension: "measurement",
+      signalType: cfr <= 0.15 ? "strength" : "gap",
+      stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
+      text: `Change failure rate proxy: ${(cfr * 100).toFixed(1)}% of GitLab pipelines failed (${pipelinesFailed}/${pipelinesTotal}, 30d).`,
+    });
+  }
+  if (mrLeadCount > 0) {
+    const avgHours = mrLeadSumMs / mrLeadCount / 3_600_000;
+    summary.leadTimeHoursAvg = Number(avgHours.toFixed(1));
+    evidence.push({
+      dimension: "process",
+      signalType: avgHours <= 48 ? "strength" : "gap",
+      stageHint: avgHours <= 24 ? 5 : avgHours <= 48 ? 4 : avgHours <= 168 ? 3 : 2,
+      text: `Lead time for changes: avg ${avgHours.toFixed(1)} hours from MR open to merge (n=${mrLeadCount}).`,
+    });
+  }
+
+  return { recordsCollected, summary, evidence };
 }
 
 async function verifyJira(
@@ -392,23 +477,110 @@ async function runJira(
     return { recordsCollected: 0, summary: {}, evidence: [] };
   await assertSafeUrl(baseUrl);
   const auth = Buffer.from(`${email}:${token}`).toString("base64");
-  const jql = project ? `project=${project} ORDER BY updated DESC` : "ORDER BY updated DESC";
-  const r = await fetch(`${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=50`, {
-    headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-  });
+  const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
+  const projClause = project ? `project=${project} AND ` : "";
+
+  // 1. Recently-resolved tickets — for cycle/lead-time and MTTR proxy.
+  const resolvedJql = `${projClause}resolved >= -30d ORDER BY resolved DESC`;
+  const r = await fetch(
+    `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(resolvedJql)}&fields=created,resolutiondate,labels,issuetype&maxResults=100`,
+    { headers },
+  );
   if (!r.ok) throw new Error(`Jira ${r.status}`);
-  const data = (await r.json()) as { total: number; issues: unknown[] };
+  const data = (await r.json()) as {
+    total: number;
+    issues: Array<{
+      fields: {
+        created: string;
+        resolutiondate: string | null;
+        labels?: string[];
+        issuetype?: { name: string };
+      };
+    }>;
+  };
+
+  const evidence: CollectedEvidence[] = [];
+  evidence.push({
+    dimension: "process",
+    signalType: "strength",
+    stageHint: 2,
+    text: `Jira project has ${data.total} resolved issues in the last 30 days — active planning process.`,
+  });
+
+  // Cycle time (created → resolved) across all resolved tickets.
+  let cycleSumMs = 0;
+  let cycleCount = 0;
+  // MTTR proxy: tickets whose type or labels suggest "incident" / "bug"
+  // (resolved − created). Industry-standard mapping for orgs that don't have
+  // a separate incident system.
+  let mttrSumMs = 0;
+  let mttrCount = 0;
+  const isIncident = (i: (typeof data.issues)[number]) => {
+    const type = i.fields.issuetype?.name?.toLowerCase() ?? "";
+    const labels = (i.fields.labels ?? []).map((l) => l.toLowerCase());
+    return (
+      type === "incident" ||
+      type === "bug" ||
+      labels.includes("incident") ||
+      labels.includes("outage") ||
+      labels.includes("p0") ||
+      labels.includes("p1")
+    );
+  };
+  for (const issue of data.issues) {
+    if (!issue.fields.resolutiondate) continue;
+    const dur =
+      new Date(issue.fields.resolutiondate).getTime() -
+      new Date(issue.fields.created).getTime();
+    if (dur <= 0) continue;
+    cycleSumMs += dur;
+    cycleCount += 1;
+    if (isIncident(issue)) {
+      mttrSumMs += dur;
+      mttrCount += 1;
+    }
+  }
+
+  const summary: Record<string, unknown> = {
+    totalIssues: data.total,
+    sampleSize: data.issues.length,
+    resolved30d: cycleCount,
+  };
+
+  if (cycleCount > 0) {
+    const avgHours = cycleSumMs / cycleCount / 3_600_000;
+    summary.cycleTimeHoursAvg = Number(avgHours.toFixed(1));
+    evidence.push({
+      dimension: "process",
+      signalType: avgHours <= 72 ? "strength" : "gap",
+      stageHint: avgHours <= 24 ? 5 : avgHours <= 72 ? 4 : avgHours <= 240 ? 3 : 2,
+      text: `Lead time (Jira): avg ${avgHours.toFixed(1)} hours from create to resolve (n=${cycleCount}, 30d).`,
+    });
+  }
+  if (mttrCount > 0) {
+    const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+    summary.incidentTickets30d = mttrCount;
+    evidence.push({
+      dimension: "measurement",
+      signalType: mttrHours <= 24 ? "strength" : "gap",
+      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+      text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to resolve incident/bug tickets (n=${mttrCount}, 30d).`,
+    });
+  } else {
+    summary.mttrHoursAvg = null;
+    evidence.push({
+      dimension: "measurement",
+      signalType: "gap",
+      stageHint: 1,
+      text: "No incident-labeled tickets found in the last 30 days — MTTR cannot be measured. Tag incidents with 'incident', 'outage', 'p0', or 'p1' to enable measurement.",
+    });
+  }
+
   return {
     recordsCollected: data.issues.length,
-    summary: { totalIssues: data.total, sampleSize: data.issues.length },
-    evidence: [
-      {
-        dimension: "process",
-        signalType: "strength",
-        stageHint: 2,
-        text: `Jira project has ${data.total} tracked issues — formalized planning process.`,
-      },
-    ],
+    summary,
+    evidence,
   };
 }
 
@@ -461,33 +633,109 @@ async function verifyLinear(
 }
 
 async function runLinear(token: string): Promise<ConnectorRunResult> {
+  // Pull issues completed in the last 30 days with timestamps and labels so
+  // we can compute cycle time and an MTTR proxy from incident-tagged issues.
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const r = await fetch("https://api.linear.app/graphql", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: token },
     body: JSON.stringify({
-      query: `{ issues(first: 50) { nodes { id state { name } } } teams { nodes { id name } } }`,
+      query: `query($since: DateTimeOrDuration!) {
+        teams { nodes { id name } }
+        issues(first: 100, filter: { completedAt: { gte: $since } }) {
+          nodes {
+            id
+            createdAt
+            completedAt
+            labels { nodes { name } }
+          }
+        }
+      }`,
+      variables: { since },
     }),
   });
   if (!r.ok) throw new Error(`Linear ${r.status}`);
   const data = (await r.json()) as {
-    data: {
-      issues: { nodes: Array<{ id: string; state: { name: string } }> };
+    data?: {
       teams: { nodes: Array<{ id: string; name: string }> };
+      issues: {
+        nodes: Array<{
+          id: string;
+          createdAt: string;
+          completedAt: string | null;
+          labels: { nodes: Array<{ name: string }> };
+        }>;
+      };
     };
+    errors?: Array<{ message: string }>;
   };
+  if (data.errors?.length) throw new Error(data.errors[0]!.message);
+  if (!data.data) throw new Error("Linear: empty response");
+
   const teams = data.data.teams.nodes.length;
-  const issues = data.data.issues.nodes.length;
+  const issues = data.data.issues.nodes;
+  let cycleSumMs = 0;
+  let cycleCount = 0;
+  let mttrSumMs = 0;
+  let mttrCount = 0;
+
+  for (const i of issues) {
+    if (!i.completedAt) continue;
+    const dur =
+      new Date(i.completedAt).getTime() - new Date(i.createdAt).getTime();
+    if (dur <= 0) continue;
+    cycleSumMs += dur;
+    cycleCount += 1;
+    const labels = i.labels.nodes.map((l) => l.name.toLowerCase());
+    if (
+      labels.includes("incident") ||
+      labels.includes("outage") ||
+      labels.includes("p0") ||
+      labels.includes("p1")
+    ) {
+      mttrSumMs += dur;
+      mttrCount += 1;
+    }
+  }
+
+  const evidence: CollectedEvidence[] = [
+    {
+      dimension: "tooling",
+      signalType: "strength",
+      stageHint: 3,
+      text: `Linear: ${teams} teams visible, ${issues.length} issues completed in the last 30 days.`,
+    },
+  ];
+  const summary: Record<string, unknown> = {
+    teams,
+    issuesCompleted30d: issues.length,
+  };
+
+  if (cycleCount > 0) {
+    const avgHours = cycleSumMs / cycleCount / 3_600_000;
+    summary.cycleTimeHoursAvg = Number(avgHours.toFixed(1));
+    evidence.push({
+      dimension: "process",
+      signalType: avgHours <= 72 ? "strength" : "gap",
+      stageHint: avgHours <= 24 ? 5 : avgHours <= 72 ? 4 : avgHours <= 240 ? 3 : 2,
+      text: `Lead time (Linear): avg ${avgHours.toFixed(1)} hours from create to complete (n=${cycleCount}, 30d).`,
+    });
+  }
+  if (mttrCount > 0) {
+    const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+    evidence.push({
+      dimension: "measurement",
+      signalType: mttrHours <= 24 ? "strength" : "gap",
+      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+      text: `MTTR proxy (Linear): avg ${mttrHours.toFixed(1)} hours to resolve incident-tagged issues (n=${mttrCount}, 30d).`,
+    });
+  }
+
   return {
-    recordsCollected: teams + issues,
-    summary: { teams, issuesSampled: issues },
-    evidence: [
-      {
-        dimension: "process",
-        signalType: "strength",
-        stageHint: 3,
-        text: `Linear: ${teams} teams, ${issues} issues sampled — modern workflow tooling.`,
-      },
-    ],
+    recordsCollected: teams + issues.length,
+    summary,
+    evidence,
   };
 }
 
@@ -522,14 +770,18 @@ async function runCicd(
     });
     return out;
   }
+  // Other CI providers (CircleCI, Jenkins, GitLab CI) are recognized but
+  // collection is currently limited — surface the gap explicitly so the
+  // assessor knows the dimension is uncovered rather than silently empty.
   return {
     recordsCollected: 0,
-    summary: { provider },
+    summary: { provider, deploysPerDay: null, changeFailureRate: null },
     evidence: [
       {
         dimension: "process",
-        signalType: "quote",
-        text: `CI/CD connector configured for ${provider}.`,
+        signalType: "gap",
+        stageHint: 1,
+        text: `CI/CD connector configured for ${provider}, but automated metric collection (deploys/day, change-failure rate) is not yet implemented for this provider. Add a GitHub or GitLab connector for full DORA coverage.`,
       },
     ],
   };
@@ -583,17 +835,33 @@ async function runAiTooling(
       modelCount = data.data.length;
     }
   }
+  // Adoption rate is genuinely hard to extract per-provider without per-user
+  // usage APIs (which most don't expose). We surface the integration as
+  // evidence of "AI tooling is in place" (tooling dimension) and explicitly
+  // call out the adoption-measurement gap (people dimension) so the scoring
+  // engine doesn't over-credit the org for merely having a key.
+  const evidence: CollectedEvidence[] = [
+    {
+      dimension: "tooling",
+      signalType: modelCount > 0 ? "strength" : "gap",
+      stageHint: modelCount > 0 ? 3 : 2,
+      text: `AI tooling provider "${provider}" configured with ${modelCount} models accessible.`,
+    },
+    {
+      dimension: "people",
+      signalType: "gap",
+      stageHint: 2,
+      text: `AI tool adoption rate (active users / engineers) cannot be measured automatically for ${provider} — pair this connector with the adoption-survey module to capture it.`,
+    },
+  ];
   return {
     recordsCollected: modelCount,
-    summary: { provider, modelsAvailable: modelCount },
-    evidence: [
-      {
-        dimension: "tooling",
-        signalType: "strength",
-        stageHint: modelCount > 0 ? 3 : 2,
-        text: `AI tooling provider "${provider}" configured with ${modelCount} models accessible.`,
-      },
-    ],
+    summary: {
+      provider,
+      modelsAvailable: modelCount,
+      adoptionRatePctApprox: null,
+    },
+    evidence,
   };
 }
 
