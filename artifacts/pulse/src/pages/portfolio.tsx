@@ -82,7 +82,10 @@ export default function PortfolioPage() {
   const { data: me } = useGetMe();
   const isAdmin = me?.role === "admin";
 
-  const benchmarkUrl = `${import.meta.env.BASE_URL}api/portfolio/benchmark.csv`;
+  const benchmarkQuery = new URLSearchParams(params).toString();
+  const benchmarkUrl =
+    `${import.meta.env.BASE_URL}api/portfolio/benchmark.csv` +
+    (benchmarkQuery ? `?${benchmarkQuery}` : "");
 
   const engagements = summary?.engagements ?? [];
   const stalled = engagements.filter((e) => e.stallReasons.length > 0);
