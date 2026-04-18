@@ -69,6 +69,38 @@ router.patch("/engagements/:id/deliverables", async (req, res): Promise<void> =>
     .set(set)
     .where(eq(deliverablesTable.engagementId, id))
     .returning();
+  // Activity attribution for deliverable edits, with extra emphasis on
+  // finalize/lock transitions so the activity feed shows "Finalized by X".
+  const actor = req.authedUser!;
+  const prevStatuses = (existing.statuses ?? {}) as Record<string, string>;
+  const nextStatuses = (b.statuses ?? {}) as Record<string, string>;
+  const finalized = Object.entries(nextStatuses)
+    .filter(
+      ([k, v]) =>
+        (v === "locked" || v === "finalized") && prevStatuses[k] !== v,
+    )
+    .map(([k]) => k);
+  if (finalized.length > 0) {
+    await db.insert(activityEventsTable).values(
+      finalized.map((deliverable) => ({
+        engagementId: id,
+        actorUserId: actor.id,
+        actorName: actor.name,
+        actorEmail: actor.email,
+        kind: "deliverable_finalized" as const,
+        message: `Finalized ${deliverable} by ${actor.name || actor.email}`,
+      })),
+    );
+  } else {
+    await db.insert(activityEventsTable).values({
+      engagementId: id,
+      actorUserId: actor.id,
+      actorName: actor.name,
+      actorEmail: actor.email,
+      kind: "deliverable_updated",
+      message: `Updated deliverables`,
+    });
+  }
   res.json(shape(d));
 });
 
