@@ -92,6 +92,12 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
       return;
     }
   }
+  // Schedule defaults are ON (daily) per task requirement. We must also
+  // populate `nextRunAt = now()` at insert time, otherwise the scheduler's
+  // `nextRunAt <= now()` filter will never select this row and the connector
+  // will silently never auto-run. The scheduler does have a one-shot
+  // backfill for legacy rows but it only runs at process boot, not on
+  // create — relying on it would be incorrect.
   const [c] = await db
     .insert(connectorsTable)
     .values({
@@ -102,6 +108,7 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
       encryptedToken: b.token ? encryptToken(b.token) : null,
       config: cfg,
       status: b.token ? "configured" : "not_configured",
+      nextRunAt: new Date(),
     })
     .returning();
   await recordActivity(req, {

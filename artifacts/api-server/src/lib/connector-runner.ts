@@ -133,6 +133,13 @@ export async function executeConnectorRun(
       })
       .where(eq(connectorRunsTable.id, run.id))
       .returning();
+    // After a successful run — manual or scheduled — push nextRunAt forward
+    // by the configured cadence. This prevents a manually-triggered run from
+    // being immediately re-picked by the scheduler tick that may already be
+    // due, and keeps cadence stable from the moment of the last success.
+    const nextRun = new Date(
+      Date.now() + (c.scheduleCadenceMinutes ?? 1440) * 60_000,
+    );
     await db
       .update(connectorsTable)
       .set({
@@ -140,6 +147,7 @@ export async function executeConnectorRun(
         lastRunAt: new Date(),
         lastSuccessAt: new Date(),
         lastError: null,
+        nextRunAt: nextRun,
       })
       .where(eq(connectorsTable.id, connectorId));
     await audit({
