@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, inArray } from "drizzle-orm";
+import { and, eq, isNull, inArray, or, gt } from "drizzle-orm";
 import {
   db,
   surveysTable,
@@ -45,6 +45,7 @@ async function tick(): Promise<void> {
       const days = (s.nudgeSchedule as unknown as number[]) ?? [];
       if (!Array.isArray(days) || days.length === 0) continue;
 
+      const now = new Date();
       const invites = await db
         .select()
         .from(surveyInvitesTable)
@@ -52,6 +53,12 @@ async function tick(): Promise<void> {
           and(
             eq(surveyInvitesTable.engagementId, s.engagementId),
             inArray(surveyInvitesTable.status, ["sent", "opened", "started"]),
+            // Skip invites whose magic link has already expired —
+            // reminding someone about a link they can't use is just noise.
+            or(
+              isNull(surveyInvitesTable.expiresAt),
+              gt(surveyInvitesTable.expiresAt, now),
+            ),
           ),
         );
 

@@ -422,7 +422,15 @@ router.get("/survey/respond/:token", async (req, res): Promise<void> => {
     .select()
     .from(surveysTable)
     .where(eq(surveysTable.engagementId, inv.engagementId));
-  if (!expired && inv.status !== "completed" && inv.status === "sent") {
+  // Only flip the invite to "opened" while the link is genuinely usable.
+  // Once the survey is closed or the link has expired we freeze invite
+  // state so post-close visits don't continue to mutate engagement metrics.
+  if (
+    !expired &&
+    !survey?.closedAt &&
+    inv.status !== "completed" &&
+    inv.status === "sent"
+  ) {
     await db
       .update(surveyInvitesTable)
       .set({ status: "opened" })
