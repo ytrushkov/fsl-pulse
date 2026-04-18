@@ -186,6 +186,10 @@ router.patch(
       set.targetDeliveryDate = b.targetDeliveryDate
         ? new Date(b.targetDeliveryDate)
         : null;
+    const [previous] = await db
+      .select()
+      .from(engagementsTable)
+      .where(eq(engagementsTable.id, id));
     const [updated] = await db
       .update(engagementsTable)
       .set(set)
@@ -195,6 +199,24 @@ router.patch(
       res.status(404).json({ error: "Not found" });
       return;
     }
+    // Status changes (e.g. discovery -> exported) and member-count changes
+    // are the highest-signal edits, so flag a status flip as critical so it
+    // shows up prominently in the activity timeline.
+    const statusChanged =
+      previous && "status" in set && previous.status !== updated.status;
+    await recordActivity(req, {
+      engagementId: id,
+      kind: statusChanged ? "engagement_status_changed" : "engagement_updated",
+      severity: statusChanged ? "critical" : "info",
+      message: statusChanged
+        ? `Engagement status changed: ${previous?.status} → ${updated.status}`
+        : `Engagement updated (${Object.keys(set).join(", ") || "no fields"})`,
+      payload: {
+        fields: Object.keys(set),
+        previousStatus: previous?.status,
+        newStatus: updated.status,
+      },
+    });
     res.json(updated);
   },
 );

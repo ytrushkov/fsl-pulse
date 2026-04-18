@@ -292,6 +292,15 @@ router.get("/survey/respond/:token", async (req, res): Promise<void> => {
       .update(surveyInvitesTable)
       .set({ status: "opened" })
       .where(eq(surveyInvitesTable.id, inv.id));
+    // Anonymous open: record team only, never the magic-link token or invitee
+    // email/identifier. The aggregate count is what assessors care about.
+    await recordAnonymousActivity(req, {
+      engagementId: inv.engagementId,
+      kind: "survey_invite_opened",
+      severity: "info",
+      message: `Survey link opened (${inv.team ?? "unassigned"})`,
+      payload: { team: inv.team },
+    });
   }
   const questions = questionsForEngagement(survey?.modules as string[]);
   res.json({

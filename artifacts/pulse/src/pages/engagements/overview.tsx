@@ -274,6 +274,9 @@ export default function EngagementOverview() {
 function ActivityFeed({ engagementId }: { engagementId: string }) {
   const [actor, setActor] = useState("");
   const [severity, setSeverity] = useState<"all" | "critical" | "info">("all");
+  const [kind, setKind] = useState<string>("all");
+  const [from, setFrom] = useState<string>("");
+  const [to, setTo] = useState<string>("");
   const [showRaw, setShowRaw] = useState<string | null>(null);
 
   const { data: me } = useGetMe();
@@ -282,12 +285,17 @@ function ActivityFeed({ engagementId }: { engagementId: string }) {
   // Filter params are sent as a single object so the query key changes when
   // any filter does — react-query refetches automatically. `limit` is bumped
   // to give the audit reviewer more history than the default dashboard view.
+  // Date inputs (`yyyy-mm-dd`) are converted to ISO timestamps so the server
+  // gets a precise range; from = start-of-day, to = end-of-day.
   const params = useMemo<GetEngagementActivityParams>(() => {
     const p: GetEngagementActivityParams = { limit: 200 };
     if (actor.trim()) p.actor = actor.trim();
     if (severity !== "all") p.severity = severity;
+    if (kind !== "all") p.kind = kind;
+    if (from) p.from = new Date(`${from}T00:00:00`).toISOString();
+    if (to) p.to = new Date(`${to}T23:59:59.999`).toISOString();
     return p;
-  }, [actor, severity]);
+  }, [actor, severity, kind, from, to]);
 
   const { data: events, isLoading } = useGetEngagementActivity(
     engagementId,
@@ -304,10 +312,21 @@ function ActivityFeed({ engagementId }: { engagementId: string }) {
     const qs = new URLSearchParams();
     if (params.actor) qs.set("actor", params.actor);
     if (params.severity) qs.set("severity", params.severity);
+    if (params.kind) qs.set("kind", params.kind);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
     // Open in a new tab so the browser handles the file download cookie/auth.
     const url = `/api/engagements/${engagementId}/activity.csv${qs.toString() ? `?${qs}` : ""}`;
     window.open(url, "_blank");
   };
+
+  // Build the kind dropdown from the events that came back so it stays in
+  // sync with the schema as new event types are added on the backend.
+  const kindOptions = useMemo(() => {
+    const set = new Set<string>();
+    (events ?? []).forEach((e: ActivityEvent) => set.add(e.kind));
+    return Array.from(set).sort();
+  }, [events]);
 
   const initials = (s: string) =>
     s
@@ -367,6 +386,38 @@ function ActivityFeed({ engagementId }: { engagementId: string }) {
               <SelectItem value="info">Info only</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={kind} onValueChange={(v) => setKind(v)}>
+            <SelectTrigger
+              className="w-[180px] h-8 text-sm"
+              data-testid="select-activity-kind"
+            >
+              <SelectValue placeholder="All actions" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All actions</SelectItem>
+              {kindOptions.map((k) => (
+                <SelectItem key={k} value={k}>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="w-[150px] h-8 text-sm"
+            aria-label="From date"
+            data-testid="input-activity-from"
+          />
+          <Input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="w-[150px] h-8 text-sm"
+            aria-label="To date"
+            data-testid="input-activity-to"
+          />
         </div>
       </CardHeader>
       <CardContent>

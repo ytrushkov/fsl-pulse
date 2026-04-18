@@ -29,6 +29,28 @@ function ensureRequestId(req: Request, res: Response, next: NextFunction) {
 }
 app.use(ensureRequestId);
 
+// Surface the request id on every error response so operators can correlate
+// a user-reported failure with server logs without touching every route. We
+// wrap res.json once per request — on status >= 400, if the body is a plain
+// object that doesn't already include `requestId`, inject it.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body: unknown) => {
+    if (
+      res.statusCode >= 400 &&
+      body !== null &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      !(body as Record<string, unknown>).requestId
+    ) {
+      (body as Record<string, unknown>).requestId =
+        (req as Request & { id?: string }).id ?? null;
+    }
+    return originalJson(body);
+  };
+  next();
+});
+
 app.use(
   pinoHttp({
     logger,
