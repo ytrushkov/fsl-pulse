@@ -78,13 +78,13 @@ export default function PublicSurveyForm() {
   if (submitted) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="mb-8 flex items-center gap-2 font-serif text-2xl font-bold text-slate-800">
+        <div className="mb-8 flex items-center gap-2 text-2xl font-bold text-slate-800">
           <Activity className="h-6 w-6 text-primary" />
           Pulse
         </div>
         <Card className="w-full max-w-md text-center p-8">
           <CheckCircle2 className="h-16 w-16 mx-auto text-green-500 mb-4" />
-          <CardTitle className="text-2xl font-serif mb-2">Thank You</CardTitle>
+          <CardTitle className="text-2xl mb-2">Thank You</CardTitle>
           <p className="text-muted-foreground">Your responses have been recorded securely and anonymously.</p>
         </Card>
       </div>
@@ -93,14 +93,14 @@ export default function PublicSurveyForm() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 lg:py-12">
-      <div className="max-w-3xl mx-auto mb-8 flex items-center gap-2 font-serif text-2xl font-bold text-slate-800">
+      <div className="max-w-3xl mx-auto mb-8 flex items-center gap-2 text-2xl font-bold text-slate-800">
         <Activity className="h-6 w-6 text-primary" />
         Pulse Survey
       </div>
       
       <Card className="max-w-3xl mx-auto shadow-md border-0 ring-1 ring-slate-200">
         <CardHeader className="bg-white border-b px-8 py-6 rounded-t-xl">
-          <CardTitle className="text-3xl font-serif text-slate-900">Engineering Assessment</CardTitle>
+          <CardTitle className="text-3xl text-slate-900">Engineering Assessment</CardTitle>
           <CardDescription className="text-base text-slate-600 mt-2">
             For {survey.engagementClient}. Your honest feedback helps us identify bottlenecks and improvement areas. All responses are aggregated.
           </CardDescription>

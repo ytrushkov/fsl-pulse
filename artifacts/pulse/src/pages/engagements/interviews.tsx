@@ -48,7 +48,7 @@ export default function InterviewsView() {
     <AppLayout engagementId={id}>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-serif font-bold tracking-tight">Interviews</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Interviews</h1>
           <p className="text-muted-foreground mt-1">Qualitative insights and context collection.</p>
         </div>
         <CreateInterviewDialog engagementId={id} />

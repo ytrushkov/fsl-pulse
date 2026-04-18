@@ -12,7 +12,7 @@ export default function NpvView({ engagementId, deliverables }: any) {
     <div className="p-8">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-2xl font-serif font-bold text-foreground">Business Case (NPV)</h2>
+          <h2 className="text-2xl font-bold text-foreground">Business Case (NPV)</h2>
           <p className="text-muted-foreground">Financial modeling for agentic transformation.</p>
         </div>
         <Badge variant={deliverables.statuses.npv === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
@@ -49,7 +49,7 @@ export default function NpvView({ engagementId, deliverables }: any) {
 
       <div className="grid md:grid-cols-2 gap-8">
         <div>
-          <h3 className="font-serif text-lg font-bold mb-4 border-b pb-2">Assumptions (Inputs)</h3>
+          <h3 className="text-lg font-bold mb-4 border-b pb-2">Assumptions (Inputs)</h3>
           <div className="bg-muted/20 rounded-md border p-0 overflow-hidden">
             <table className="w-full text-sm">
               <tbody>
@@ -65,7 +65,7 @@ export default function NpvView({ engagementId, deliverables }: any) {
         </div>
 
         <div>
-          <h3 className="font-serif text-lg font-bold mb-4 border-b pb-2">Value Levers</h3>
+          <h3 className="text-lg font-bold mb-4 border-b pb-2">Value Levers</h3>
           <div className="space-y-4 pt-2">
             {data.leverBreakdown.map((lever: any) => (
               <div key={lever.lever}>

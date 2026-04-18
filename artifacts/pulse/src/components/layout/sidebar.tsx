@@ -1,19 +1,36 @@
 import { Link, useLocation } from "wouter";
 import { useListEngagements } from "@workspace/api-client-react";
-import { Activity, Briefcase, Plus, Search } from "lucide-react";
+import { Briefcase, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+
+function PulseMark({ className = "h-6 w-6" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 32 32" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M4 16h6l3-9 6 18 3-9h6"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export function Sidebar() {
   const [location] = useLocation();
   const { data: engagements, isLoading } = useListEngagements();
 
   return (
-    <div className="flex h-full w-64 flex-col border-r bg-sidebar">
-      <div className="flex h-14 items-center border-b px-4">
-        <Link href="/" className="flex items-center gap-2 font-serif text-lg font-bold text-sidebar-primary">
-          <Activity className="h-5 w-5" />
+    <div className="flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar">
+      <div className="flex h-16 items-center border-b border-sidebar-border px-5">
+        <Link
+          href="/"
+          className="flex items-center gap-2.5 text-xl font-extrabold tracking-tight text-sidebar-foreground"
+        >
+          <span className="text-primary"><PulseMark /></span>
           <span>Pulse</span>
         </Link>
       </div>
@@ -25,16 +42,16 @@ export function Sidebar() {
             <Input
               type="search"
               placeholder="Find engagement..."
-              className="w-full bg-sidebar-accent/50 pl-8 text-sm"
+              className="w-full border-sidebar-border bg-sidebar-accent/40 pl-8 text-sm placeholder:text-muted-foreground"
             />
           </div>
         </div>
 
         <div className="space-y-1">
-          <h2 className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="mb-3 px-2 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
             Engagements
           </h2>
-          
+
           {isLoading ? (
             <div className="space-y-2 px-2">
               <Skeleton className="h-8 w-full" />
@@ -50,18 +67,18 @@ export function Sidebar() {
                 <Link
                   key={engagement.id}
                   href={`/engagements/${engagement.id}`}
-                  className={`group flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors ${
+                  className={`group flex items-center justify-between rounded-md px-2.5 py-2 text-sm transition-colors ${
                     isActive
-                      ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                      ? "bg-primary/15 font-semibold text-sidebar-foreground ring-1 ring-inset ring-primary/40"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   }`}
                 >
                   <span className="truncate">{engagement.clientName}</span>
-                  {engagement.status === 'active' && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                  {engagement.status === "active" && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_6px_hsl(var(--accent))]" />
                   )}
-                  {engagement.status === 'collecting' && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  {engagement.status === "collecting" && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary" />
                   )}
                 </Link>
               );
@@ -70,9 +87,12 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="border-t p-4">
+      <div className="border-t border-sidebar-border p-4">
         <Link href="/engagements" className="w-full">
-          <Button variant="outline" className="w-full justify-start gap-2">
+          <Button
+            variant="outline"
+            className="w-full justify-start gap-2 border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent"
+          >
             <Briefcase className="h-4 w-4" />
             All Engagements
           </Button>

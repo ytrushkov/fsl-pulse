@@ -43,7 +43,7 @@ export default function ExportsView() {
     <AppLayout engagementId={id}>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-serif font-bold tracking-tight">Exports</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Exports</h1>
           <p className="text-muted-foreground mt-1">Immutable snapshots of deliverables for client handoff.</p>
         </div>
         <Button onClick={handleCreate} disabled={createExport.isPending} className="gap-2">

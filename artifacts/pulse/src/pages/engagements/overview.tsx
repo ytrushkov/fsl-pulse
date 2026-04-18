@@ -36,7 +36,7 @@ export default function EngagementOverview() {
     <AppLayout engagementId={id}>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-serif font-bold tracking-tight">Workspace Overview</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Workspace Overview</h1>
           <p className="text-muted-foreground mt-1">
             {isLoading ? <Skeleton className="h-4 w-48" /> : `Status and progress for ${engagement?.clientName}`}
           </p>
@@ -60,7 +60,7 @@ export default function EngagementOverview() {
         <Card className="hover:border-primary/50 transition-colors">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-serif flex items-center gap-2">
+              <CardTitle className="text-lg flex items-center gap-2">
                 <Database className="h-5 w-5 text-chart-1" />
                 Connectors
               </CardTitle>
@@ -88,7 +88,7 @@ export default function EngagementOverview() {
         <Card className="hover:border-primary/50 transition-colors">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-serif flex items-center gap-2">
+              <CardTitle className="text-lg flex items-center gap-2">
                 <FileText className="h-5 w-5 text-chart-2" />
                 Survey
               </CardTitle>
@@ -122,7 +122,7 @@ export default function EngagementOverview() {
         <Card className="hover:border-primary/50 transition-colors">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-serif flex items-center gap-2">
+              <CardTitle className="text-lg flex items-center gap-2">
                 <MessagesSquare className="h-5 w-5 text-chart-3" />
                 Interviews
               </CardTitle>
@@ -150,7 +150,7 @@ export default function EngagementOverview() {
         <Card className="hover:border-primary/50 transition-colors">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-serif flex items-center gap-2">
+              <CardTitle className="text-lg flex items-center gap-2">
                 <Files className="h-5 w-5 text-chart-4" />
                 Artifacts
               </CardTitle>
@@ -178,7 +178,7 @@ export default function EngagementOverview() {
         <Card className="hover:border-primary/50 transition-colors bg-secondary/30">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-serif flex items-center gap-2">
+              <CardTitle className="text-lg flex items-center gap-2">
                 <Target className="h-5 w-5 text-primary" />
                 Scoring
               </CardTitle>
@@ -208,7 +208,7 @@ export default function EngagementOverview() {
         <Card className="hover:border-primary/50 transition-colors bg-primary/5 border-primary/20">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-serif flex items-center gap-2 text-primary">
+              <CardTitle className="text-lg flex items-center gap-2 text-primary">
                 <Presentation className="h-5 w-5" />
                 Deliverables
               </CardTitle>

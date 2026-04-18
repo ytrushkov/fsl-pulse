@@ -105,7 +105,7 @@ export default function InterviewDetailView() {
             <Button variant="outline" size="icon"><ChevronLeft className="h-4 w-4" /></Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-serif font-bold tracking-tight">{interview?.interviewee}</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{interview?.interviewee}</h1>
             <p className="text-muted-foreground text-sm">{interview?.role}</p>
           </div>
         </div>
@@ -123,7 +123,7 @@ export default function InterviewDetailView() {
         <Card className="md:col-span-3 flex flex-col h-full overflow-hidden">
           <CardContent className="flex-1 p-0 flex flex-col relative">
             <Textarea
-              className="flex-1 w-full p-6 border-0 focus-visible:ring-0 resize-none font-serif text-lg leading-relaxed bg-transparent"
+              className="flex-1 w-full p-6 border-0 focus-visible:ring-0 resize-none text-lg leading-relaxed bg-transparent"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               onMouseUp={handleMouseUp}
@@ -300,7 +300,7 @@ function AISuggestTagsButton({ interviewId, notes }: { interviewId: string, note
             ) : (
               suggestTags.data.suggestions.map((sug: any, i: number) => (
                 <div key={i} className="border rounded-md p-4 bg-card shadow-sm">
-                  <div className="mb-2 font-serif text-lg">"{sug.text}"</div>
+                  <div className="mb-2 text-lg">"{sug.text}"</div>
                   <div className="flex items-center gap-2 mb-3">
                     <Badge variant="secondary" className="capitalize">{sug.dimension}</Badge>
                     <Badge variant="outline" className="capitalize">{sug.signalType}</Badge>

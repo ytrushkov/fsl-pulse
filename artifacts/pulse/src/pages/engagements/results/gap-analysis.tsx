@@ -8,7 +8,7 @@ export default function GapAnalysisView({ engagementId, deliverables }: any) {
     <div className="p-8 max-w-4xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-2xl font-serif font-bold text-foreground">Gap Analysis</h2>
+          <h2 className="text-2xl font-bold text-foreground">Gap Analysis</h2>
           <p className="text-muted-foreground">Narrative findings and cited evidence.</p>
         </div>
         <Badge variant={deliverables.statuses.gapAnalysis === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
@@ -22,7 +22,7 @@ export default function GapAnalysisView({ engagementId, deliverables }: any) {
             <AccordionTrigger className="hover:no-underline px-4 py-4">
               <div className="flex items-center justify-between w-full pr-4">
                 <div className="flex items-center gap-4">
-                  <span className="text-lg font-serif capitalize font-bold">{item.dimension}</span>
+                  <span className="text-lg capitalize font-bold">{item.dimension}</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm font-mono bg-muted px-3 py-1 rounded-full">
                   <span>Stage {item.currentStage}</span>

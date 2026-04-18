@@ -55,7 +55,7 @@ export default function ScoringView() {
     <AppLayout engagementId={id}>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-serif font-bold tracking-tight">Scoring Dashboard</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Scoring Dashboard</h1>
           <p className="text-muted-foreground mt-1 flex items-center gap-2">
             Maturity evaluation across 6 key dimensions. 
             {scoring?.computedAt && (
@@ -74,7 +74,7 @@ export default function ScoringView() {
       <div className="mb-8 p-6 bg-primary text-primary-foreground rounded-lg shadow-sm">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-serif mb-1 text-primary-foreground/80">Overall Agentic Maturity</h2>
+            <h2 className="text-lg mb-1 text-primary-foreground/80">Overall Agentic Maturity</h2>
             <div className="flex items-end gap-3">
               {isLoading ? (
                 <Skeleton className="h-10 w-32 bg-primary-foreground/20" />
@@ -93,7 +93,7 @@ export default function ScoringView() {
           {scoring?.overall && (
             <div className="text-right">
               <div className="text-sm font-medium uppercase tracking-wider text-primary-foreground/80 mb-1">Target Stage</div>
-              <div className="text-2xl font-serif">Stage {Math.ceil(scoring.overall.score)}</div>
+              <div className="text-2xl">Stage {Math.ceil(scoring.overall.score)}</div>
             </div>
           )}
         </div>
@@ -117,7 +117,7 @@ export default function ScoringView() {
       ) : !scoring?.byDimension ? (
         <div className="text-center py-20 border rounded bg-muted/10 border-dashed">
           <Target className="h-10 w-10 mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-xl font-serif font-semibold mb-2">No Scores Computed</h3>
+          <h3 className="text-xl font-semibold mb-2">No Scores Computed</h3>
           <p className="text-muted-foreground mb-6 max-w-md mx-auto">
             Collect evidence via connectors, surveys, and interviews, then run the scoring algorithm to generate maturity scores.
           </p>
@@ -137,7 +137,7 @@ export default function ScoringView() {
                 <Card className="cursor-pointer hover-elevate hover:border-primary/50 transition-all h-full flex flex-col">
                   <CardHeader className="pb-2">
                     <div className="flex justify-between items-start">
-                      <CardTitle className="text-lg font-serif capitalize">
+                      <CardTitle className="text-lg capitalize">
                         {dim.dimension}
                       </CardTitle>
                       <Badge variant="outline" className={getConfidenceColor(dim.confidence)}>
@@ -223,7 +223,7 @@ function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: st
       </DialogTrigger>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-2xl font-serif capitalize">
+          <DialogTitle className="text-2xl capitalize">
             {dimension.dimension} Details
           </DialogTitle>
         </DialogHeader>
@@ -249,7 +249,7 @@ function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: st
           </div>
 
           <div className="border-t pt-6">
-            <h4 className="font-serif text-lg font-bold mb-4 flex items-center gap-2">
+            <h4 className="text-lg font-bold mb-4 flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-yellow-500" />
               Manual Override
             </h4>

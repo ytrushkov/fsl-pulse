@@ -11,7 +11,7 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
     <div className="p-8 max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-12">
         <div>
-          <h2 className="text-2xl font-serif font-bold text-foreground">Recommended Entry Point</h2>
+          <h2 className="text-2xl font-bold text-foreground">Recommended Entry Point</h2>
           <p className="text-muted-foreground">Where to start implementing AI agents in the SDLC.</p>
         </div>
         <Badge variant={deliverables.statuses.entryPoint === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
@@ -33,7 +33,7 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
                 }`}>
                   {idx + 1}
                 </div>
-                <span className={`font-serif uppercase tracking-widest text-sm ${isRecommended ? 'font-bold text-primary' : 'text-muted-foreground'}`}>
+                <span className={`uppercase tracking-widest text-sm ${isRecommended ? 'font-bold text-primary' : 'text-muted-foreground'}`}>
                   {stage}
                 </span>
                 {isRecommended && (
@@ -49,7 +49,7 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
 
       <div className="grid md:grid-cols-3 gap-8">
         <div className="md:col-span-2 prose prose-sm dark:prose-invert">
-          <h3 className="font-serif text-xl font-bold border-b pb-2">Strategic Rationale</h3>
+          <h3 className="text-xl font-bold border-b pb-2">Strategic Rationale</h3>
           <p className="text-lg leading-relaxed text-muted-foreground mt-4">
             {data.rationaleMd}
           </p>
@@ -58,7 +58,7 @@ export default function EntryPointView({ engagementId, deliverables }: any) {
         <div>
           <Card className="bg-muted/20 border-primary/20">
             <CardContent className="pt-6">
-              <h3 className="font-serif text-lg font-bold mb-4 flex items-center gap-2">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-primary"></span>
                 Hypr Agents
               </h3>

@@ -34,7 +34,7 @@ export default function SurveyView() {
     <AppLayout engagementId={id}>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-serif font-bold tracking-tight">Survey</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Survey</h1>
           <p className="text-muted-foreground mt-1">Configure assessment questionnaire and analyze responses.</p>
         </div>
         <DistributeDialog engagementId={id} />
@@ -100,7 +100,7 @@ function SurveyBuilder({ engagementId }: { engagementId: string }) {
       {Object.entries(groupedQuestions).map(([section, questions]) => (
         <Card key={section}>
           <CardHeader className="bg-muted/30 pb-3">
-            <CardTitle className="text-lg font-serif capitalize">{section.replace('_', ' ')}</CardTitle>
+            <CardTitle className="text-lg capitalize">{section.replace('_', ' ')}</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>

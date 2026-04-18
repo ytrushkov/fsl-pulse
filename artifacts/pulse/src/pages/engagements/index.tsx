@@ -15,7 +15,7 @@ export default function EngagementsList() {
     <AppLayout>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-serif font-bold tracking-tight">Engagements</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Engagements</h1>
           <p className="text-muted-foreground mt-1">Manage your active and past client diagnostics.</p>
         </div>
         <CreateEngagementDialog />
@@ -41,7 +41,7 @@ export default function EngagementsList() {
           <div className="rounded-full bg-muted p-4 mb-4">
             <CalendarDays className="h-8 w-8 text-muted-foreground" />
           </div>
-          <h2 className="text-xl font-serif font-semibold mb-2">No Engagements Found</h2>
+          <h2 className="text-xl font-semibold mb-2">No Engagements Found</h2>
           <p className="text-muted-foreground max-w-md mb-6">
             You don't have any active engagements yet. Create a new engagement to start assessing.
           </p>
@@ -55,7 +55,7 @@ export default function EngagementsList() {
                 <CardHeader className="pb-4 border-b bg-muted/10 group-hover:bg-muted/30 transition-colors">
                   <div className="flex items-start justify-between">
                     <div>
-                      <CardTitle className="text-xl font-serif font-bold group-hover:text-primary transition-colors">
+                      <CardTitle className="text-xl font-bold group-hover:text-primary transition-colors">
                         {engagement.clientName}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">

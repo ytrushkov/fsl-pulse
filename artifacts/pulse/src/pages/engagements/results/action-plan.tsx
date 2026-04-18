@@ -8,7 +8,7 @@ export default function ActionPlanView({ engagementId, deliverables }: any) {
     <div className="p-8">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-2xl font-serif font-bold text-foreground">Strategic Action Plan</h2>
+          <h2 className="text-2xl font-bold text-foreground">Strategic Action Plan</h2>
           <p className="text-muted-foreground">Prioritized initiatives to reach target state.</p>
         </div>
         <Badge variant={deliverables.statuses.actionPlan === 'locked' ? 'default' : 'outline'} className="uppercase tracking-widest text-xs">
