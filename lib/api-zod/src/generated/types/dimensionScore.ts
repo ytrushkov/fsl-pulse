@@ -21,5 +21,8 @@ export interface DimensionScore {
   evidenceIds: string[];
   rationale: string;
   overrideJustification?: string | null;
+  overrideAuthorName?: string | null;
+  overrideAuthorEmail?: string | null;
+  overrideAt?: string | null;
   signalsBySource?: DimensionScoreSignalsBySource;
 }

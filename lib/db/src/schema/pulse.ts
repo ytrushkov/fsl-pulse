@@ -339,6 +339,14 @@ export const scoreOverridesTable = pgTable("score_overrides", {
   stage: integer("stage").notNull(),
   score: doublePrecision("score"),
   justification: text("justification").notNull(),
+  // Actor attribution so the scoring UI can render
+  // "Manually overridden by Jane Smith". Nullable for legacy rows
+  // written before authentication was added; reads tolerate NULL.
+  actorUserId: uuid("actor_user_id").references(() => usersTable.id, {
+    onDelete: "set null",
+  }),
+  actorName: text("actor_name"),
+  actorEmail: text("actor_email"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

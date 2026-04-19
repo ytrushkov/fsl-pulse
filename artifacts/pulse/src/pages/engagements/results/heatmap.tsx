@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { LockBadge } from "@/components/deliverables/lock-badge";
 
 interface ViewProps {
   engagementId: string;
@@ -70,11 +71,14 @@ export default function HeatmapView({ engagementId, deliverables }: ViewProps) {
           <h2 className="text-2xl font-bold text-foreground">Agentic Maturity Heatmap</h2>
           <p className="text-muted-foreground">Current state across six core dimensions.</p>
         </div>
-        <DeliverableToolbar
-          engagementId={engagementId}
-          deliverableKey="heatmap"
-          status={deliverables.statuses.heatmap}
-        />
+        <div className="flex items-center gap-3">
+          <LockBadge meta={deliverables.lockMetadata?.heatmap} />
+          <DeliverableToolbar
+            engagementId={engagementId}
+            deliverableKey="heatmap"
+            status={deliverables.statuses.heatmap}
+          />
+        </div>
       </div>
 
       {dirty && !isLocked && (

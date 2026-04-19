@@ -4,6 +4,7 @@ import { db, interviewsTable } from "@workspace/db";
 import { paramId } from "../lib/util";
 import { suggestInterviewTagsAi } from "../lib/ai-deliverables";
 import { requireResourceMember } from "../middlewares/auth";
+import { recordActivity } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -37,6 +38,15 @@ router.post(
     }
     const out = await suggestInterviewTagsAi(iv.notes, {
       requestId: (req as typeof req & { id?: string }).id,
+    });
+    await recordActivity(req, {
+      engagementId: iv.engagementId,
+      kind: "ai_suggest",
+      message: `Requested AI tag suggestions for interview with ${iv.interviewee}`,
+      payload: {
+        interviewId: iv.id,
+        suggestionCount: out.suggestions.length,
+      },
     });
     res.json(out);
   },

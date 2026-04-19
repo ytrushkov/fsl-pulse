@@ -764,6 +764,9 @@ export interface DimensionScore {
   evidenceIds: string[];
   rationale: string;
   overrideJustification?: string | null;
+  overrideAuthorName?: string | null;
+  overrideAuthorEmail?: string | null;
+  overrideAt?: string | null;
   signalsBySource?: DimensionScoreSignalsBySource;
 }
 
@@ -958,6 +961,22 @@ export type DeliverablesStatuses = {
   npv: DeliverableStatus;
 };
 
+/**
+ * Per-deliverable attribution for any key whose status is `locked`.
+Populated from the latest finalized version row. Keys that are
+not locked are omitted. Used by the result pages to render a
+"Locked by {name} on {date}" badge.
+
+ */
+export type DeliverablesLockMetadata = {
+  [key: string]: {
+    lockedByName?: string | null;
+    lockedByEmail?: string | null;
+    lockedAt: string;
+    version?: number;
+  };
+};
+
 export interface Deliverables {
   engagementId: string;
   statuses: DeliverablesStatuses;
@@ -966,6 +985,12 @@ export interface Deliverables {
   actionPlan: ActionItem[];
   entryPoint: EntryPointRecommendation;
   npv: NpvResult;
+  /** Per-deliverable attribution for any key whose status is `locked`.
+Populated from the latest finalized version row. Keys that are
+not locked are omitted. Used by the result pages to render a
+"Locked by {name} on {date}" badge.
+ */
+  lockMetadata?: DeliverablesLockMetadata;
 }
 
 export type UpdateDeliverablesInputStatuses = {

@@ -185,15 +185,18 @@ router.post("/engagements/:id/scoring/override", async (req, res): Promise<void>
     )
     .orderBy(desc(scoreOverridesTable.createdAt))
     .limit(1);
+  const actor = req.authedUser!;
   await db.insert(scoreOverridesTable).values({
     engagementId: id,
     dimension: b.dimension,
     stage: b.stage,
     score: b.score ?? null,
     justification: b.justification,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    actorEmail: actor.email,
   });
   const result = await computeEngagementScoring(id);
-  const actor = req.authedUser!;
   await recordActivity(req, {
     engagementId: id,
     kind: "score_override",

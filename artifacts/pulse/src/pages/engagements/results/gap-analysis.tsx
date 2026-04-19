@@ -11,6 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { LockBadge } from "@/components/deliverables/lock-badge";
 import { RichTextEditor } from "@/components/deliverables/rich-text-editor";
 
 interface ViewProps {
@@ -64,7 +65,10 @@ export default function GapAnalysisView({ engagementId, deliverables }: ViewProp
           <h2 className="text-2xl font-bold text-foreground">Gap Analysis</h2>
           <p className="text-muted-foreground">Narrative findings and cited evidence.</p>
         </div>
-        <DeliverableToolbar engagementId={engagementId} deliverableKey="gapAnalysis" status={deliverables.statuses.gapAnalysis} />
+        <div className="flex items-center gap-3">
+          <LockBadge meta={deliverables.lockMetadata?.gapAnalysis} />
+          <DeliverableToolbar engagementId={engagementId} deliverableKey="gapAnalysis" status={deliverables.statuses.gapAnalysis} />
+        </div>
       </div>
 
       {dirty && !isLocked && (

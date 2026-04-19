@@ -197,7 +197,20 @@ export default function ScoringView() {
                     {dim.overrideJustification && (
                       <div className="mt-4 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs text-yellow-800 dark:text-yellow-400 flex gap-2 items-start">
                         <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                        <span>Manually overridden: {dim.overrideJustification}</span>
+                        <div className="space-y-0.5">
+                          <div>
+                            <span className="font-medium">Overridden</span>
+                            {(dim.overrideAuthorName || dim.overrideAuthorEmail) && (
+                              <span> by {dim.overrideAuthorName || dim.overrideAuthorEmail}</span>
+                            )}
+                            {dim.overrideAt && (
+                              <span className="opacity-70">
+                                {" "}· {new Date(dim.overrideAt).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                          <div className="opacity-90">{dim.overrideJustification}</div>
+                        </div>
                       </div>
                     )}
                   </CardContent>

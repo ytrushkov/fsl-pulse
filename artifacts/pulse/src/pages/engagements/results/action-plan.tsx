@@ -17,6 +17,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { LockBadge } from "@/components/deliverables/lock-badge";
 import { Trash2, Plus } from "lucide-react";
 
 const PRIORITIES = ["P0", "P1", "P2"] as const;
@@ -84,11 +85,14 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
           <h2 className="text-2xl font-bold text-foreground">Strategic Action Plan</h2>
           <p className="text-muted-foreground">Prioritized initiatives to reach target state.</p>
         </div>
-        <DeliverableToolbar
-          engagementId={engagementId}
-          deliverableKey="actionPlan"
-          status={deliverables.statuses.actionPlan}
-        />
+        <div className="flex items-center gap-3">
+          <LockBadge meta={deliverables.lockMetadata?.actionPlan} />
+          <DeliverableToolbar
+            engagementId={engagementId}
+            deliverableKey="actionPlan"
+            status={deliverables.statuses.actionPlan}
+          />
+        </div>
       </div>
 
       {!isLocked && (

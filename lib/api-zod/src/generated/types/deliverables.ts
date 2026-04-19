@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ActionItem } from "./actionItem";
+import type { DeliverablesLockMetadata } from "./deliverablesLockMetadata";
 import type { DeliverablesStatuses } from "./deliverablesStatuses";
 import type { EntryPointRecommendation } from "./entryPointRecommendation";
 import type { GapAnalysisItem } from "./gapAnalysisItem";
@@ -20,4 +21,10 @@ export interface Deliverables {
   actionPlan: ActionItem[];
   entryPoint: EntryPointRecommendation;
   npv: NpvResult;
+  /** Per-deliverable attribution for any key whose status is `locked`.
+Populated from the latest finalized version row. Keys that are
+not locked are omitted. Used by the result pages to render a
+"Locked by {name} on {date}" badge.
+ */
+  lockMetadata?: DeliverablesLockMetadata;
 }

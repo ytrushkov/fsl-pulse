@@ -15,6 +15,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { LockBadge } from "@/components/deliverables/lock-badge";
 import { Calculator, Save } from "lucide-react";
 
 /**
@@ -127,7 +128,10 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
           <h2 className="text-2xl font-bold text-foreground">Business Case (NPV)</h2>
           <p className="text-muted-foreground">Financial modeling for agentic transformation.</p>
         </div>
-        <DeliverableToolbar engagementId={engagementId} deliverableKey="npv" status={deliverables.statuses.npv} hideRegenerate />
+        <div className="flex items-center gap-3">
+          <LockBadge meta={deliverables.lockMetadata?.npv} />
+          <DeliverableToolbar engagementId={engagementId} deliverableKey="npv" status={deliverables.statuses.npv} hideRegenerate />
+        </div>
       </div>
 
       <div className="grid md:grid-cols-3 gap-6 mb-8">

@@ -45,6 +45,9 @@ interface DimensionAggregate {
   rationale: string;
   signalsBySource: { system: number; survey: number; interview: number; artifact: number };
   overrideJustification: string | null;
+  overrideAuthorName: string | null;
+  overrideAuthorEmail: string | null;
+  overrideAt: string | null;
 }
 
 const SIGNAL_WEIGHTS = {
@@ -250,10 +253,16 @@ async function computeWithRubric(
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0];
     let stage = Math.round(combined);
     let overrideJustification: string | null = null;
+    let overrideAuthorName: string | null = null;
+    let overrideAuthorEmail: string | null = null;
+    let overrideAt: string | null = null;
     if (override) {
       stage = clamp(Math.round(override.stage), 1, 5);
       combined = clamp(override.score ?? override.stage, 1, 5);
       overrideJustification = override.justification;
+      overrideAuthorName = override.actorName ?? null;
+      overrideAuthorEmail = override.actorEmail ?? null;
+      overrideAt = override.createdAt.toISOString();
     }
 
     // Confidence based on evidence count + survey count
@@ -278,6 +287,9 @@ async function computeWithRubric(
       rationale,
       signalsBySource,
       overrideJustification,
+      overrideAuthorName,
+      overrideAuthorEmail,
+      overrideAt,
     });
   }
 
@@ -319,6 +331,9 @@ async function computeWithRubric(
       evidenceIds: a.evidenceIds,
       rationale: a.rationale,
       overrideJustification: a.overrideJustification,
+      overrideAuthorName: a.overrideAuthorName,
+      overrideAuthorEmail: a.overrideAuthorEmail,
+      overrideAt: a.overrideAt,
       signalsBySource: a.signalsBySource,
     })),
     overall: {

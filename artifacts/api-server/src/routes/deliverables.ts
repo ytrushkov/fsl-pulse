@@ -6,6 +6,7 @@ import {
   deliverableVersionsTable,
   scoringTable,
   evidenceTable,
+  usersTable,
 } from "@workspace/db";
 import { paramId } from "../lib/util";
 import { draftDeliverablesAi } from "../lib/ai-deliverables";
@@ -39,6 +40,64 @@ function shape(d: typeof deliverablesTable.$inferSelect) {
     entryPoint: d.entryPoint,
     npv: d.npv,
   };
+}
+
+interface LockEntry {
+  lockedByName: string | null;
+  lockedByEmail: string | null;
+  lockedAt: string;
+  version: number;
+}
+
+/**
+ * Per-locked-key attribution. For every deliverable currently in `locked`
+ * status, look up the most recent finalized version row and resolve the
+ * author's display name from the users table (via authorEmail). Used by
+ * the result pages to render a "Locked by {name}" badge so reviewers can
+ * see who finalized each deliverable.
+ */
+async function buildLockMetadata(
+  d: typeof deliverablesTable.$inferSelect,
+): Promise<Record<string, LockEntry>> {
+  const statuses = (d.statuses ?? {}) as Record<string, string>;
+  const lockedKeys = VERSIONED_KEYS.filter((k) => statuses[k] === "locked");
+  if (lockedKeys.length === 0) return {};
+  const out: Record<string, LockEntry> = {};
+  for (const key of lockedKeys) {
+    const [latest] = await db
+      .select({
+        version: deliverableVersionsTable.version,
+        authorEmail: deliverableVersionsTable.authorEmail,
+        createdAt: deliverableVersionsTable.createdAt,
+      })
+      .from(deliverableVersionsTable)
+      .where(
+        and(
+          eq(deliverableVersionsTable.engagementId, d.engagementId),
+          eq(deliverableVersionsTable.deliverableKey, key),
+          eq(deliverableVersionsTable.finalized, true),
+        ),
+      )
+      .orderBy(desc(deliverableVersionsTable.version))
+      .limit(1);
+    if (!latest) continue;
+    let lockedByName: string | null = null;
+    if (latest.authorEmail) {
+      const [u] = await db
+        .select({ name: usersTable.name })
+        .from(usersTable)
+        .where(eq(usersTable.email, latest.authorEmail))
+        .limit(1);
+      lockedByName = u?.name ?? null;
+    }
+    out[key] = {
+      lockedByName,
+      lockedByEmail: latest.authorEmail ?? null,
+      lockedAt: latest.createdAt.toISOString(),
+      version: latest.version,
+    };
+  }
+  return out;
 }
 
 async function snapshotVersion(
@@ -85,7 +144,7 @@ router.get("/engagements/:id/deliverables", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.json(shape(d));
+  res.json({ ...shape(d), lockMetadata: await buildLockMetadata(d) });
 });
 
 router.patch("/engagements/:id/deliverables", async (req, res): Promise<void> => {
@@ -172,7 +231,7 @@ router.patch("/engagements/:id/deliverables", async (req, res): Promise<void> =>
       payload: { changedFields: Object.keys(set) },
     });
   }
-  res.json(shape(d));
+  res.json({ ...shape(d), lockMetadata: await buildLockMetadata(d) });
 });
 
 router.post("/engagements/:id/deliverables/draft", async (req, res): Promise<void> => {
@@ -256,7 +315,7 @@ router.post("/engagements/:id/deliverables/draft", async (req, res): Promise<voi
       lockedSkipped: VERSIONED_KEYS.filter(isLocked),
     },
   });
-  res.json(shape(d));
+  res.json({ ...shape(d), lockMetadata: await buildLockMetadata(d) });
 });
 
 // ─── Versions ────────────────────────────────────────────────────────────
@@ -343,7 +402,7 @@ router.post(
       message: `Reverted ${key} to version ${target.version} (now v${newVersion})`,
       payload: { key, fromVersion: target.version, newVersion },
     });
-    res.json(shape(d));
+    res.json({ ...shape(d), lockMetadata: await buildLockMetadata(d) });
   },
 );
 

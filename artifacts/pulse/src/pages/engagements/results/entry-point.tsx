@@ -9,6 +9,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
+import { LockBadge } from "@/components/deliverables/lock-badge";
 import { RichTextEditor } from "@/components/deliverables/rich-text-editor";
 
 interface ViewProps {
@@ -52,7 +53,10 @@ export default function EntryPointView({ engagementId, deliverables }: ViewProps
           <h2 className="text-2xl font-bold text-foreground">Recommended Entry Point</h2>
           <p className="text-muted-foreground">Where to start implementing AI agents in the SDLC.</p>
         </div>
-        <DeliverableToolbar engagementId={engagementId} deliverableKey="entryPoint" status={deliverables.statuses.entryPoint} />
+        <div className="flex items-center gap-3">
+          <LockBadge meta={deliverables.lockMetadata?.entryPoint} />
+          <DeliverableToolbar engagementId={engagementId} deliverableKey="entryPoint" status={deliverables.statuses.entryPoint} />
+        </div>
       </div>
 
       <div className="relative mb-16 px-4">

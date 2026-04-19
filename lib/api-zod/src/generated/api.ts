@@ -1201,6 +1201,9 @@ export const GetScoringResponse = zod.object({
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
       overrideJustification: zod.string().nullish(),
+      overrideAuthorName: zod.string().nullish(),
+      overrideAuthorEmail: zod.string().nullish(),
+      overrideAt: zod.string().nullish(),
       signalsBySource: zod
         .object({
           system: zod.number().optional(),
@@ -1248,6 +1251,9 @@ export const ComputeScoringResponse = zod.object({
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
       overrideJustification: zod.string().nullish(),
+      overrideAuthorName: zod.string().nullish(),
+      overrideAuthorEmail: zod.string().nullish(),
+      overrideAt: zod.string().nullish(),
       signalsBySource: zod
         .object({
           system: zod.number().optional(),
@@ -1302,6 +1308,9 @@ export const PreviewScoringResponse = zod.object({
         evidenceIds: zod.array(zod.string()),
         rationale: zod.string(),
         overrideJustification: zod.string().nullish(),
+        overrideAuthorName: zod.string().nullish(),
+        overrideAuthorEmail: zod.string().nullish(),
+        overrideAt: zod.string().nullish(),
         signalsBySource: zod
           .object({
             system: zod.number().optional(),
@@ -1343,6 +1352,9 @@ export const PreviewScoringResponse = zod.object({
           evidenceIds: zod.array(zod.string()),
           rationale: zod.string(),
           overrideJustification: zod.string().nullish(),
+          overrideAuthorName: zod.string().nullish(),
+          overrideAuthorEmail: zod.string().nullish(),
+          overrideAt: zod.string().nullish(),
           signalsBySource: zod
             .object({
               system: zod.number().optional(),
@@ -1396,6 +1408,9 @@ export const UpgradeScoringRubricResponse = zod.object({
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
       overrideJustification: zod.string().nullish(),
+      overrideAuthorName: zod.string().nullish(),
+      overrideAuthorEmail: zod.string().nullish(),
+      overrideAt: zod.string().nullish(),
       signalsBySource: zod
         .object({
           system: zod.number().optional(),
@@ -1701,6 +1716,9 @@ export const OverrideDimensionScoreResponse = zod.object({
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
       overrideJustification: zod.string().nullish(),
+      overrideAuthorName: zod.string().nullish(),
+      overrideAuthorEmail: zod.string().nullish(),
+      overrideAt: zod.string().nullish(),
       signalsBySource: zod
         .object({
           system: zod.number().optional(),
@@ -1835,6 +1853,20 @@ export const GetDeliverablesResponse = zod.object({
       }),
     ),
   }),
+  lockMetadata: zod
+    .record(
+      zod.string(),
+      zod.object({
+        lockedByName: zod.string().nullish(),
+        lockedByEmail: zod.string().nullish(),
+        lockedAt: zod.string(),
+        version: zod.number().optional(),
+      }),
+    )
+    .optional()
+    .describe(
+      'Per-deliverable attribution for any key whose status is `locked`.\nPopulated from the latest finalized version row. Keys that are\nnot locked are omitted. Used by the result pages to render a\n\"Locked by {name} on {date}\" badge.\n',
+    ),
 });
 
 export const UpdateDeliverablesParams = zod.object({
@@ -2084,6 +2116,20 @@ export const UpdateDeliverablesResponse = zod.object({
       }),
     ),
   }),
+  lockMetadata: zod
+    .record(
+      zod.string(),
+      zod.object({
+        lockedByName: zod.string().nullish(),
+        lockedByEmail: zod.string().nullish(),
+        lockedAt: zod.string(),
+        version: zod.number().optional(),
+      }),
+    )
+    .optional()
+    .describe(
+      'Per-deliverable attribution for any key whose status is `locked`.\nPopulated from the latest finalized version row. Keys that are\nnot locked are omitted. Used by the result pages to render a\n\"Locked by {name} on {date}\" badge.\n',
+    ),
 });
 
 export const DraftDeliverablesParams = zod.object({
@@ -2202,6 +2248,20 @@ export const DraftDeliverablesResponse = zod.object({
       }),
     ),
   }),
+  lockMetadata: zod
+    .record(
+      zod.string(),
+      zod.object({
+        lockedByName: zod.string().nullish(),
+        lockedByEmail: zod.string().nullish(),
+        lockedAt: zod.string(),
+        version: zod.number().optional(),
+      }),
+    )
+    .optional()
+    .describe(
+      'Per-deliverable attribution for any key whose status is `locked`.\nPopulated from the latest finalized version row. Keys that are\nnot locked are omitted. Used by the result pages to render a\n\"Locked by {name} on {date}\" badge.\n',
+    ),
 });
 
 export const ListDeliverableVersionsParams = zod.object({
@@ -2348,6 +2408,20 @@ export const RevertDeliverableResponse = zod.object({
       }),
     ),
   }),
+  lockMetadata: zod
+    .record(
+      zod.string(),
+      zod.object({
+        lockedByName: zod.string().nullish(),
+        lockedByEmail: zod.string().nullish(),
+        lockedAt: zod.string(),
+        version: zod.number().optional(),
+      }),
+    )
+    .optional()
+    .describe(
+      'Per-deliverable attribution for any key whose status is `locked`.\nPopulated from the latest finalized version row. Keys that are\nnot locked are omitted. Used by the result pages to render a\n\"Locked by {name} on {date}\" badge.\n',
+    ),
 });
 
 export const FinalizeDeliverableParams = zod.object({

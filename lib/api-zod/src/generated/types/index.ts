@@ -41,6 +41,7 @@ export * from "./createSurveyInvitesInput";
 export * from "./createSurveyInvitesInputInvitesItem";
 export * from "./deliverableKey";
 export * from "./deliverables";
+export * from "./deliverablesLockMetadata";
 export * from "./deliverablesStatuses";
 export * from "./deliverableStatus";
 export * from "./deliverableVersion";
