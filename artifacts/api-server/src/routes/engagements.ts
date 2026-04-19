@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, and, or, inArray, gte, lte, sql } from "drizzle-orm";
+import { eq, desc, and, or, inArray, gte, lte, sql, isNull } from "drizzle-orm";
 import {
   db,
   engagementsTable,
@@ -616,6 +616,162 @@ router.post(
     });
   },
 );
+
+/**
+ * Helper: confirm the authed user has the global `admin` role on the
+ * usersTable. Mirrors the gate used by the activity CSV export so we have a
+ * single, consistent definition of "platform admin" for orphan management.
+ */
+async function authedUserIsAdmin(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ role: usersTable.role })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId))
+    .limit(1);
+  return row?.role === "admin";
+}
+
+/**
+ * List engagements that have zero member rows. These are typically pre-auth
+ * demo engagements (e.g. the Acme Corp seed) that became invisible when the
+ * member-based authz model landed. Admin-only.
+ */
+router.get("/admin/orphan-engagements", async (req, res): Promise<void> => {
+  const user = req.authedUser!;
+  if (!(await authedUserIsAdmin(user.id))) {
+    res.status(403).json({ error: "Admin role required" });
+    return;
+  }
+  const rows = await db
+    .select({
+      id: engagementsTable.id,
+      clientName: engagementsTable.clientName,
+      sponsor: engagementsTable.sponsor,
+      teamCount: engagementsTable.teamCount,
+      scope: engagementsTable.scope,
+      industry: engagementsTable.industry,
+      teams: engagementsTable.teams,
+      kickoffDate: engagementsTable.kickoffDate,
+      targetDeliveryDate: engagementsTable.targetDeliveryDate,
+      status: engagementsTable.status,
+      modules: engagementsTable.modules,
+      createdAt: engagementsTable.createdAt,
+      updatedAt: engagementsTable.updatedAt,
+    })
+    .from(engagementsTable)
+    .leftJoin(
+      engagementMembersTable,
+      eq(engagementMembersTable.engagementId, engagementsTable.id),
+    )
+    .where(isNull(engagementMembersTable.id))
+    .orderBy(desc(engagementsTable.createdAt));
+  res.json(rows);
+});
+
+/**
+ * Adopt an orphaned engagement by inserting the caller as `owner`. We
+ * re-check that the engagement still has zero members inside the same
+ * transaction-shaped read+write so two admins racing to claim cannot both
+ * succeed. Admin-only.
+ */
+router.post("/admin/engagements/:id/claim", async (req, res): Promise<void> => {
+  const user = req.authedUser!;
+  if (!(await authedUserIsAdmin(user.id))) {
+    res.status(403).json({ error: "Admin role required" });
+    return;
+  }
+  const id = paramId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const [eng] = await db
+    .select()
+    .from(engagementsTable)
+    .where(eq(engagementsTable.id, id));
+  if (!eng) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  // Race-safe claim: a single INSERT ... SELECT WHERE NOT EXISTS ensures two
+  // admins clicking Claim at the same moment cannot both win — only the
+  // first commit lands a row, the second sees zero rows affected.
+  const inserted = await db.execute(sql`
+    insert into ${engagementMembersTable}
+      (engagement_id, user_id, email, role, invited_by)
+    select ${id}::uuid, ${user.id}::uuid, ${user.email}, 'owner', ${user.id}::uuid
+    where not exists (
+      select 1 from ${engagementMembersTable}
+      where engagement_id = ${id}::uuid
+    )
+    returning id
+  `);
+  const claimed = (inserted as { rows?: unknown[] }).rows?.length ?? 0;
+  if (claimed === 0) {
+    res
+      .status(409)
+      .json({ error: "Engagement already has members; nothing to claim" });
+    return;
+  }
+  await recordActivity(req, {
+    engagementId: id,
+    kind: "member_added",
+    severity: "critical",
+    message: `Claimed orphaned engagement as owner (${user.email})`,
+    payload: { email: user.email, role: "owner", claimed: true },
+  });
+  res.json(eng);
+});
+
+/**
+ * Hard-delete an orphaned engagement. We require the engagement to have zero
+ * members so this endpoint can only be used for cleanup of stranded data —
+ * never as a back-door to delete engagements that real users own. Admin-only.
+ *
+ * Cascading FKs on the related tables (surveys, deliverables, activity, …)
+ * clean up child rows when the engagement row goes away.
+ */
+router.delete("/admin/engagements/:id", async (req, res): Promise<void> => {
+  const user = req.authedUser!;
+  if (!(await authedUserIsAdmin(user.id))) {
+    res.status(403).json({ error: "Admin role required" });
+    return;
+  }
+  const id = paramId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  // Race-safe delete: single DELETE ... WHERE NOT EXISTS so that if a member
+  // is added between our check and our write, the delete simply matches no
+  // rows and we return 409. We then disambiguate "not found" vs "has members"
+  // with a follow-up existence check on the engagement.
+  const deleted = await db.execute(sql`
+    delete from ${engagementsTable}
+    where id = ${id}::uuid
+      and not exists (
+        select 1 from ${engagementMembersTable}
+        where engagement_id = ${id}::uuid
+      )
+    returning id
+  `);
+  const removed = (deleted as { rows?: unknown[] }).rows?.length ?? 0;
+  if (removed === 0) {
+    const [stillThere] = await db
+      .select({ id: engagementsTable.id })
+      .from(engagementsTable)
+      .where(eq(engagementsTable.id, id));
+    if (!stillThere) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res
+      .status(409)
+      .json({ error: "Refusing to delete an engagement that has members" });
+    return;
+  }
+  res.sendStatus(204);
+});
 
 router.delete(
   "/engagements/:id/members/:memberId",

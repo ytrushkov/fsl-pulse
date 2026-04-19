@@ -456,6 +456,247 @@ export const useRemoveEngagementMember = <
   return useMutation(getRemoveEngagementMemberMutationOptions(options));
 };
 
+/**
+ * List engagements that have zero member rows. Admin-only. Used to
+rescue pre-auth demo engagements that would otherwise be invisible
+to every signed-in user.
+
+ */
+export const getListOrphanEngagementsUrl = () => {
+  return `/api/admin/orphan-engagements`;
+};
+
+export const listOrphanEngagements = async (
+  options?: RequestInit,
+): Promise<Engagement[]> => {
+  return customFetch<Engagement[]>(getListOrphanEngagementsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListOrphanEngagementsQueryKey = () => {
+  return [`/api/admin/orphan-engagements`] as const;
+};
+
+export const getListOrphanEngagementsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOrphanEngagements>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listOrphanEngagements>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListOrphanEngagementsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listOrphanEngagements>>
+  > = ({ signal }) => listOrphanEngagements({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOrphanEngagements>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListOrphanEngagementsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOrphanEngagements>>
+>;
+export type ListOrphanEngagementsQueryError = ErrorType<unknown>;
+
+export function useListOrphanEngagements<
+  TData = Awaited<ReturnType<typeof listOrphanEngagements>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listOrphanEngagements>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListOrphanEngagementsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Adopt an orphaned engagement (no member rows) by adding the caller
+as its owner. Admin-only. Returns 409 if the engagement already has
+members.
+
+ */
+export const getClaimOrphanEngagementUrl = (id: string) => {
+  return `/api/admin/engagements/${id}/claim`;
+};
+
+export const claimOrphanEngagement = async (
+  id: string,
+  options?: RequestInit,
+): Promise<Engagement> => {
+  return customFetch<Engagement>(getClaimOrphanEngagementUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getClaimOrphanEngagementMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof claimOrphanEngagement>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof claimOrphanEngagement>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["claimOrphanEngagement"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof claimOrphanEngagement>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return claimOrphanEngagement(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClaimOrphanEngagementMutationResult = NonNullable<
+  Awaited<ReturnType<typeof claimOrphanEngagement>>
+>;
+
+export type ClaimOrphanEngagementMutationError = ErrorType<unknown>;
+
+export const useClaimOrphanEngagement = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof claimOrphanEngagement>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof claimOrphanEngagement>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getClaimOrphanEngagementMutationOptions(options));
+};
+
+/**
+ * Hard-delete an orphaned engagement (no member rows). Admin-only.
+Returns 409 if the engagement has any members.
+
+ */
+export const getDeleteOrphanEngagementUrl = (id: string) => {
+  return `/api/admin/engagements/${id}`;
+};
+
+export const deleteOrphanEngagement = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteOrphanEngagementUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteOrphanEngagementMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteOrphanEngagement>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteOrphanEngagement>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteOrphanEngagement"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteOrphanEngagement>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteOrphanEngagement(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteOrphanEngagementMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteOrphanEngagement>>
+>;
+
+export type DeleteOrphanEngagementMutationError = ErrorType<unknown>;
+
+export const useDeleteOrphanEngagement = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteOrphanEngagement>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteOrphanEngagement>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteOrphanEngagementMutationOptions(options));
+};
+
 export const getListEngagementsUrl = () => {
   return `/api/engagements`;
 };

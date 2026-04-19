@@ -87,6 +87,53 @@ paths:
         "204":
           description: Removed
 
+  /admin/orphan-engagements:
+    get:
+      operationId: listOrphanEngagements
+      tags: [engagements]
+      description: |
+        List engagements that have zero member rows. Admin-only. Used to
+        rescue pre-auth demo engagements that would otherwise be invisible
+        to every signed-in user.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Engagement" }
+
+  /admin/engagements/{id}/claim:
+    post:
+      operationId: claimOrphanEngagement
+      tags: [engagements]
+      description: |
+        Adopt an orphaned engagement (no member rows) by adding the caller
+        as its owner. Admin-only. Returns 409 if the engagement already has
+        members.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Claimed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Engagement" }
+
+  /admin/engagements/{id}:
+    delete:
+      operationId: deleteOrphanEngagement
+      tags: [engagements]
+      description: |
+        Hard-delete an orphaned engagement (no member rows). Admin-only.
+        Returns 409 if the engagement has any members.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Deleted
+
   /engagements:
     get:
       operationId: listEngagements

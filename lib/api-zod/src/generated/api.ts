@@ -57,6 +57,84 @@ export const RemoveEngagementMemberParams = zod.object({
   memberId: zod.coerce.string(),
 });
 
+/**
+ * List engagements that have zero member rows. Admin-only. Used to
+rescue pre-auth demo engagements that would otherwise be invisible
+to every signed-in user.
+
+ */
+export const ListOrphanEngagementsResponseItem = zod.object({
+  id: zod.string(),
+  clientName: zod.string(),
+  sponsor: zod.string(),
+  teamCount: zod.number(),
+  scope: zod.string().optional(),
+  industry: zod.string().nullish(),
+  teams: zod.array(zod.string()).optional(),
+  kickoffDate: zod.string().nullish(),
+  targetDeliveryDate: zod.string().nullish(),
+  status: zod.enum([
+    "draft",
+    "active",
+    "collecting",
+    "ready_for_analysis",
+    "exported",
+    "archived",
+  ]),
+  modules: zod
+    .array(zod.enum(["security", "data", "platform", "design"]))
+    .optional(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+export const ListOrphanEngagementsResponse = zod.array(
+  ListOrphanEngagementsResponseItem,
+);
+
+/**
+ * Adopt an orphaned engagement (no member rows) by adding the caller
+as its owner. Admin-only. Returns 409 if the engagement already has
+members.
+
+ */
+export const ClaimOrphanEngagementParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const ClaimOrphanEngagementResponse = zod.object({
+  id: zod.string(),
+  clientName: zod.string(),
+  sponsor: zod.string(),
+  teamCount: zod.number(),
+  scope: zod.string().optional(),
+  industry: zod.string().nullish(),
+  teams: zod.array(zod.string()).optional(),
+  kickoffDate: zod.string().nullish(),
+  targetDeliveryDate: zod.string().nullish(),
+  status: zod.enum([
+    "draft",
+    "active",
+    "collecting",
+    "ready_for_analysis",
+    "exported",
+    "archived",
+  ]),
+  modules: zod
+    .array(zod.enum(["security", "data", "platform", "design"]))
+    .optional(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * Hard-delete an orphaned engagement (no member rows). Admin-only.
+Returns 409 if the engagement has any members.
+
+ */
+export const DeleteOrphanEngagementParams = zod.object({
+  id: zod.coerce.string(),
+});
+
 export const ListEngagementsResponseItem = zod.object({
   id: zod.string(),
   clientName: zod.string(),
