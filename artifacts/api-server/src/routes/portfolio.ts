@@ -30,7 +30,7 @@ const router: IRouter = Router();
  * cell level (industry × size × dimension) before writing any number.
  */
 
-const ANONYMITY_FLOOR = 5;
+export const ANONYMITY_FLOOR = 5;
 
 // Stall heuristics — calibrated from the PRD ("survey completion below
 // threshold", "no connector ran in N days", "no deliverable finalized
@@ -43,7 +43,7 @@ const STALL_NO_FINALIZE_DAYS = 28;
 const SIZE_SMALL_MAX = 5;
 const SIZE_MEDIUM_MAX = 25;
 
-const DIMENSIONS = [
+export const DIMENSIONS = [
   "tooling",
   "measurement",
   "process",
@@ -51,7 +51,7 @@ const DIMENSIONS = [
   "governance",
   "culture",
 ] as const;
-type Dim = (typeof DIMENSIONS)[number];
+export type Dim = (typeof DIMENSIONS)[number];
 
 type SizeBand = "small" | "medium" | "large";
 function bandFor(teamCount: number): SizeBand {
@@ -64,6 +64,134 @@ interface DimensionScoreRow {
   dimension: Dim;
   score: number;
   stage: number;
+}
+
+/**
+ * RFC4180-ish CSV cell escaping with formula-injection guard. If a value
+ * begins with one of `=`, `+`, `-`, `@`, tab, or carriage return, prefix
+ * it with a single quote so spreadsheet apps treat it as text instead of
+ * evaluating it as a formula. Then wrap in quotes and double internal
+ * quotes per RFC 4180. Exported for direct unit testing.
+ */
+export function escapeCsvCell(v: unknown): string {
+  let s = String(v ?? "");
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Pure heatmap aggregation: collapses dimension scores across the supplied
+ * scoring rows and returns one cell per known dimension. Dimensions whose
+ * sample size is below `floor` are reported as suppressed with null means
+ * so callers can render "n/a" without leaking a single client's data.
+ */
+export function computeHeatmapCells(
+  scorings: Array<{ byDimension: unknown }>,
+  floor: number = ANONYMITY_FLOOR,
+): Array<{
+  dimension: Dim;
+  meanScore: number | null;
+  meanStage: number | null;
+  count: number;
+  suppressed: boolean;
+}> {
+  const sums = new Map<Dim, { score: number; stage: number; count: number }>();
+  for (const dim of DIMENSIONS) {
+    sums.set(dim, { score: 0, stage: 0, count: 0 });
+  }
+  for (const s of scorings) {
+    const rows = (s.byDimension ?? []) as DimensionScoreRow[];
+    for (const r of rows) {
+      const acc = sums.get(r.dimension as Dim);
+      if (!acc) continue;
+      if (typeof r.score === "number") acc.score += r.score;
+      if (typeof r.stage === "number") acc.stage += r.stage;
+      acc.count += 1;
+    }
+  }
+  return DIMENSIONS.map((dim) => {
+    const acc = sums.get(dim)!;
+    const suppressed = acc.count < floor;
+    return {
+      dimension: dim,
+      meanScore:
+        suppressed || acc.count === 0 ? null : acc.score / acc.count,
+      meanStage:
+        suppressed || acc.count === 0 ? null : acc.stage / acc.count,
+      count: acc.count,
+      suppressed,
+    };
+  });
+}
+
+/**
+ * Pure benchmark-CSV builder: groups by (industry, size, dimension) and
+ * emits one CSV row per bucket, replacing the numeric columns with the
+ * literal token "SUPPRESSED" whenever the cell's sample size is below
+ * `floor`. Industry and sizeBand labels are passed through `escapeCsvCell`,
+ * so any user-controlled industry text that begins with a formula char
+ * (e.g. `"=cmd"`) is neutralised before it reaches a spreadsheet.
+ */
+export function buildBenchmarkCsv(
+  engagements: Array<{
+    id: string;
+    industry: string | null;
+    teamCount: number;
+  }>,
+  scorings: Array<{ engagementId: string; byDimension: unknown }>,
+  floor: number = ANONYMITY_FLOOR,
+): { csv: string; emittedCells: number; suppressedCells: number } {
+  const engById = new Map(engagements.map((e) => [e.id, e]));
+  type Cell = { score: number; stage: number; count: number };
+  const buckets = new Map<string, Cell>(); // key = industry|size|dimension
+  for (const s of scorings) {
+    const eng = engById.get(s.engagementId);
+    if (!eng) continue;
+    const industry = eng.industry?.trim() || "(unspecified)";
+    const size = bandFor(eng.teamCount);
+    const rows = (s.byDimension ?? []) as DimensionScoreRow[];
+    for (const r of rows) {
+      if (!DIMENSIONS.includes(r.dimension as Dim)) continue;
+      const key = `${industry}|${size}|${r.dimension}`;
+      const acc = buckets.get(key) ?? { score: 0, stage: 0, count: 0 };
+      if (typeof r.score === "number") acc.score += r.score;
+      if (typeof r.stage === "number") acc.stage += r.stage;
+      acc.count += 1;
+      buckets.set(key, acc);
+    }
+  }
+  const header = [
+    "industry",
+    "sizeBand",
+    "dimension",
+    "engagementCount",
+    "meanScore",
+    "meanStage",
+  ];
+  const lines = [header.map(escapeCsvCell).join(",")];
+  let suppressedCells = 0;
+  let emittedCells = 0;
+  const keys = Array.from(buckets.keys()).sort();
+  for (const key of keys) {
+    const acc = buckets.get(key)!;
+    const [industry, size, dimension] = key.split("|");
+    const suppressed = acc.count < floor;
+    if (suppressed) suppressedCells += 1;
+    else emittedCells += 1;
+    lines.push(
+      [
+        industry,
+        size,
+        dimension,
+        acc.count,
+        suppressed ? "SUPPRESSED" : (acc.score / acc.count).toFixed(3),
+        suppressed ? "SUPPRESSED" : (acc.stage / acc.count).toFixed(3),
+      ]
+        .map(escapeCsvCell)
+        .join(","),
+    );
+  }
+  return { csv: lines.join("\n") + "\n", emittedCells, suppressedCells };
 }
 
 interface OverallShape {
@@ -353,38 +481,11 @@ router.get("/portfolio/heatmap", requireAuth, async (req, res): Promise<void> =>
   const filteredIds = new Set(filtered.map((e) => e.id));
   const inScopeScorings = scorings.filter((s) => filteredIds.has(s.engagementId));
 
-  const sums = new Map<Dim, { score: number; stage: number; count: number }>();
-  for (const dim of DIMENSIONS) {
-    sums.set(dim, { score: 0, stage: 0, count: 0 });
-  }
-  for (const s of inScopeScorings) {
-    const rows = (s.byDimension ?? []) as DimensionScoreRow[];
-    for (const r of rows) {
-      const acc = sums.get(r.dimension as Dim);
-      if (!acc) continue;
-      if (typeof r.score === "number") acc.score += r.score;
-      if (typeof r.stage === "number") acc.stage += r.stage;
-      acc.count += 1;
-    }
-  }
-
   // Apply the anonymity floor at the dimension level: if fewer than
   // ANONYMITY_FLOOR engagements contributed to this dimension's mean, we
   // suppress the score so a tiny portfolio slice can't be reverse-engineered
   // back to a single client.
-  const cells = DIMENSIONS.map((dim) => {
-    const acc = sums.get(dim)!;
-    const suppressed = acc.count < ANONYMITY_FLOOR;
-    return {
-      dimension: dim,
-      meanScore:
-        suppressed || acc.count === 0 ? null : acc.score / acc.count,
-      meanStage:
-        suppressed || acc.count === 0 ? null : acc.stage / acc.count,
-      count: acc.count,
-      suppressed,
-    };
-  });
+  const cells = computeHeatmapCells(inScopeScorings, ANONYMITY_FLOOR);
 
   res.json({
     cells,
@@ -452,67 +553,11 @@ router.get(
           .where(inArray(scoringTable.engagementId, engIds))
       : [];
 
-    const engById = new Map(engagements.map((e) => [e.id, e]));
-    type Cell = { score: number; stage: number; count: number };
-    const buckets = new Map<string, Cell>(); // key = industry|size|dimension
-
-    for (const s of scorings) {
-      const eng = engById.get(s.engagementId);
-      if (!eng) continue;
-      const industry = eng.industry?.trim() || "(unspecified)";
-      const size = bandFor(eng.teamCount);
-      const rows = (s.byDimension ?? []) as DimensionScoreRow[];
-      for (const r of rows) {
-        if (!DIMENSIONS.includes(r.dimension as Dim)) continue;
-        const key = `${industry}|${size}|${r.dimension}`;
-        const acc = buckets.get(key) ?? { score: 0, stage: 0, count: 0 };
-        if (typeof r.score === "number") acc.score += r.score;
-        if (typeof r.stage === "number") acc.stage += r.stage;
-        acc.count += 1;
-        buckets.set(key, acc);
-      }
-    }
-
-    // RFC4180-ish escaping with the same formula-injection guard used by
-    // /engagements/{id}/activity.csv.
-    const esc = (v: unknown): string => {
-      let s = String(v ?? "");
-      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-      return `"${s.replace(/"/g, '""')}"`;
-    };
-
-    const header = [
-      "industry",
-      "sizeBand",
-      "dimension",
-      "engagementCount",
-      "meanScore",
-      "meanStage",
-    ];
-    const lines = [header.map(esc).join(",")];
-    let suppressedCells = 0;
-    let emittedCells = 0;
-    // Iterate sorted keys so the CSV is deterministic across runs.
-    const keys = Array.from(buckets.keys()).sort();
-    for (const key of keys) {
-      const acc = buckets.get(key)!;
-      const [industry, size, dimension] = key.split("|");
-      const suppressed = acc.count < ANONYMITY_FLOOR;
-      if (suppressed) suppressedCells += 1;
-      else emittedCells += 1;
-      lines.push(
-        [
-          industry,
-          size,
-          dimension,
-          acc.count,
-          suppressed ? "SUPPRESSED" : (acc.score / acc.count).toFixed(3),
-          suppressed ? "SUPPRESSED" : (acc.stage / acc.count).toFixed(3),
-        ]
-          .map(esc)
-          .join(","),
-      );
-    }
+    const { csv, emittedCells, suppressedCells } = buildBenchmarkCsv(
+      engagements,
+      scorings,
+      ANONYMITY_FLOOR,
+    );
 
     // Audit the export so a compliance reviewer can see who pulled the
     // benchmark and which window they used. The download is the sensitive
@@ -548,7 +593,7 @@ router.get(
         "content-disposition",
         `attachment; filename="pulse-benchmark.csv"`,
       )
-      .send(lines.join("\n") + "\n");
+      .send(csv);
   },
 );
 
