@@ -9,6 +9,7 @@ import {
   useUpgradeScoringRubric,
   getGetScoringQueryKey,
   type Scoring,
+  type DimensionScore,
 } from "@workspace/api-client-react";
 import { DeltaTable } from "@/pages/rubrics";
 import { useQueryClient } from "@tanstack/react-query";
@@ -270,7 +271,7 @@ function DimensionRadar({ dimensions }: { dimensions: Array<{ dimension: string;
   );
 }
 
-function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: string, dimension: any, trigger: React.ReactNode }) {
+function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: string, dimension: DimensionScore, trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<number>(dimension.stage);
   const [score, setScore] = useState<number | "">(dimension.score);

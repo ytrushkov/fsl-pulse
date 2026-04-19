@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "wouter";
-import { 
-  useGetInterview, 
+import {
+  useGetInterview,
   useUpdateInterview,
   useListInterviewEvidence,
   useAddInterviewEvidence,
@@ -10,7 +10,8 @@ import {
   getGetInterviewQueryKey,
   getListInterviewEvidenceQueryKey,
   Dimension,
-  SignalType
+  SignalType,
+  type InterviewTagSuggestionsSuggestionsItem,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/app-layout";
@@ -195,16 +196,24 @@ export default function InterviewDetailView() {
   );
 }
 
-function AddEvidenceDialog({ interviewId, open, onOpenChange, initialText, onComplete }: any) {
-  const [dimension, setDimension] = useState<string>(Dimension.process);
-  const [signalType, setSignalType] = useState<string>(SignalType.gap);
+interface AddEvidenceDialogProps {
+  interviewId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialText: string;
+  onComplete: () => void;
+}
+
+function AddEvidenceDialog({ interviewId, open, onOpenChange, initialText, onComplete }: AddEvidenceDialogProps) {
+  const [dimension, setDimension] = useState<Dimension>(Dimension.process);
+  const [signalType, setSignalType] = useState<SignalType>(SignalType.gap);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const addEvidence = useAddInterviewEvidence();
 
   const handleAdd = () => {
     addEvidence.mutate(
-      { interviewId, data: { dimension: dimension as any, signalType: signalType as any, text: initialText } },
+      { interviewId, data: { dimension, signalType, text: initialText } },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListInterviewEvidenceQueryKey(interviewId) });
@@ -229,7 +238,7 @@ function AddEvidenceDialog({ interviewId, open, onOpenChange, initialText, onCom
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Dimension</label>
-              <Select value={dimension} onValueChange={setDimension}>
+              <Select value={dimension} onValueChange={(v) => setDimension(v as Dimension)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {Object.values(Dimension).map(d => <SelectItem key={d} value={d} className="capitalize">{d}</SelectItem>)}
@@ -238,7 +247,7 @@ function AddEvidenceDialog({ interviewId, open, onOpenChange, initialText, onCom
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Signal</label>
-              <Select value={signalType} onValueChange={setSignalType}>
+              <Select value={signalType} onValueChange={(v) => setSignalType(v as SignalType)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {Object.values(SignalType).map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
@@ -270,7 +279,7 @@ function AISuggestTagsButton({ interviewId, notes }: { interviewId: string, note
     });
   };
 
-  const handleAccept = (suggestion: any, index: number) => {
+  const handleAccept = (suggestion: InterviewTagSuggestionsSuggestionsItem, _index: number) => {
     addEvidence.mutate(
       { interviewId, data: { dimension: suggestion.dimension, signalType: suggestion.signalType, text: suggestion.text, stageHint: suggestion.stageHint } },
       {
@@ -298,7 +307,7 @@ function AISuggestTagsButton({ interviewId, notes }: { interviewId: string, note
             {!suggestTags.data?.suggestions.length ? (
               <p className="text-center text-muted-foreground py-8">No significant evidence found.</p>
             ) : (
-              suggestTags.data.suggestions.map((sug: any, i: number) => (
+              suggestTags.data.suggestions.map((sug, i) => (
                 <div key={i} className="border rounded-md p-4 bg-card shadow-sm">
                   <div className="mb-2 text-lg">"{sug.text}"</div>
                   <div className="flex items-center gap-2 mb-3">
