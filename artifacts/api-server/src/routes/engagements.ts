@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, and, or, inArray, gte, lte, sql, isNull } from "drizzle-orm";
+import { eq, desc, and, or, inArray, gte, lte, ne, sql, isNull } from "drizzle-orm";
 import {
   db,
   engagementsTable,
@@ -319,6 +319,16 @@ router.get(
  */
 function buildActivityWhere(engagementId: string, q: Record<string, unknown>) {
   const clauses = [eq(activityEventsTable.engagementId, engagementId)];
+  // Anonymity guard: per-submission anonymous survey events are written to
+  // the audit log for compliance but are never exposed in the assessor-facing
+  // timeline (or the admin CSV export, which is the same data). The single
+  // assessor-visible signal for survey activity is the
+  // `survey_team_anonymity_reached` milestone event emitted by survey.ts the
+  // moment a team crosses the 5-respondent floor. Suppressing here rather
+  // than gating per-team-count means a team that crosses the floor never
+  // backfills its prior per-submission rows into the feed — only the
+  // milestone appears.
+  clauses.push(ne(activityEventsTable.kind, "survey_response_submitted"));
   const kindRaw = typeof q.kind === "string" ? q.kind : undefined;
   if (kindRaw) {
     const kinds = kindRaw

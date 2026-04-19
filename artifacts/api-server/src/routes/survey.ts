@@ -1,5 +1,5 @@
-import { Router, type IRouter } from "express";
-import { eq, and } from "drizzle-orm";
+import { Router, type IRouter, type Request } from "express";
+import { eq, and, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
   db,
@@ -7,9 +7,11 @@ import {
   surveyInvitesTable,
   surveyResponsesTable,
   engagementsTable,
+  activityEventsTable,
 } from "@workspace/db";
 import { paramId, newToken, hashInviteToken } from "../lib/util";
 import { recordActivity, recordAnonymousActivity } from "../lib/audit";
+import { logger } from "../lib/logger";
 import { DEFAULT_SURVEY_QUESTIONS } from "../lib/survey-template";
 
 // Magic-link invite TTL. Configurable via env so ops can shorten for sensitive
@@ -563,6 +565,10 @@ router.post("/survey/respond/:token", async (req, res): Promise<void> => {
       partialAnswers: [],
     })
     .where(eq(surveyInvitesTable.id, inv.id));
+  // Per-submission audit row is always written (we need the trail for
+  // compliance), but the activity feed query suppresses it from the UI
+  // until the team has cleared the anonymity floor — see the activity
+  // handler in routes/engagements.ts.
   await recordAnonymousActivity(req, {
     engagementId: inv.engagementId,
     kind: "survey_response_submitted",
@@ -570,8 +576,89 @@ router.post("/survey/respond/:token", async (req, res): Promise<void> => {
     payload: { team: inv.team, inviteId: inv.id },
     actorLabel: `Respondent (${inv.team})`,
   });
+  // Record a one-time milestone event the moment the team crosses the
+  // anonymity floor. This is the only assessor-visible signal of survey
+  // activity — the per-submission rows above are kept for the audit trail
+  // but suppressed from the activity feed.
+  //
+  // Idempotency + race safety: two simultaneous submissions for the same
+  // team could both observe `count >= floor` and try to insert the
+  // milestone. We serialize per-(engagement, team) with a transactional
+  // advisory lock, then re-check the count and re-check that no milestone
+  // already exists before inserting. The lock auto-releases at COMMIT, so
+  // a request crashing mid-transaction can't deadlock future submissions.
+  // The check uses `>=` (not `==`) so a milestone that was missed by an
+  // earlier crash will still be recorded by the next submission instead of
+  // being silently skipped forever.
+  await maybeEmitTeamAnonymityMilestone(
+    req,
+    inv.engagementId,
+    inv.team,
+  );
   res.sendStatus(204);
 });
+
+async function maybeEmitTeamAnonymityMilestone(
+  req: Request,
+  engagementId: string,
+  team: string,
+): Promise<void> {
+  try {
+    await db.transaction(async (tx) => {
+      // hashtextextended takes (text, bigint) and returns a stable bigint
+      // suitable for pg_advisory_xact_lock. Combining engagementId and team
+      // into one string scopes contention to that pair only.
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`${engagementId}|${team}`}, 0))`,
+      );
+      const [{ n } = { n: 0 }] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(surveyResponsesTable)
+        .where(
+          and(
+            eq(surveyResponsesTable.engagementId, engagementId),
+            eq(surveyResponsesTable.team, team),
+          ),
+        );
+      if (n < ANONYMITY_FLOOR) return;
+      const existing = await tx
+        .select({ id: activityEventsTable.id })
+        .from(activityEventsTable)
+        .where(
+          and(
+            eq(activityEventsTable.engagementId, engagementId),
+            eq(activityEventsTable.kind, "survey_team_anonymity_reached"),
+            sql`${activityEventsTable.payload}->>'team' = ${team}`,
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) return;
+      await tx.insert(activityEventsTable).values({
+        engagementId,
+        actorUserId: null,
+        actorName: "system",
+        actorEmail: null,
+        kind: "survey_team_anonymity_reached",
+        message: `Team "${team}" reached the anonymity floor (${ANONYMITY_FLOOR} responses)`,
+        payload: { team, threshold: ANONYMITY_FLOOR },
+        severity: "info",
+        requestId:
+          typeof req.id === "string" || typeof req.id === "number"
+            ? String(req.id)
+            : null,
+      });
+    });
+  } catch (err) {
+    // Auditing must never break the user-facing submit path. If the
+    // milestone fails to write, the next submission for the same team
+    // will retry it (the count check is `>= floor`, not `== floor`).
+    // Log so silent failures are still detectable in ops dashboards.
+    logger.error(
+      { err, engagementId, team },
+      "Failed to record survey_team_anonymity_reached milestone",
+    );
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CSV parser for invite preview. Tolerant of header rows and stray
