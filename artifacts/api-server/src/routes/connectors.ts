@@ -16,7 +16,7 @@ import {
 } from "../lib/util";
 import { verifyConnector as verifyConnectorImpl } from "../lib/connectors";
 import { executeConnectorRun } from "../lib/connector-runner";
-import { requireResourceMember } from "../middlewares/auth";
+import { requireResourceMember, requireEngagementMember } from "../middlewares/auth";
 
 // Sane bounds for the per-engagement scheduler. 5 minutes is the floor so we
 // can't accidentally hammer a third-party API; 30 days is the ceiling so a
@@ -233,6 +233,51 @@ router.delete("/connectors/:connectorId", requireConnectorMember, async (req, re
   }
   res.sendStatus(204);
 });
+
+// Stateless verify used by the Add Connector wizard so the assessor can
+// confirm a fresh credential before persisting it. Nothing is written to the
+// DB by this route — the token is only forwarded to the provider's API.
+router.post(
+  "/engagements/:id/connectors/verify-config",
+  requireEngagementMember,
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const b = req.body ?? {};
+    const kind = typeof b.kind === "string" ? b.kind : "";
+    const provider = typeof b.provider === "string" ? b.provider : "";
+    const token = typeof b.token === "string" ? b.token : "";
+    const cfg = (b.config ?? {}) as Record<string, unknown>;
+    if (!kind || !provider) {
+      res.status(400).json({ error: "kind and provider required" });
+      return;
+    }
+    if (typeof cfg.baseUrl === "string" && cfg.baseUrl.length > 0) {
+      const ssrf = checkSafeUrl(cfg.baseUrl);
+      if (!ssrf.ok) {
+        res.status(400).json({ error: `Invalid base URL: ${ssrf.reason}` });
+        return;
+      }
+    }
+    // Audit: even an unsaved verify uses a real PAT against a real provider,
+    // so compliance still wants to see who tried what credential against what
+    // engagement. We do NOT log the token itself, only that one was supplied.
+    await recordActivity(req, {
+      engagementId: id,
+      kind: "connector_token_used",
+      severity: "critical",
+      message: `Token used to pre-verify ${kind}/${provider} (wizard)`,
+      payload: { op: "verify_config", kind, provider, hasToken: Boolean(token) },
+    });
+    const result = await verifyConnectorImpl(kind, provider, token, cfg, {
+      requestId: (req as typeof req & { id?: string }).id,
+    });
+    res.json(result);
+  },
+);
 
 router.post("/connectors/:connectorId/verify", requireConnectorMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.connectorId);

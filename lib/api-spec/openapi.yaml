@@ -375,6 +375,28 @@ paths:
         "204":
           description: Deleted
 
+  /engagements/{id}/connectors/verify-config:
+    post:
+      operationId: verifyConnectorConfig
+      tags: [connectors]
+      description: |
+        Stateless verify of an unsaved connector configuration. The wizard
+        calls this so the assessor can confirm credentials before saving.
+        Token and config are NOT persisted by this call.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerifyConnectorConfigInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectorVerifyResult" }
+
   /connectors/{connectorId}/verify:
     post:
       operationId: verifyConnector
@@ -1445,6 +1467,17 @@ components:
         kind: { $ref: "#/components/schemas/ConnectorKind" }
         provider: { type: string }
         label: { type: string }
+        token: { type: string }
+        config:
+          type: object
+          additionalProperties: true
+
+    VerifyConnectorConfigInput:
+      type: object
+      required: [kind, provider]
+      properties:
+        kind: { $ref: "#/components/schemas/ConnectorKind" }
+        provider: { type: string }
         token: { type: string }
         config:
           type: object

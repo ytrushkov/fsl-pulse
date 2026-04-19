@@ -384,6 +384,15 @@ export interface CreateConnectorInput {
   config?: CreateConnectorInputConfig;
 }
 
+export type VerifyConnectorConfigInputConfig = { [key: string]: unknown };
+
+export interface VerifyConnectorConfigInput {
+  kind: ConnectorKind;
+  provider: string;
+  token?: string;
+  config?: VerifyConnectorConfigInputConfig;
+}
+
 export type UpdateConnectorInputConfig = { [key: string]: unknown };
 
 export interface UpdateConnectorInput {

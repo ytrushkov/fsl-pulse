@@ -564,6 +564,29 @@ export const DeleteConnectorParams = zod.object({
   connectorId: zod.coerce.string(),
 });
 
+/**
+ * Stateless verify of an unsaved connector configuration. The wizard
+calls this so the assessor can confirm credentials before saving.
+Token and config are NOT persisted by this call.
+
+ */
+export const VerifyConnectorConfigParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const VerifyConnectorConfigBody = zod.object({
+  kind: zod.enum(["github", "gitlab", "jira", "linear", "cicd", "ai_tooling"]),
+  provider: zod.string(),
+  token: zod.string().optional(),
+  config: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+export const VerifyConnectorConfigResponse = zod.object({
+  ok: zod.boolean(),
+  message: zod.string().optional(),
+  details: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
 export const VerifyConnectorParams = zod.object({
   connectorId: zod.coerce.string(),
 });

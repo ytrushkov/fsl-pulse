@@ -72,6 +72,7 @@ import type {
   UpdateRubricDraftBody,
   UpdateSurveyInput,
   UpgradeScoringRubricBody,
+  VerifyConnectorConfigInput,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1916,6 +1917,94 @@ export const useDeleteConnector = <
   TContext
 > => {
   return useMutation(getDeleteConnectorMutationOptions(options));
+};
+
+/**
+ * Stateless verify of an unsaved connector configuration. The wizard
+calls this so the assessor can confirm credentials before saving.
+Token and config are NOT persisted by this call.
+
+ */
+export const getVerifyConnectorConfigUrl = (id: string) => {
+  return `/api/engagements/${id}/connectors/verify-config`;
+};
+
+export const verifyConnectorConfig = async (
+  id: string,
+  verifyConnectorConfigInput: VerifyConnectorConfigInput,
+  options?: RequestInit,
+): Promise<ConnectorVerifyResult> => {
+  return customFetch<ConnectorVerifyResult>(getVerifyConnectorConfigUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(verifyConnectorConfigInput),
+  });
+};
+
+export const getVerifyConnectorConfigMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof verifyConnectorConfig>>,
+    TError,
+    { id: string; data: BodyType<VerifyConnectorConfigInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof verifyConnectorConfig>>,
+  TError,
+  { id: string; data: BodyType<VerifyConnectorConfigInput> },
+  TContext
+> => {
+  const mutationKey = ["verifyConnectorConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof verifyConnectorConfig>>,
+    { id: string; data: BodyType<VerifyConnectorConfigInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return verifyConnectorConfig(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type VerifyConnectorConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof verifyConnectorConfig>>
+>;
+export type VerifyConnectorConfigMutationBody =
+  BodyType<VerifyConnectorConfigInput>;
+export type VerifyConnectorConfigMutationError = ErrorType<unknown>;
+
+export const useVerifyConnectorConfig = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof verifyConnectorConfig>>,
+    TError,
+    { id: string; data: BodyType<VerifyConnectorConfigInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof verifyConnectorConfig>>,
+  TError,
+  { id: string; data: BodyType<VerifyConnectorConfigInput> },
+  TContext
+> => {
+  return useMutation(getVerifyConnectorConfigMutationOptions(options));
 };
 
 export const getVerifyConnectorUrl = (connectorId: string) => {

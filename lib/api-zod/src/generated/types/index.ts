@@ -132,3 +132,5 @@ export * from "./updateInterviewInput";
 export * from "./updateInterviewInputStatus";
 export * from "./updateSurveyInput";
 export * from "./updateSurveyInputModulesItem";
+export * from "./verifyConnectorConfigInput";
+export * from "./verifyConnectorConfigInputConfig";
