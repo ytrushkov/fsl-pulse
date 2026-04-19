@@ -21,6 +21,78 @@ interface SignalsDrawerProps {
   onOpenChange: (open: boolean) => void;
 }
 
+// DORA metrics carried in `latestRun.summary` by the GitHub/GitLab/CI/Jira
+// runners. Each field is optional — a connector that can't measure a metric
+// (e.g. CircleCI cannot measure MTTR) leaves it `null` or absent and we
+// render it as "n/a".
+type DoraSummary = {
+  deploysPerDay?: number | null;
+  leadTimeHoursAvg?: number | null;
+  changeFailureRate?: number | null;
+  mttrHoursAvg?: number | null;
+};
+
+function formatHours(h: number | null | undefined): string {
+  if (h === null || h === undefined) return "n/a";
+  if (h < 1) return `${(h * 60).toFixed(0)}m`;
+  if (h < 48) return `${h.toFixed(1)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+}
+
+function DoraMetrics({ summary }: { summary: DoraSummary }) {
+  // Render the four DORA proxies only if at least one is present in the
+  // summary; otherwise this connector doesn't produce DORA-style signals
+  // and we hide the section to avoid confusing assessors.
+  const hasAny =
+    summary.deploysPerDay != null ||
+    summary.leadTimeHoursAvg != null ||
+    summary.changeFailureRate != null ||
+    "mttrHoursAvg" in summary;
+  if (!hasAny) return null;
+  const cells: Array<{ label: string; value: string; hint: string }> = [
+    {
+      label: "Deploy frequency",
+      value:
+        summary.deploysPerDay == null
+          ? "n/a"
+          : `${summary.deploysPerDay.toFixed(2)}/day`,
+      hint: "Successful CI runs per day (30d)",
+    },
+    {
+      label: "Lead time",
+      value: formatHours(summary.leadTimeHoursAvg),
+      hint: "Avg PR/MR open → merge",
+    },
+    {
+      label: "Change failure rate",
+      value:
+        summary.changeFailureRate == null
+          ? "n/a"
+          : `${(summary.changeFailureRate * 100).toFixed(1)}%`,
+      hint: "Failed runs ÷ total runs (30d)",
+    },
+    {
+      label: "MTTR",
+      value: formatHours(summary.mttrHoursAvg),
+      hint: "Avg incident-issue close − open",
+    },
+  ];
+  return (
+    <section>
+      <h3 className="text-sm font-semibold mb-2">DORA metrics</h3>
+      <div className="grid grid-cols-2 gap-2">
+        {cells.map((c) => (
+          <div key={c.label} className="rounded border p-3">
+            <div className="text-xs text-muted-foreground">{c.label}</div>
+            <div className="text-lg font-semibold tabular-nums">{c.value}</div>
+            <div className="text-xs text-muted-foreground">{c.hint}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function SignalsDrawer({
   connectorId,
   connectorLabel,
@@ -96,6 +168,11 @@ export function SignalsDrawer({
                   </p>
                 )}
               </section>
+              {data.latestRun?.summary ? (
+                <DoraMetrics
+                  summary={data.latestRun.summary as DoraSummary}
+                />
+              ) : null}
               <section>
                 <h3 className="text-sm font-semibold mb-2">
                   Evidence ({data.evidence.length})

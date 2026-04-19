@@ -218,20 +218,21 @@ async function runGithub(
     }
   }
 
-  // Deployment frequency (workflow runs / day, last 30 days) — proxy for
-  // DORA "deployment frequency" since CI runs are the closest universal
-  // signal we have without per-repo deploy-environment config.
-  const deploysPerDay = workflowRunsTotal / 30;
+  // Deployment frequency (successful workflow runs / day, last 30 days) —
+  // proxy for DORA "deployment frequency". Only successful runs count as
+  // deployments; failed runs feed change-failure-rate instead so the two
+  // metrics stay independent.
+  const deploysPerDay = workflowRunsSucceeded / 30;
   summary.workflowRuns30d = workflowRunsTotal;
   summary.workflowRunsSucceeded30d = workflowRunsSucceeded;
   summary.workflowRunsFailed30d = workflowRunsFailed;
   summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
-  if (workflowRunsTotal > 0) {
+  if (workflowRunsSucceeded > 0) {
     evidence.push({
       dimension: "process",
       signalType: deploysPerDay >= 1 ? "strength" : "gap",
       stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
-      text: `Deployment frequency proxy: ~${deploysPerDay.toFixed(2)} CI runs/day across sampled repos (30d).`,
+      text: `Deployment frequency: ~${deploysPerDay.toFixed(2)} successful CI runs/day across sampled repos (30d).`,
     });
   }
 
@@ -273,6 +274,76 @@ async function runGithub(
   }
   summary.prsSampled = prsSampled;
   summary.prsMerged = prsMerged;
+
+  // MTTR proxy — incident-labeled issues closed in the last 30 days. We
+  // search the org for issues with any of the common incident labels and
+  // approximate MTTR as closed_at − created_at. When no such issues exist
+  // we surface MTTR as "n/a" rather than fabricate a number.
+  let mttrSumMs = 0;
+  let mttrCount = 0;
+  try {
+    // GitHub search treats space-separated `label:` qualifiers as AND. To get
+    // "any of these incident labels" we issue one search per label and
+    // deduplicate by issue id. This keeps MTTR meaningful when an org tags
+    // incidents with only one of the conventional labels.
+    const incidentLabels = ["incident", "outage", "p0", "p1"];
+    const seen = new Set<number>();
+    const incidentItems: Array<{
+      id: number;
+      created_at: string;
+      closed_at: string | null;
+    }> = [];
+    for (const lbl of incidentLabels) {
+      try {
+        const q = encodeURIComponent(
+          `org:${org} is:issue is:closed closed:>=${since.slice(0, 10)} label:${lbl}`,
+        );
+        const sr = await ghFetch<{
+          items: Array<{ id: number; created_at: string; closed_at: string | null }>;
+        }>(token, `https://api.github.com/search/issues?q=${q}&per_page=50`);
+        for (const it of sr.items) {
+          if (seen.has(it.id)) continue;
+          seen.add(it.id);
+          incidentItems.push(it);
+        }
+      } catch {
+        // skip a single label if its search fails (rate-limit etc.); other
+        // labels still contribute to MTTR.
+      }
+    }
+    for (const i of incidentItems) {
+      if (!i.closed_at) continue;
+      const dur = new Date(i.closed_at).getTime() - new Date(i.created_at).getTime();
+      if (dur > 0) {
+        mttrSumMs += dur;
+        mttrCount += 1;
+      }
+    }
+    recordsCollected += incidentItems.length;
+  } catch {
+    // search may fail on tokens without read:org or due to rate limiting;
+    // we degrade gracefully to "n/a" below.
+  }
+  if (mttrCount > 0) {
+    const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+    summary.incidentIssues30d = mttrCount;
+    evidence.push({
+      dimension: "measurement",
+      signalType: mttrHours <= 24 ? "strength" : "gap",
+      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+      text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to close incident-labeled issues (n=${mttrCount}, 30d).`,
+    });
+  } else {
+    summary.mttrHoursAvg = null;
+    summary.incidentIssues30d = 0;
+    evidence.push({
+      dimension: "measurement",
+      signalType: "gap",
+      stageHint: 1,
+      text: "MTTR n/a — no incident-labeled issues found in the last 30 days. Tag incidents with 'incident', 'outage', 'p0', or 'p1' to enable MTTR measurement.",
+    });
+  }
 
   return { recordsCollected, summary, evidence };
 }
@@ -339,9 +410,12 @@ async function runGitlab(
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
   let pipelinesTotal = 0;
   let pipelinesFailed = 0;
+  let pipelinesSucceeded = 0;
   let mrsMerged = 0;
   let mrLeadSumMs = 0;
   let mrLeadCount = 0;
+  let mttrSumMs = 0;
+  let mttrCount = 0;
   let recordsCollected = projects.length;
 
   for (const p of projects.slice(0, 5)) {
@@ -354,6 +428,7 @@ async function runGitlab(
         const rows = (await pl.json()) as Array<{ status: string }>;
         pipelinesTotal += rows.length;
         pipelinesFailed += rows.filter((x) => x.status === "failed").length;
+        pipelinesSucceeded += rows.filter((x) => x.status === "success").length;
         recordsCollected += rows.length;
       }
     } catch {
@@ -384,24 +459,62 @@ async function runGitlab(
     } catch {
       // ignore
     }
+    // MTTR proxy — incident-labeled issues closed in the last 30 days for
+    // this project. Approximated as closed_at − created_at; if no incident
+    // issues exist across the sample we surface MTTR as "n/a" below. The
+    // GitLab issues API uses comma-separated `labels` to mean OR, so we
+    // pass the same incident label set as the GitHub runner. We also
+    // post-filter on closed_at to match the strict 30-day window
+    // (updated_after can include issues touched but not closed within it).
+    const sinceMs = Date.parse(since);
+    try {
+      const ir = await fetch(
+        `${baseUrl}/api/v4/projects/${p.id}/issues?state=closed&labels=${encodeURIComponent("incident,outage,p0,p1")}&updated_after=${since}&per_page=50`,
+        { headers },
+      );
+      if (ir.ok) {
+        const rows = (await ir.json()) as Array<{
+          created_at: string;
+          closed_at: string | null;
+        }>;
+        for (const i of rows) {
+          if (!i.closed_at) continue;
+          const closedMs = new Date(i.closed_at).getTime();
+          if (closedMs < sinceMs) continue;
+          const dur = closedMs - new Date(i.created_at).getTime();
+          if (dur > 0) {
+            mttrSumMs += dur;
+            mttrCount += 1;
+          }
+        }
+        recordsCollected += rows.length;
+      }
+    } catch {
+      // ignore — incident label may not exist; MTTR will be n/a.
+    }
   }
 
   const summary: Record<string, unknown> = {
     projectCount: projects.length,
     pipelines30d: pipelinesTotal,
+    pipelinesSucceeded30d: pipelinesSucceeded,
     pipelinesFailed30d: pipelinesFailed,
     mrsMerged30d: mrsMerged,
   };
 
-  if (pipelinesTotal > 0) {
-    const deploysPerDay = pipelinesTotal / 30;
+  if (pipelinesSucceeded > 0) {
+    // Deployment frequency uses successful pipelines only — failed pipelines
+    // are not deployments and are accounted for in change-failure-rate.
+    const deploysPerDay = pipelinesSucceeded / 30;
     summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
     evidence.push({
       dimension: "process",
       signalType: deploysPerDay >= 1 ? "strength" : "gap",
       stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
-      text: `Deployment frequency proxy: ~${deploysPerDay.toFixed(2)} pipelines/day across sampled GitLab projects (30d).`,
+      text: `Deployment frequency: ~${deploysPerDay.toFixed(2)} successful pipelines/day across sampled GitLab projects (30d).`,
     });
+  }
+  if (pipelinesTotal > 0) {
     const cfr = pipelinesFailed / pipelinesTotal;
     summary.changeFailureRate = Number(cfr.toFixed(3));
     evidence.push({
@@ -419,6 +532,26 @@ async function runGitlab(
       signalType: avgHours <= 48 ? "strength" : "gap",
       stageHint: avgHours <= 24 ? 5 : avgHours <= 48 ? 4 : avgHours <= 168 ? 3 : 2,
       text: `Lead time for changes: avg ${avgHours.toFixed(1)} hours from MR open to merge (n=${mrLeadCount}).`,
+    });
+  }
+  if (mttrCount > 0) {
+    const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+    summary.incidentIssues30d = mttrCount;
+    evidence.push({
+      dimension: "measurement",
+      signalType: mttrHours <= 24 ? "strength" : "gap",
+      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+      text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to close incident-labeled GitLab issues (n=${mttrCount}, 30d).`,
+    });
+  } else {
+    summary.mttrHoursAvg = null;
+    summary.incidentIssues30d = 0;
+    evidence.push({
+      dimension: "measurement",
+      signalType: "gap",
+      stageHint: 1,
+      text: "MTTR n/a — no GitLab issues with the 'incident' label closed in the last 30 days.",
     });
   }
 
@@ -849,6 +982,7 @@ async function runCircleCi(
   // For each pipeline, fetch its workflows to determine pass/fail.
   let workflowsTotal = 0;
   let workflowsFailed = 0;
+  let workflowsSucceeded = 0;
   for (const p of recent.slice(0, 30)) {
     try {
       const wr = await fetch(
@@ -863,6 +997,7 @@ async function runCircleCi(
       workflowsFailed += w.items.filter(
         (x) => x.status === "failed" || x.status === "failing",
       ).length;
+      workflowsSucceeded += w.items.filter((x) => x.status === "success").length;
     } catch {
       // ignore individual pipeline errors
     }
@@ -872,17 +1007,23 @@ async function runCircleCi(
     provider: "circleci",
     pipelines30d: recent.length,
     workflows30d: workflowsTotal,
+    workflowsSucceeded30d: workflowsSucceeded,
     workflowsFailed30d: workflowsFailed,
+    // CircleCI has no incident-issue concept of its own, so MTTR is n/a from
+    // this connector. Pair with a Jira/Linear/GitHub connector to fill it.
+    mttrHoursAvg: null,
   };
-  if (workflowsTotal > 0) {
-    const deploysPerDay = workflowsTotal / 30;
+  if (workflowsSucceeded > 0) {
+    const deploysPerDay = workflowsSucceeded / 30;
     summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
     evidence.push({
       dimension: "process",
       signalType: deploysPerDay >= 1 ? "strength" : "gap",
       stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
-      text: `Deployment frequency (CircleCI ${slug}): ~${deploysPerDay.toFixed(2)} workflows/day (30d).`,
+      text: `Deployment frequency (CircleCI ${slug}): ~${deploysPerDay.toFixed(2)} successful workflows/day (30d).`,
     });
+  }
+  if (workflowsTotal > 0) {
     const cfr = workflowsFailed / workflowsTotal;
     summary.changeFailureRate = Number(cfr.toFixed(3));
     evidence.push({
@@ -891,7 +1032,8 @@ async function runCircleCi(
       stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
       text: `Change failure rate (CircleCI ${slug}): ${(cfr * 100).toFixed(1)}% (${workflowsFailed}/${workflowsTotal}).`,
     });
-  } else {
+  }
+  if (workflowsTotal === 0) {
     evidence.push({
       dimension: "process",
       signalType: "gap",
