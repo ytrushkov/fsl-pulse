@@ -257,22 +257,20 @@ export default function PortfolioPage() {
           <CardContent>
             <ul className="divide-y">
               {stalled.map((e) => (
-                <li key={e.id} className="py-3 flex items-center justify-between">
+                <li
+                  key={e.id}
+                  className="py-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+                  data-testid={`stalled-${e.id}`}
+                >
                   <Link
                     href={`/engagements/${e.id}`}
                     className="font-medium hover:text-primary"
                   >
                     {e.clientName}
                   </Link>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1.5 sm:justify-end">
                     {e.stallReasons.map((r) => (
-                      <Badge
-                        key={r}
-                        variant="outline"
-                        className="border-amber-500/40 text-amber-700 dark:text-amber-300"
-                      >
-                        {STALL_LABEL[r]}
-                      </Badge>
+                      <StallBadge key={r} engagement={e} reason={r} />
                     ))}
                   </div>
                 </li>
@@ -368,6 +366,67 @@ export default function PortfolioPage() {
         </CardContent>
       </Card>
     </AppLayout>
+  );
+}
+
+function daysSince(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
+function StallBadge({
+  engagement,
+  reason,
+}: {
+  engagement: PortfolioEngagement;
+  reason: PortfolioStallReason;
+}) {
+  const className =
+    "border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 cursor-pointer";
+
+  let detail = "";
+  let href = `/engagements/${engagement.id}`;
+
+  if (reason === "stale_connectors") {
+    href = `/engagements/${engagement.id}/connectors`;
+    const d = daysSince(engagement.lastConnectorRunAt);
+    detail =
+      d == null
+        ? "never synced"
+        : `last sync ${d}d ago`;
+  } else if (reason === "low_survey_response") {
+    href = `/engagements/${engagement.id}/survey`;
+    const pct = Math.round(engagement.surveyResponseRate * 100);
+    detail = `${pct}% (${engagement.surveyCompleted}/${engagement.surveySent})`;
+  } else if (reason === "no_finalized_deliverable") {
+    href = `/engagements/${engagement.id}/exports`;
+    // Prefer lastActivityAt (closer to "freshness"); fall back to createdAt
+    // when the engagement has no recorded activity yet.
+    const d = daysSince(engagement.lastActivityAt ?? engagement.createdAt);
+    detail =
+      d == null
+        ? "none finalized"
+        : `${d}d, none finalized`;
+  }
+
+  return (
+    <Link href={href}>
+      <Badge
+        variant="outline"
+        className={className}
+        data-testid={`stall-badge-${engagement.id}-${reason}`}
+        title={`Open ${STALL_LABEL[reason]} for ${engagement.clientName}`}
+      >
+        <span className="font-medium">{STALL_LABEL[reason]}</span>
+        {detail && (
+          <span className="ml-1.5 opacity-80 font-mono text-[10px]">
+            · {detail}
+          </span>
+        )}
+      </Badge>
+    </Link>
   );
 }
 
