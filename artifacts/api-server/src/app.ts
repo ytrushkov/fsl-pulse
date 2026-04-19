@@ -87,6 +87,8 @@ const allowedOrigins = new Set<string>(
     "http://localhost:3000",
   ].filter((s): s is string => Boolean(s)),
 );
+const REPLIT_PREVIEW_HOST_RE =
+  /^https:\/\/[a-z0-9-]+\.(?:janeway|kirk|picard|riker|sisko)\.(?:replit\.dev|repl\.co)$/i;
 app.use(
   cors({
     credentials: true,
@@ -94,6 +96,10 @@ app.use(
       // Same-origin / curl / server-to-server (no Origin header) are allowed.
       if (!origin) return cb(null, true);
       if (allowedOrigins.has(origin)) return cb(null, true);
+      // Replit serves the workspace preview from both .replit.dev and the
+      // legacy .repl.co mirror across multiple cluster subdomains. Accept
+      // any of them so authenticated XHRs from the embedded iframe work.
+      if (REPLIT_PREVIEW_HOST_RE.test(origin)) return cb(null, true);
       return cb(new Error(`Origin not allowed by CORS: ${origin}`));
     },
   }),
