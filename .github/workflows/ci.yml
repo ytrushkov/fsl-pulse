@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  python-lint:
+    name: Python lint & typecheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install uv
+        run: pip install uv==0.4.15
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml', 'uv.lock') }}
+      - name: Install deps
+        run: uv sync --all-packages --dev
+      - name: ruff lint
+        run: uv run ruff check apps/api packages --output-format=github
+      - name: ruff format check
+        run: uv run ruff format --check apps/api packages
+      - name: mypy
+        run: uv run mypy apps/api packages --config-file=pyproject.toml
+
+  python-tests:
+    name: Python tests
+    runs-on: ubuntu-24.04
+    needs: python-lint
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pulse
+          POSTGRES_PASSWORD: pulse
+          POSTGRES_DB: pulse_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U pulse -d pulse_test"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://pulse:pulse@localhost:5432/pulse_test
+      REDIS_URL: redis://localhost:6379/0
+      APP_ENV: test
+      ANTHROPIC_API_KEY: sk-ant-test-placeholder
+      FEATURE_LLM_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install uv
+        run: pip install uv==0.4.15
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml', 'uv.lock') }}
+      - name: Install deps
+        run: uv sync --all-packages --dev
+      - name: Run tests with coverage
+        run: |
+          uv run pytest apps/api/tests packages \
+            --cov=apps/api --cov=packages \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=80 \
+            --tb=short -q
+        env:
+          PYTHONPATH: .
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  frontend:
+    name: Frontend lint, typecheck & test
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install pnpm
+        run: npm install -g pnpm@9
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Lint
+        run: pnpm run lint
+      - name: Test with coverage
+        run: pnpm run test -- --run --coverage
+      - name: Build
+        run: pnpm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+  all-checks:
+    name: All checks passed
+    runs-on: ubuntu-24.04
+    needs: [python-lint, python-tests, frontend]
+    if: always()
+    steps:
+      - name: Verify all jobs succeeded
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "$results"
+          if echo "$results" | grep -q '"result":"failure"'; then
+            echo "One or more required checks failed."
+            exit 1
+          fi
+          echo "All checks passed."

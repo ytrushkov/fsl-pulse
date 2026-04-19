@@ -11,12 +11,82 @@ CLAUDE.local.md
 .env.*.local
 *.secret
 *.key
+# Never commit environment files for named environments
+.env.production
+.env.staging
+.env.test.local
+
+# --- Cryptographic Key Material ---
+# RSA/EC private keys for JWT signing, Temporal mTLS, TLS certs, etc.
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+# Local secrets/ directory (JWT keys, dev certs — generated locally, never committed)
+secrets/
+
+# --- AWS Credential Files ---
+# Prevent accidental commit of local AWS credential exports
+.aws/
+aws-credentials.json
+credentials.json
+
+# --- VCR / HTTP Cassette Recordings ---
+# vcrpy cassettes may contain real API tokens captured during recording.
+# Only sanitized cassettes (Authorization header stripped) may be committed.
+cassettes/
+fixtures/cassettes/
+tests/cassettes/
+**/*.yaml.cassette
+**/*.json.cassette
+
+# --- Temporal TLS Certificates ---
+temporal-certs/
+
+# --- Database Dumps & Exports ---
+# May contain PII from survey responses or interview notes.
+*.dump
+*.sql.gz
+*.pgdump
+db-backups/
+
+# --- Assessment Export Artifacts ---
+# Generated outputs (assessment.json, PDFs, evidence zips) are not source files.
+exports/
+assessment-exports/
+*.assessment.json
+
+# --- Editor / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
 
 # --- Common Noise (Optional but Recommended) ---
 # Prevents Claude from wasting tokens reading large dependency folders
 node_modules/
 __pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 dist/
 build/
-.DS_Store
+.next/
+next-env.d.ts
+.turbo/
 *.log
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# --- Coverage & Test Artifacts ---
+.coverage
+htmlcov/
+coverage.xml
+*.lcov

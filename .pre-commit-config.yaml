@@ -1,0 +1,87 @@
+default_language_version:
+  python: python3.12
+  node: "20.11.0"
+
+default_stages: [pre-commit]
+
+repos:
+  # ── General hygiene ─────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: no-commit-to-branch
+        args: [--branch=main, --branch=production]
+
+  # ── Secret detection ────────────────────────────────────────────────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args:
+          - --baseline
+          - .secrets.baseline
+          - --exclude-files
+          - tests/connectors/cassettes/.*
+          - --exclude-files
+          - ".*\\.lock$"
+
+  # ── Python: ruff lint + format ───────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+        files: ^(apps/api|packages)/
+
+      - id: ruff-format
+        types_or: [python, pyi]
+        files: ^(apps/api|packages)/
+
+  # ── Python: mypy ─────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        language: system
+        entry: uv run mypy
+        types_or: [python, pyi]
+        files: ^(apps/api|packages)/
+        args: [--config-file=pyproject.toml, --show-error-codes, --no-error-summary, apps/api/app]
+        pass_filenames: false
+
+  # ── TypeScript / JS: Prettier ────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        types_or: [javascript, jsx, ts, tsx, css, json, yaml, markdown]
+        files: ^apps/web/
+        args: [--config=apps/web/prettier.config.js]
+
+  # ── TypeScript / JS: ESLint ──────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        language: system
+        types_or: [javascript, jsx, ts, tsx]
+        files: ^apps/web/src/
+        entry: bash -c 'cd apps/web && node_modules/.bin/eslint --fix --max-warnings=0 "${@#apps/web/}" ' --
+        require_serial: true
+
+ci:
+  autofix_prs: false
+  autoupdate_schedule: weekly

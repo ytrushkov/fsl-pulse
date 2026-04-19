@@ -1,0 +1,66 @@
+[tool.uv.workspace]
+members = ["apps/api", "packages/*"]
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=3.7,<4.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["apps/api", "packages"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "C4", "SIM",
+    "TID", "RUF", "S", "ANN", "PT", "TCH", "PERF",
+]
+ignore = ["ANN101", "ANN102", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"apps/api/tests/**/*.py" = ["S101", "ANN", "S105", "S106"]
+"apps/api/alembic/**/*.py" = ["ANN"]
+"packages/*/tests/**/*.py" = ["S101", "ANN", "S105", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "pulse_api", "pulse_connector_sdk", "pulse_scoring",
+    "pulse_deliverables", "pulse_llm_gateway", "pulse_shared_models",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "apps/api"
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = ["jose.*", "boto3"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["apps/api/tests", "packages"]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["--strict-markers", "--tb=short"]
+markers = [
+    "unit: fast unit tests, no external services",
+    "integration: requires live Postgres/Redis",
+    "slow: takes >2s",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", "alembic"]
+skips = ["B101"]
