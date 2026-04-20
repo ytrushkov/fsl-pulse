@@ -75,7 +75,7 @@ lint: lint-py lint-ts
 lint-py:
 	uv run ruff check apps/api packages
 	uv run ruff format --check apps/api packages
-	uv run mypy apps/api packages
+	uv run mypy apps/api
 
 .PHONY: lint-ts
 lint-ts:

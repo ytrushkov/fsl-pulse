@@ -1,0 +1,364 @@
+{
+  "engagement": {
+    "id": "e1f2a3b4-c5d6-4789-9abc-def012345678",
+    "client": "BetaSoft",
+    "sponsor": "Marcus Chen",
+    "teams_in_scope": ["Core", "Payments", "Data"],
+    "kickoff_date": "2026-02-01",
+    "target_delivery_date": "2026-05-15",
+    "window": {
+      "start": "2026-01-15",
+      "end": "2026-04-30"
+    }
+  },
+  "dimensions": {
+    "tooling": {
+      "evidence": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "source_type": "connector",
+          "source_ref": "github:betasoft/core:run-4821",
+          "dimension": "tooling",
+          "signal_type": "strength",
+          "stage_hint": 3,
+          "text": "CI pipelines run on every PR with parallel test shards.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-12T09:15:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "id": "11111111-1111-4111-8111-111111111112",
+          "source_type": "interview",
+          "source_ref": "interview:betasoft-em-01#p4",
+          "dimension": "tooling",
+          "signal_type": "gap",
+          "stage_hint": 2,
+          "text": "AI coding tooling is ad-hoc; developers pick their own without seat governance.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-14T11:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"ci_coverage_pct": 74, "seats_provisioned": 38},
+      "stage_hints": [2, 3]
+    },
+    "measurement": {
+      "evidence": [
+        {
+          "id": "22222222-2222-4222-8222-222222222221",
+          "source_type": "connector",
+          "source_ref": "jira:betasoft:metrics-2026-Q1",
+          "dimension": "measurement",
+          "signal_type": "gap",
+          "stage_hint": 2,
+          "text": "DORA metrics tracked only for the Core team; other teams rely on gut feel.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-15T14:30:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "source_type": "interview",
+          "source_ref": "interview:betasoft-tl-02#p2",
+          "dimension": "measurement",
+          "signal_type": "risk",
+          "stage_hint": 2,
+          "text": "No shared dashboard; metrics go stale within a sprint.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-16T10:20:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"dora_coverage_teams": 1},
+      "stage_hints": [2]
+    },
+    "process": {
+      "evidence": [
+        {
+          "id": "33333333-3333-4333-8333-333333333331",
+          "source_type": "connector",
+          "source_ref": "github:betasoft:pr-review-stats",
+          "dimension": "process",
+          "signal_type": "strength",
+          "stage_hint": 3,
+          "text": "Two-approver policy enforced on main branch across all repos.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-18T08:45:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "id": "33333333-3333-4333-8333-333333333332",
+          "source_type": "survey",
+          "source_ref": "survey:betasoft:q-process-3",
+          "dimension": "process",
+          "signal_type": "gap",
+          "stage_hint": 2,
+          "text": "62% of respondents report definition-of-done is inconsistently applied.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-20T13:05:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"pr_review_sla_pct": 81},
+      "stage_hints": [2, 3]
+    },
+    "people": {
+      "evidence": [
+        {
+          "id": "44444444-4444-4444-8444-444444444441",
+          "source_type": "survey",
+          "source_ref": "survey:betasoft:q-people-1",
+          "dimension": "people",
+          "signal_type": "strength",
+          "stage_hint": 3,
+          "text": "Engineering satisfaction averages 4.1/5 across teams.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-22T09:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "id": "44444444-4444-4444-8444-444444444442",
+          "source_type": "interview",
+          "source_ref": "interview:betasoft-dir-03#p1",
+          "dimension": "people",
+          "signal_type": "gap",
+          "stage_hint": 2,
+          "text": "No formal AI upskilling program; individuals self-direct learning.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-23T16:30:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"survey_nps": 32},
+      "stage_hints": [2, 3]
+    },
+    "governance": {
+      "evidence": [
+        {
+          "id": "55555555-5555-4555-8555-555555555551",
+          "source_type": "artifact",
+          "source_ref": "artifact:betasoft:ai-policy-v2.pdf",
+          "dimension": "governance",
+          "signal_type": "strength",
+          "stage_hint": 3,
+          "text": "Published AI-usage policy covering data classification and allowed vendors.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-25T11:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "id": "55555555-5555-4555-8555-555555555552",
+          "source_type": "interview",
+          "source_ref": "interview:betasoft-sec-04#p3",
+          "dimension": "governance",
+          "signal_type": "risk",
+          "stage_hint": 2,
+          "text": "No enforcement mechanism; compliance reviewed quarterly via spreadsheet.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-26T14:10:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"policy_docs": 3},
+      "stage_hints": [2, 3]
+    },
+    "culture": {
+      "evidence": [
+        {
+          "id": "66666666-6666-4666-8666-666666666661",
+          "source_type": "survey",
+          "source_ref": "survey:betasoft:q-culture-2",
+          "dimension": "culture",
+          "signal_type": "strength",
+          "stage_hint": 3,
+          "text": "Blameless post-mortems are the default for 94% of respondents.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-02-28T10:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "id": "66666666-6666-4666-8666-666666666662",
+          "source_type": "interview",
+          "source_ref": "interview:betasoft-em-01#p7",
+          "dimension": "culture",
+          "signal_type": "quote",
+          "stage_hint": 3,
+          "text": "\"We reward experimentation, but we don't capture what we learn in a way others can use.\"",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-03-01T09:30:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"blameless_pct": 94},
+      "stage_hints": [3]
+    }
+  },
+  "systems": {
+    "vcs": [
+      {
+        "provider": "github",
+        "org": "betasoft",
+        "repos": ["betasoft/core", "betasoft/payments", "betasoft/data-pipelines"],
+        "metrics": {
+          "default_branch_protection": true,
+          "avg_pr_cycle_time_hours": 22.1,
+          "commits_last_30d": 412
+        }
+      }
+    ],
+    "issue_tracker": [
+      {
+        "provider": "jira",
+        "workspace": "betasoft",
+        "projects": ["CORE", "PAY", "DATA"],
+        "metrics": {
+          "avg_lead_time_days": 6.3,
+          "wip_limit": 15
+        }
+      }
+    ],
+    "ci": [
+      {
+        "provider": "ci_github_actions",
+        "pipelines": ["core-ci", "payments-ci", "data-ci"],
+        "metrics": {
+          "change_failure_rate_pct": 11.2,
+          "deployment_frequency_per_week": 14
+        }
+      }
+    ],
+    "ai_tooling": [
+      {
+        "provider": "ai_copilot",
+        "seats": 45,
+        "active_users": 32,
+        "acceptance_rate": 0.34,
+        "edit_distance": 0.52,
+        "pdlc_coverage": ["build"]
+      }
+    ]
+  },
+  "survey": {
+    "template_version": "1.0.0",
+    "modules": ["platform_engineering", "security"],
+    "responses_by_team": [
+      {"team": "Core", "response_count": 18, "avg_satisfaction": 4.2},
+      {"team": "Payments", "response_count": 12, "avg_satisfaction": 3.9},
+      {"team": "Data", "response_count": 9, "avg_satisfaction": 4.0}
+    ],
+    "aggregate_scores": {
+      "overall_satisfaction": 4.05,
+      "toolchain_nps": 28
+    }
+  },
+  "interviews": [
+    {
+      "id": "b2c3d4e5-f6a7-4901-bcde-f23456789001",
+      "role_category": "engineering_manager",
+      "date": "2026-02-14",
+      "evidence_ids": [
+        "11111111-1111-4111-8111-111111111112",
+        "66666666-6666-4666-8666-666666666662"
+      ]
+    },
+    {
+      "id": "b2c3d4e5-f6a7-4901-bcde-f23456789002",
+      "role_category": "tech_lead",
+      "date": "2026-02-16",
+      "evidence_ids": [
+        "22222222-2222-4222-8222-222222222222"
+      ]
+    },
+    {
+      "id": "b2c3d4e5-f6a7-4901-bcde-f23456789003",
+      "role_category": "director",
+      "date": "2026-02-23",
+      "evidence_ids": [
+        "44444444-4444-4444-8444-444444444442",
+        "55555555-5555-4555-8555-555555555552"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+      "filename": "ai-policy-v2.pdf",
+      "kind": "governance",
+      "extracted_summary": "Covers data-classification tiers, approved LLM vendors, and quarterly review cadence."
+    }
+  ],
+  "scores": {
+    "rubric_version": "1.0.0",
+    "by_dimension": {
+      "tooling": {
+        "score": 58,
+        "stage": 3,
+        "confidence": "M",
+        "evidence_ids": [
+          "11111111-1111-4111-8111-111111111111",
+          "11111111-1111-4111-8111-111111111112"
+        ],
+        "overrides": []
+      },
+      "measurement": {
+        "score": 42,
+        "stage": 2,
+        "confidence": "M",
+        "evidence_ids": [
+          "22222222-2222-4222-8222-222222222221",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "overrides": []
+      },
+      "process": {
+        "score": 61,
+        "stage": 3,
+        "confidence": "H",
+        "evidence_ids": [
+          "33333333-3333-4333-8333-333333333331",
+          "33333333-3333-4333-8333-333333333332"
+        ],
+        "overrides": []
+      },
+      "people": {
+        "score": 55,
+        "stage": 3,
+        "confidence": "M",
+        "evidence_ids": [
+          "44444444-4444-4444-8444-444444444441",
+          "44444444-4444-4444-8444-444444444442"
+        ],
+        "overrides": []
+      },
+      "governance": {
+        "score": 48,
+        "stage": 2,
+        "confidence": "M",
+        "evidence_ids": [
+          "55555555-5555-4555-8555-555555555551",
+          "55555555-5555-4555-8555-555555555552"
+        ],
+        "overrides": []
+      },
+      "culture": {
+        "score": 67,
+        "stage": 3,
+        "confidence": "H",
+        "evidence_ids": [
+          "66666666-6666-4666-8666-666666666661",
+          "66666666-6666-4666-8666-666666666662"
+        ],
+        "overrides": []
+      }
+    },
+    "overall": {
+      "score": 55,
+      "stage": 3,
+      "confidence": "M",
+      "evidence_ids": [],
+      "overrides": []
+    }
+  },
+  "deliverables": null,
+  "provenance": null
+}

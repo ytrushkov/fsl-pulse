@@ -1,0 +1,351 @@
+{
+  "engagement": {
+    "id": "c0de0001-0000-4000-8000-000000000001",
+    "client": "GammaWorks",
+    "sponsor": "Priya Nair",
+    "teams_in_scope": ["Foundation", "Growth", "ML Platform", "Mobile"],
+    "kickoff_date": "2026-01-08",
+    "target_delivery_date": "2026-04-01",
+    "window": {
+      "start": "2026-01-01",
+      "end": "2026-03-15"
+    }
+  },
+  "dimensions": {
+    "tooling": {
+      "evidence": [
+        {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "source_type": "connector",
+          "source_ref": "github:gammaworks:run-9001",
+          "dimension": "tooling",
+          "signal_type": "strength",
+          "stage_hint": 4,
+          "text": "All repositories enforce trunk-based development with automated release tagging.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-01-20T09:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"ci_coverage_pct": 92},
+      "stage_hints": [4]
+    },
+    "measurement": {
+      "evidence": [
+        {
+          "id": "20000000-0000-4000-8000-000000000001",
+          "source_type": "connector",
+          "source_ref": "jira:gammaworks:dora-2026-Q1",
+          "dimension": "measurement",
+          "signal_type": "strength",
+          "stage_hint": 4,
+          "text": "DORA metrics tracked org-wide with weekly leadership review.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-01-22T11:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"dora_coverage_teams": 4},
+      "stage_hints": [4]
+    },
+    "process": {
+      "evidence": [
+        {
+          "id": "30000000-0000-4000-8000-000000000001",
+          "source_type": "survey",
+          "source_ref": "survey:gammaworks:q-process-1",
+          "dimension": "process",
+          "signal_type": "strength",
+          "stage_hint": 4,
+          "text": "88% of respondents report definition-of-done is consistently applied.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-01-24T10:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"pr_review_sla_pct": 93},
+      "stage_hints": [4]
+    },
+    "people": {
+      "evidence": [
+        {
+          "id": "40000000-0000-4000-8000-000000000001",
+          "source_type": "interview",
+          "source_ref": "interview:gammaworks-vp-01#p2",
+          "dimension": "people",
+          "signal_type": "strength",
+          "stage_hint": 4,
+          "text": "Quarterly AI-tooling bootcamp with 80%+ attendance across engineering.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-01-27T14:00:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"survey_nps": 51},
+      "stage_hints": [4]
+    },
+    "governance": {
+      "evidence": [
+        {
+          "id": "50000000-0000-4000-8000-000000000001",
+          "source_type": "artifact",
+          "source_ref": "artifact:gammaworks:ai-governance-v3.pdf",
+          "dimension": "governance",
+          "signal_type": "strength",
+          "stage_hint": 4,
+          "text": "AI governance board meets monthly; decisions logged in a public register.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-01-29T09:30:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"policy_docs": 7},
+      "stage_hints": [4]
+    },
+    "culture": {
+      "evidence": [
+        {
+          "id": "60000000-0000-4000-8000-000000000001",
+          "source_type": "survey",
+          "source_ref": "survey:gammaworks:q-culture-3",
+          "dimension": "culture",
+          "signal_type": "strength",
+          "stage_hint": 4,
+          "text": "Learnings from post-mortems captured in a searchable wiki reviewed by 72% of staff monthly.",
+          "created_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "created_at": "2026-01-31T11:15:00Z",
+          "accepted_by": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "metrics": {"blameless_pct": 98},
+      "stage_hints": [4]
+    }
+  },
+  "systems": {
+    "vcs": [
+      {
+        "provider": "github",
+        "org": "gammaworks",
+        "repos": ["gammaworks/foundation", "gammaworks/growth", "gammaworks/ml-platform", "gammaworks/mobile"],
+        "metrics": {
+          "default_branch_protection": true,
+          "avg_pr_cycle_time_hours": 11.4,
+          "commits_last_30d": 1284
+        }
+      }
+    ],
+    "issue_tracker": [
+      {
+        "provider": "jira",
+        "workspace": "gammaworks",
+        "projects": ["FND", "GRO", "MLP", "MOB"],
+        "metrics": {
+          "avg_lead_time_days": 3.1,
+          "wip_limit": 12
+        }
+      }
+    ],
+    "ci": [
+      {
+        "provider": "ci_github_actions",
+        "pipelines": ["foundation-ci", "growth-ci", "mlp-ci", "mobile-ci"],
+        "metrics": {
+          "change_failure_rate_pct": 4.8,
+          "deployment_frequency_per_week": 38
+        }
+      }
+    ],
+    "ai_tooling": [
+      {
+        "provider": "ai_copilot",
+        "seats": 120,
+        "active_users": 109,
+        "acceptance_rate": 0.41,
+        "edit_distance": 0.48,
+        "pdlc_coverage": ["design", "build", "ship"]
+      },
+      {
+        "provider": "ai_claude_code",
+        "seats": 40,
+        "active_users": 34,
+        "acceptance_rate": 0.47,
+        "edit_distance": 0.39,
+        "pdlc_coverage": ["build", "ship", "run"]
+      }
+    ]
+  },
+  "survey": {
+    "template_version": "1.0.0",
+    "modules": ["platform_engineering", "security", "data_analytics", "product_design"],
+    "responses_by_team": [
+      {"team": "Foundation", "response_count": 28, "avg_satisfaction": 4.4},
+      {"team": "Growth", "response_count": 22, "avg_satisfaction": 4.2},
+      {"team": "ML Platform", "response_count": 18, "avg_satisfaction": 4.5},
+      {"team": "Mobile", "response_count": 14, "avg_satisfaction": 4.3}
+    ],
+    "aggregate_scores": {
+      "overall_satisfaction": 4.35,
+      "toolchain_nps": 58
+    }
+  },
+  "interviews": [
+    {
+      "id": "b0000001-0000-4000-8000-000000000001",
+      "role_category": "vp_engineering",
+      "date": "2026-01-27",
+      "evidence_ids": ["40000000-0000-4000-8000-000000000001"]
+    },
+    {
+      "id": "b0000001-0000-4000-8000-000000000002",
+      "role_category": "tech_lead",
+      "date": "2026-01-30",
+      "evidence_ids": []
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "a0000001-0000-4000-8000-000000000001",
+      "filename": "ai-governance-v3.pdf",
+      "kind": "governance",
+      "extracted_summary": "Defines AI governance board charter, monthly cadence, and decision log."
+    },
+    {
+      "id": "a0000001-0000-4000-8000-000000000002",
+      "filename": "platform-architecture-2026.pdf",
+      "kind": "architecture",
+      "extracted_summary": "Service mesh on EKS, platform-as-product, 14 golden paths."
+    }
+  ],
+  "scores": {
+    "rubric_version": "1.0.0",
+    "by_dimension": {
+      "tooling": {"score": 78, "stage": 4, "confidence": "H", "evidence_ids": ["10000000-0000-4000-8000-000000000001"], "overrides": []},
+      "measurement": {"score": 72, "stage": 4, "confidence": "H", "evidence_ids": ["20000000-0000-4000-8000-000000000001"], "overrides": []},
+      "process": {"score": 80, "stage": 4, "confidence": "H", "evidence_ids": ["30000000-0000-4000-8000-000000000001"], "overrides": []},
+      "people": {"score": 74, "stage": 4, "confidence": "H", "evidence_ids": ["40000000-0000-4000-8000-000000000001"], "overrides": []},
+      "governance": {"score": 70, "stage": 4, "confidence": "H", "evidence_ids": ["50000000-0000-4000-8000-000000000001"], "overrides": []},
+      "culture": {"score": 82, "stage": 4, "confidence": "H", "evidence_ids": ["60000000-0000-4000-8000-000000000001"], "overrides": []}
+    },
+    "overall": {"score": 76, "stage": 4, "confidence": "H", "evidence_ids": [], "overrides": []}
+  },
+  "deliverables": {
+    "heatmap": {
+      "cells": [
+        {"dimension": "tooling", "stage": 4, "score": 78, "confidence": "H"},
+        {"dimension": "measurement", "stage": 4, "score": 72, "confidence": "H"},
+        {"dimension": "process", "stage": 4, "score": 80, "confidence": "H"},
+        {"dimension": "people", "stage": 4, "score": 74, "confidence": "H"},
+        {"dimension": "governance", "stage": 4, "score": 70, "confidence": "H"},
+        {"dimension": "culture", "stage": 4, "score": 82, "confidence": "H"}
+      ]
+    },
+    "gap_analysis": [
+      {
+        "dimension": "tooling",
+        "current": 4,
+        "target": 5,
+        "gaps": ["No autonomous agent pipelines", "Limited AI telemetry in CI"],
+        "narrative_md": "GammaWorks has mature CI/CD, but agent-driven workflows are nascent.",
+        "evidence_ids": ["10000000-0000-4000-8000-000000000001"]
+      },
+      {
+        "dimension": "governance",
+        "current": 4,
+        "target": 5,
+        "gaps": ["No automated policy enforcement"],
+        "narrative_md": "Governance is mature in process but relies on manual review loops.",
+        "evidence_ids": ["50000000-0000-4000-8000-000000000001"]
+      }
+    ],
+    "action_plan": [
+      {
+        "initiative": "Pilot autonomous agent on one golden path",
+        "dimension": "tooling",
+        "priority": "P0",
+        "effort": "M",
+        "impact": "L",
+        "owner": "Platform Lead",
+        "success_metric": "50% of platform PRs drafted by agent within 90 days",
+        "dependencies": []
+      },
+      {
+        "initiative": "Automate AI policy gate in CI",
+        "dimension": "governance",
+        "priority": "P1",
+        "effort": "S",
+        "impact": "M",
+        "owner": "Security Engineering",
+        "success_metric": "100% of merges pass automated policy check",
+        "dependencies": ["AI policy v3 finalized"]
+      },
+      {
+        "initiative": "Expand ML Platform AI tooling to growth team",
+        "dimension": "people",
+        "priority": "P1",
+        "effort": "S",
+        "impact": "M",
+        "owner": "Head of Growth Engineering",
+        "success_metric": "Growth team acceptance rate >= 40%",
+        "dependencies": []
+      }
+    ],
+    "pdlc_entry_point": {
+      "recommended_stage": "build",
+      "hypr_agents": ["code-review-agent", "test-authoring-agent"],
+      "rationale_md": "GammaWorks is at stage 4 overall; Build is the highest-leverage entry point given strong CI and golden paths.",
+      "evidence_ids": [
+        "10000000-0000-4000-8000-000000000001",
+        "30000000-0000-4000-8000-000000000001"
+      ]
+    },
+    "npv": {
+      "model_version": "1.0.0",
+      "inputs": {
+        "fully_loaded_cost": 210000.0,
+        "team_count": 4,
+        "baseline_cycle_time_days": 3.1,
+        "acceptance_rate": 0.41,
+        "rework_rate": 0.12,
+        "discount_rate": 0.10
+      },
+      "scenarios": {
+        "low": {
+          "npv_3yr": 1420000.0,
+          "payback_months": 11.4,
+          "irr": 0.38,
+          "breakdown": {"coding": 540000.0, "review": 320000.0, "testing": 260000.0, "deploy": 180000.0, "ops": 120000.0}
+        },
+        "base": {
+          "npv_3yr": 2180000.0,
+          "payback_months": 8.2,
+          "irr": 0.58,
+          "breakdown": {"coding": 820000.0, "review": 490000.0, "testing": 400000.0, "deploy": 280000.0, "ops": 190000.0}
+        },
+        "high": {
+          "npv_3yr": 3140000.0,
+          "payback_months": 5.9,
+          "irr": 0.84,
+          "breakdown": {"coding": 1180000.0, "review": 710000.0, "testing": 580000.0, "deploy": 400000.0, "ops": 270000.0}
+        }
+      },
+      "npv_3yr": 2180000.0,
+      "payback_months": 8.2,
+      "irr": 0.58
+    }
+  },
+  "provenance": {
+    "connector_runs": [
+      "c0de0001-0000-4aaa-8000-000000009001",
+      "c0de0001-0000-4aaa-8000-000000009002",
+      "c0de0001-0000-4aaa-8000-000000009003"
+    ],
+    "rubric_version": "1.0.0",
+    "report_template_version": "1.0.0",
+    "export_version": 1,
+    "exported_at": "2026-03-20T16:45:00Z",
+    "signatures": {
+      "assessment_json": "sha256:5f2c3b9a1e7d8c4b6a0f9d8e7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b",
+      "report_pdf": "sha256:9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
+    }
+  }
+}

@@ -1,14 +1,67 @@
 {
-  "engagement_id": "00000000-0000-0000-0000-000000000001",
-  "client_name": "fixture-client",
-  "dimensions": {
-    "strategy_governance": {"score": 1, "evidence": []},
-    "tooling_infrastructure": {"score": 1, "evidence": []},
-    "team_practices": {"score": 1, "evidence": []},
-    "data_quality": {"score": 1, "evidence": []},
-    "security_compliance": {"score": 1, "evidence": []},
-    "change_management": {"score": 1, "evidence": []}
+  "engagement": {
+    "id": "a1b2c3d4-e5f6-4890-abcd-ef1234567890",
+    "client": "AcmeCorp",
+    "sponsor": "Jane Doe",
+    "teams_in_scope": ["Platform", "Web"],
+    "kickoff_date": "2026-01-15",
+    "target_delivery_date": "2026-04-15",
+    "window": {
+      "start": "2026-01-01",
+      "end": "2026-03-31"
+    }
   },
-  "overall_score": 1,
-  "assessed_at": "2026-04-17T00:00:00Z"
+  "dimensions": {
+    "tooling": {"evidence": [], "metrics": {}, "stage_hints": []},
+    "measurement": {"evidence": [], "metrics": {}, "stage_hints": []},
+    "process": {"evidence": [], "metrics": {}, "stage_hints": []},
+    "people": {"evidence": [], "metrics": {}, "stage_hints": []},
+    "governance": {"evidence": [], "metrics": {}, "stage_hints": []},
+    "culture": {"evidence": [], "metrics": {}, "stage_hints": []}
+  },
+  "systems": {
+    "vcs": [
+      {
+        "provider": "github",
+        "org": "acmecorp",
+        "repos": ["acmecorp/web", "acmecorp/platform"],
+        "metrics": {
+          "default_branch_protection": true,
+          "avg_pr_cycle_time_hours": 28.4
+        }
+      },
+      {
+        "provider": "gitlab",
+        "org": "acmecorp-legacy",
+        "repos": ["acmecorp-legacy/billing"],
+        "metrics": {
+          "avg_pr_cycle_time_hours": 54.2
+        }
+      }
+    ],
+    "issue_tracker": [],
+    "ci": [],
+    "ai_tooling": []
+  },
+  "survey": {
+    "template_version": "1.0.0",
+    "modules": [],
+    "responses_by_team": [],
+    "aggregate_scores": {}
+  },
+  "interviews": [
+    {
+      "id": "b2c3d4e5-f6a7-4901-bcde-f23456789012",
+      "role_category": "engineering_manager",
+      "date": "2026-02-10",
+      "evidence_ids": [
+        "c3d4e5f6-a7b8-4012-cdef-345678901234",
+        "d4e5f6a7-b8c9-4123-def0-456789012345"
+      ]
+    }
+  ],
+  "artifacts": [],
+  "scores": null,
+  "deliverables": null,
+  "provenance": null
 }

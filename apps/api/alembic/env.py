@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from logging.config import fileConfig
+from typing import Any
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -13,7 +14,22 @@ if config.config_file_name is not None:
 
 from app.config import get_settings  # noqa: E402
 from app.db.base import Base  # noqa: E402
-from app.db.models import Connector, Engagement, Survey  # noqa: E402, F401
+from app.db.models import (  # noqa: E402, F401
+    Artifact,
+    AuditLog,
+    Connector,
+    ConnectorRun,
+    Deliverable,
+    Engagement,
+    EngagementTemplate,
+    Evidence,
+    Export,
+    Interview,
+    Score,
+    Survey,
+    SurveyResponse,
+    User,
+)
 
 target_metadata = Base.metadata
 
@@ -33,7 +49,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection):
+def do_run_migrations(connection: Any) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

@@ -62,9 +62,11 @@ services:
       # Require password auth for all connections (no trust / peer auth).
       POSTGRES_HOST_AUTH_METHOD: scram-sha-256
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
-    # Exposed to loopback for local development and integration tests.
+    # Exposed for local development and integration tests.
+    # Note: Docker Desktop for Mac doesn't route 127.0.0.1-bound ports correctly;
+    # use 0.0.0.0 so the host proxy forwards to the VM.
     ports:
-      - "127.0.0.1:5433:5432"
+      - "0.0.0.0:5433:5432"
     healthcheck:
       # pg_isready uses flags, not a connection string — password does not appear
       # in the process argument list visible to 'ps aux'.
