@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { Link } from "wouter";
 import {
   useGetPortfolioSummary,
@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Download, AlertTriangle, ShieldCheck } from "lucide-react";
 import { formatRelative } from "@/lib/format";
+import { stageFill, identityColor } from "@/lib/dimension-palette";
 
 const ALL = "__all__";
 
@@ -47,19 +48,25 @@ const DIM_LABEL: Record<string, string> = {
   culture: "Culture",
 };
 
-const STAGE_COLORS = [
-  "bg-muted text-muted-foreground",
-  "bg-red-500/15 text-red-600 dark:text-red-300",
-  "bg-orange-500/15 text-orange-600 dark:text-orange-300",
-  "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  "bg-lime-500/15 text-lime-700 dark:text-lime-300",
-  "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300",
-];
-
-function stageColor(stage: number | null | undefined): string {
-  if (stage == null) return STAGE_COLORS[0];
-  const i = Math.max(0, Math.min(5, Math.round(stage)));
-  return STAGE_COLORS[i];
+// Portfolio heatmap tile styling: each cell is tinted with its dimension's
+// identity hue and the stage ramp from the shared dimension palette, so a
+// cell here reads the same as the matching dimension on the Scoring page and
+// the heatmap deliverable.
+function cellStyle(
+  dimension: string,
+  stage: number | null | undefined,
+): CSSProperties {
+  if (stage == null) {
+    return {
+      backgroundColor: "hsl(var(--muted))",
+      borderColor: "hsl(var(--border))",
+    };
+  }
+  const clamped = Math.max(1, Math.min(5, Math.round(stage)));
+  return {
+    backgroundColor: stageFill(dimension, clamped),
+    borderColor: identityColor(dimension, 0.4),
+  };
 }
 
 export default function PortfolioPage() {
@@ -214,34 +221,43 @@ export default function PortfolioPage() {
             <Skeleton className="h-24 w-full" />
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              {(heatmap?.cells ?? []).map((cell) => (
-                <div
-                  key={cell.dimension}
-                  className={`rounded-lg p-4 border ${stageColor(cell.meanStage)}`}
-                  data-testid={`heatmap-cell-${cell.dimension}`}
-                >
-                  <div className="text-xs font-semibold uppercase tracking-wide opacity-80">
-                    {DIM_LABEL[cell.dimension] ?? cell.dimension}
+              {(heatmap?.cells ?? []).map((cell) => {
+                // Suppressed / no-signal cells keep the neutral muted chrome
+                // so they don't masquerade as a real score.
+                const useTint = !cell.suppressed && cell.meanStage != null;
+                const style = useTint
+                  ? cellStyle(cell.dimension, cell.meanStage)
+                  : cellStyle(cell.dimension, null);
+                return (
+                  <div
+                    key={cell.dimension}
+                    className={`rounded-lg p-4 border ${useTint ? "text-white" : "text-muted-foreground"}`}
+                    style={style}
+                    data-testid={`heatmap-cell-${cell.dimension}`}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide opacity-90">
+                      {DIM_LABEL[cell.dimension] ?? cell.dimension}
+                    </div>
+                    <div className="text-2xl font-bold mt-2 font-mono">
+                      {cell.suppressed
+                        ? "—"
+                        : cell.meanStage != null
+                          ? cell.meanStage.toFixed(1)
+                          : "—"}
+                    </div>
+                    <div className="text-xs mt-1 opacity-80">
+                      {cell.suppressed ? (
+                        <span className="inline-flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" />
+                          Suppressed
+                        </span>
+                      ) : (
+                        `${cell.count} signal${cell.count === 1 ? "" : "s"}`
+                      )}
+                    </div>
                   </div>
-                  <div className="text-2xl font-bold mt-2 font-mono">
-                    {cell.suppressed
-                      ? "—"
-                      : cell.meanStage != null
-                        ? cell.meanStage.toFixed(1)
-                        : "—"}
-                  </div>
-                  <div className="text-xs mt-1 opacity-70">
-                    {cell.suppressed ? (
-                      <span className="inline-flex items-center gap-1">
-                        <ShieldCheck className="h-3 w-3" />
-                        Suppressed
-                      </span>
-                    ) : (
-                      `${cell.count} signal${cell.count === 1 ? "" : "s"}`
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>

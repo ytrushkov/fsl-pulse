@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import {
   Dimension,
   useUpdateDeliverables,
@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 import { LockBadge } from "@/components/deliverables/lock-badge";
+import { stageFill, identityColor } from "@/lib/dimension-palette";
 
 interface ViewProps {
   engagementId: string;
@@ -124,25 +125,41 @@ export default function HeatmapView({ engagementId, deliverables }: ViewProps) {
                     const isPast = stage < currentStage;
                     const isPath = stage > currentStage && stage <= targetStage;
 
-                    let bgClass = "bg-transparent";
+                    // Confidence dials down the opacity of the dimension tint
+                    // so "low-confidence current" reads as a paler version of
+                    // the same hue — not a different colour.
+                    const currentOpacity =
+                      cellData?.confidence === "high"
+                        ? 1
+                        : cellData?.confidence === "medium"
+                          ? 0.8
+                          : 0.6;
+
+                    let className =
+                      "h-16 flex items-center justify-center font-mono rounded-md";
+                    const style: CSSProperties = {};
                     if (isCurrent) {
-                      bgClass =
-                        cellData?.confidence === "high"
-                          ? "bg-primary text-primary-foreground shadow-inner scale-[1.02] transform transition-transform rounded-md"
-                          : cellData?.confidence === "medium"
-                            ? "bg-primary/80 text-primary-foreground shadow-inner scale-[1.02] transform transition-transform rounded-md"
-                            : "bg-primary/60 text-primary-foreground shadow-inner scale-[1.02] transform transition-transform rounded-md";
+                      className +=
+                        " text-primary-foreground shadow-inner scale-[1.02] transform transition-transform";
+                      style.backgroundColor = stageFill(dim, stage);
+                      style.opacity = currentOpacity;
                     } else if (isTarget) {
-                      bgClass = "bg-accent/20 border-2 border-accent text-accent-foreground border-dashed rounded-md";
+                      className += " border-2 border-dashed";
+                      style.borderColor = identityColor(dim);
+                      style.backgroundColor = identityColor(dim, 0.12);
+                      style.color = identityColor(dim);
                     } else if (isPath) {
-                      bgClass = "bg-accent/5 border border-accent/20 rounded-md";
+                      className += " border";
+                      style.borderColor = identityColor(dim, 0.25);
+                      style.backgroundColor = identityColor(dim, 0.05);
                     } else if (isPast) {
-                      bgClass = "bg-muted/30 text-muted-foreground rounded-md";
+                      className += " text-muted-foreground";
+                      style.backgroundColor = "hsl(var(--muted) / 0.3)";
                     }
 
                     return (
                       <td key={stage} className="p-2 border-b border-transparent align-top">
-                        <div className={`h-16 flex items-center justify-center font-mono ${bgClass}`}>
+                        <div className={className} style={style}>
                           {isCurrent && "Current"}
                           {isTarget && "Target"}
                         </div>
