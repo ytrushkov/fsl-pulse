@@ -22,7 +22,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Calculator, Target, Info, AlertTriangle, FileText, CheckCircle2 } from "lucide-react";
+import { Calculator, Target, Info, AlertTriangle, FileText, CheckCircle2, Hexagon, PieChart as PieIcon } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useToast } from "@/hooks/use-toast";
 import { formatRelative } from "@/lib/format";
 import {
@@ -159,15 +160,7 @@ export default function ScoringView() {
         </div>
       ) : (
         <>
-          <Card className="mb-8">
-            <CardHeader>
-              <CardTitle className="text-lg">Maturity Radar</CardTitle>
-              <p className="text-sm text-muted-foreground">All 6 dimensions on a 1–5 scale.</p>
-            </CardHeader>
-            <CardContent>
-              <DimensionRadar dimensions={scoring.byDimension} />
-            </CardContent>
-          </Card>
+          <MaturityVizCard dimensions={scoring.byDimension} />
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {scoring.byDimension.map((dim) => (
             <OverrideDialog 
@@ -229,6 +222,159 @@ export default function ScoringView() {
         </>
       )}
     </AppLayout>
+  );
+}
+
+function MaturityVizCard({ dimensions }: { dimensions: Array<{ dimension: string; score: number; stage: number }> }) {
+  const [view, setView] = useState<"radar" | "coxcomb">("radar");
+  return (
+    <Card className="mb-8">
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle className="text-lg">Maturity Radar</CardTitle>
+          <p className="text-sm text-muted-foreground">All 6 dimensions on a 1–5 scale.</p>
+        </div>
+        <ToggleGroup
+          type="single"
+          value={view}
+          onValueChange={(v) => v && setView(v as "radar" | "coxcomb")}
+          variant="outline"
+          size="sm"
+          data-testid="toggle-maturity-viz"
+        >
+          <ToggleGroupItem value="radar" aria-label="Radar (spider) chart" data-testid="toggle-radar">
+            <Hexagon className="h-4 w-4 mr-1.5" />
+            Radar
+          </ToggleGroupItem>
+          <ToggleGroupItem value="coxcomb" aria-label="Coxcomb (polar area) chart" data-testid="toggle-coxcomb">
+            <PieIcon className="h-4 w-4 mr-1.5" />
+            Coxcomb
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </CardHeader>
+      <CardContent>
+        {view === "radar" ? (
+          <DimensionRadar dimensions={dimensions} />
+        ) : (
+          <DimensionCoxcomb dimensions={dimensions} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: string; score: number; stage: number }> }) {
+  // True coxcomb / Nightingale rose: each dimension gets an equal angular slice;
+  // the radial extent of each slice scales with score / 5. Drawn directly in SVG
+  // for predictable geometry — Recharts has no first-class coxcomb primitive.
+  const n = dimensions.length;
+  if (n === 0) return <div className="w-full h-[380px]" />;
+  const size = 380;
+  const cx = size / 2;
+  const cy = size / 2;
+  const maxR = size * 0.36;
+  const labelR = size * 0.46;
+  const sliceAngle = (2 * Math.PI) / n;
+  // Start at -90° so the first slice points up.
+  const startOffset = -Math.PI / 2 - sliceAngle / 2;
+
+  const polar = (r: number, a: number) => [cx + r * Math.cos(a), cy + r * Math.sin(a)] as const;
+
+  // Rings for the 1..5 scale guides
+  const rings = [1, 2, 3, 4, 5].map((stage) => (maxR * stage) / 5);
+
+  return (
+    <div className="w-full h-[380px] flex items-center justify-center">
+      <svg
+        viewBox={`0 0 ${size} ${size}`}
+        className="w-full h-full max-w-[520px]"
+        role="img"
+        aria-label="Coxcomb chart of maturity scores"
+        data-testid="chart-coxcomb"
+      >
+        {/* concentric guide rings */}
+        {rings.map((r, i) => (
+          <circle
+            key={i}
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke="hsl(var(--border))"
+            strokeWidth={1}
+            strokeDasharray={i === rings.length - 1 ? "0" : "2 3"}
+          />
+        ))}
+        {/* radial scale labels at top */}
+        {rings.map((r, i) => (
+          <text
+            key={`s${i}`}
+            x={cx + 4}
+            y={cy - r}
+            fontSize={10}
+            fill="hsl(var(--muted-foreground))"
+            dominantBaseline="middle"
+          >
+            {i + 1}
+          </text>
+        ))}
+        {/* slices */}
+        {dimensions.map((d, i) => {
+          const a0 = startOffset + i * sliceAngle;
+          const a1 = a0 + sliceAngle;
+          const r = (Math.max(0, Math.min(5, d.score ?? 0)) / 5) * maxR;
+          const [x0, y0] = polar(r, a0);
+          const [x1, y1] = polar(r, a1);
+          const largeArc = sliceAngle > Math.PI ? 1 : 0;
+          const path = `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${largeArc} 1 ${x1} ${y1} Z`;
+          // Vary opacity by score so higher scores read stronger.
+          const opacity = 0.35 + (d.score / 5) * 0.45;
+          const labelAngle = a0 + sliceAngle / 2;
+          const [lx, ly] = polar(labelR, labelAngle);
+          const anchor =
+            Math.abs(Math.cos(labelAngle)) < 0.15
+              ? "middle"
+              : Math.cos(labelAngle) > 0
+                ? "start"
+                : "end";
+          return (
+            <g key={d.dimension}>
+              <path
+                d={path}
+                fill="hsl(var(--primary))"
+                fillOpacity={opacity}
+                stroke="hsl(var(--primary))"
+                strokeWidth={1.5}
+              >
+                <title>{`${d.dimension}: ${d.score.toFixed(2)} / 5 (Stage ${d.stage})`}</title>
+              </path>
+              <text
+                x={lx}
+                y={ly}
+                fontSize={12}
+                fontWeight={600}
+                fill="hsl(var(--foreground))"
+                textAnchor={anchor}
+                dominantBaseline="middle"
+                style={{ textTransform: "capitalize" }}
+              >
+                {d.dimension}
+              </text>
+              <text
+                x={lx}
+                y={ly + 14}
+                fontSize={11}
+                fill="hsl(var(--muted-foreground))"
+                textAnchor={anchor}
+                dominantBaseline="middle"
+              >
+                {d.score.toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
