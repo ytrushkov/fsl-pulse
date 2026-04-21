@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,8 +79,8 @@ export default function ScoringView() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Scoring Dashboard</h1>
-          <p className="text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
-            Maturity evaluation across 6 key dimensions.
+          <div className="text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+            <span>Maturity evaluation across 6 key dimensions.</span>
             {scoring?.computedAt && (
               <span className="text-xs border rounded px-1.5 py-0.5 bg-muted/50">
                 Last computed {formatRelative(scoring.computedAt)}
@@ -91,7 +91,7 @@ export default function ScoringView() {
                 Rubric v{scoring.rubricVersion}
               </Badge>
             )}
-          </p>
+          </div>
         </div>
         <div className="flex gap-2">
           <UpgradeRubricButton
@@ -559,6 +559,9 @@ function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: st
           <DialogTitle className="text-2xl capitalize">
             {dimension.dimension} Details
           </DialogTitle>
+          <DialogDescription>
+            Review the AI rationale and evidence breakdown, or apply a manual override for this dimension's score.
+          </DialogDescription>
         </DialogHeader>
         
         <div className="grid gap-6 py-4">
@@ -717,6 +720,9 @@ function UpgradeRubricButton({
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Upgrade scoring rubric</DialogTitle>
+          <DialogDescription>
+            Preview how a newer rubric version would change this engagement's scores before applying it.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div className="space-y-1.5">

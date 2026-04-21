@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { formatRelative, formatDate } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { MessagesSquare, Plus, Trash2, Edit } from "lucide-react";
@@ -151,6 +151,9 @@ function CreateInterviewDialog({ engagementId }: { engagementId: string }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add Interview</DialogTitle>
+          <DialogDescription>
+            Capture a new interview record with the interviewee's name, role, and team to attach evidence later.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div className="space-y-2">
