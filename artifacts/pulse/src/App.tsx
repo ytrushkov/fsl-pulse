@@ -4,8 +4,10 @@ import {
   SignIn,
   SignUp,
   Show,
+  useAuth,
   useClerk,
 } from "@clerk/react";
+import { setAuthTokenGetter } from "@workspace/api-client-react";
 import {
   Switch,
   Route,
@@ -153,6 +155,34 @@ function SignUpPage() {
       />
     </div>
   );
+}
+
+/**
+ * Wire Clerk's session token into the API client so every request carries
+ * `Authorization: Bearer <jwt>`. This makes auth work even when third-party
+ * cookies are blocked (e.g. Pulse rendered inside the workspace iframe).
+ * Cookies still work as a fallback when the browser allows them.
+ */
+function ClerkApiAuthBridge() {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (isSignedIn) {
+      setAuthTokenGetter(async () => {
+        try {
+          return await getToken();
+        } catch {
+          return null;
+        }
+      });
+    } else {
+      setAuthTokenGetter(null);
+    }
+    return () => {
+      setAuthTokenGetter(null);
+    };
+  }, [isLoaded, isSignedIn, getToken]);
+  return null;
 }
 
 function ClerkQueryClientCacheInvalidator() {
@@ -320,6 +350,7 @@ function ClerkProviderWithRoutes() {
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
       <QueryClientProvider client={queryClient}>
+        <ClerkApiAuthBridge />
         <ClerkQueryClientCacheInvalidator />
         <TooltipProvider>
           <AppRouter />
