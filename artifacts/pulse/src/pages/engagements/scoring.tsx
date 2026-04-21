@@ -297,7 +297,7 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
     return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${largeArc} 1 ${x1} ${y1} Z`;
   };
 
-  const handleMove = (e: React.MouseEvent, idx: number) => {
+  const handleMove = (e: React.MouseEvent<Element>, idx: number) => {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect) return;
     setTip({ x: e.clientX - rect.left, y: e.clientY - rect.top, idx });
