@@ -169,10 +169,20 @@ export default function ScoringView() {
               engagementId={id} 
               dimension={dim} 
               trigger={
-                <Card className="cursor-pointer hover-elevate hover:border-primary/50 transition-all h-full flex flex-col">
-                  <CardHeader className="pb-2">
+                <Card className="cursor-pointer hover-elevate hover:border-primary/50 transition-all h-full flex flex-col overflow-hidden relative">
+                  <div
+                    aria-hidden
+                    className="absolute inset-x-0 top-0 h-1"
+                    style={{ background: identityColor(dim.dimension) }}
+                  />
+                  <CardHeader className="pb-2 pt-4">
                     <div className="flex justify-between items-start">
-                      <CardTitle className="text-lg capitalize">
+                      <CardTitle className="text-lg capitalize flex items-center gap-2">
+                        <span
+                          aria-hidden
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ background: identityColor(dim.dimension) }}
+                        />
                         {dim.dimension}
                       </CardTitle>
                       <Badge variant="outline" className={getConfidenceColor(dim.confidence)}>
@@ -182,7 +192,12 @@ export default function ScoringView() {
                   </CardHeader>
                   <CardContent className="flex-1">
                     <div className="flex items-end gap-2 mb-4">
-                      <span className="text-3xl font-bold font-mono">{dim.score.toFixed(1)}</span>
+                      <span
+                        className="text-3xl font-bold font-mono"
+                        style={{ color: stageTextColor(dim.dimension, dim.stage) }}
+                      >
+                        {dim.score.toFixed(1)}
+                      </span>
                       <span className="text-sm text-muted-foreground font-medium mb-1">Stage {dim.stage}</span>
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-3" title={dim.rationale}>
@@ -226,8 +241,64 @@ export default function ScoringView() {
   );
 }
 
+// Per-dimension color system: each dimension owns a hue (identity), and a
+// 5-stop saturation/lightness ramp keyed to the stage (1..5) encodes maturity
+// intensity. Pale stops = weak maturity; vivid stops = strong maturity.
+const DIMENSION_HUE: Record<string, number> = {
+  tooling: 232,
+  measurement: 178,
+  process: 268,
+  people: 38,
+  governance: 348,
+  culture: 152,
+};
+const DEFAULT_HUE = 220;
+
+function dimensionHue(dimension: string): number {
+  return DIMENSION_HUE[dimension.toLowerCase()] ?? DEFAULT_HUE;
+}
+
+// Fill ramp for chart wedges. Pale/desaturated at stage 1 → vivid at stage 5.
+// Pairs with fill-opacity in the chart; not used as foreground text.
+const STAGE_FILL_RAMP: Array<{ s: number; l: number }> = [
+  { s: 32, l: 68 }, // stage 1
+  { s: 48, l: 60 }, // stage 2
+  { s: 62, l: 52 }, // stage 3
+  { s: 74, l: 46 }, // stage 4
+  { s: 86, l: 42 }, // stage 5
+];
+
+// Foreground-text ramp for the big score number. Lower L at every stop so
+// the tint stays legible on the card background in both light and dark mode.
+// Stage progression is conveyed by saturation; lightness only nudges slightly.
+const STAGE_TEXT_RAMP: Array<{ s: number; l: number }> = [
+  { s: 38, l: 42 },
+  { s: 55, l: 40 },
+  { s: 70, l: 38 },
+  { s: 82, l: 36 },
+  { s: 92, l: 34 },
+];
+
+function clampStage(stage: number): number {
+  return Math.max(1, Math.min(5, Math.round(stage || 1)));
+}
+
+function stageFill(dimension: string, stage: number): string {
+  const ramp = STAGE_FILL_RAMP[clampStage(stage) - 1]!;
+  return `hsl(${dimensionHue(dimension)}, ${ramp.s}%, ${ramp.l}%)`;
+}
+
+function stageTextColor(dimension: string, stage: number): string {
+  const ramp = STAGE_TEXT_RAMP[clampStage(stage) - 1]!;
+  return `hsl(${dimensionHue(dimension)}, ${ramp.s}%, ${ramp.l}%)`;
+}
+
+function identityColor(dimension: string, alpha = 1): string {
+  return `hsla(${dimensionHue(dimension)}, 72%, 50%, ${alpha})`;
+}
+
 function MaturityVizCard({ dimensions }: { dimensions: Array<{ dimension: string; score: number; stage: number }> }) {
-  const [view, setView] = useState<"radar" | "coxcomb">("radar");
+  const [view, setView] = useState<"radar" | "coxcomb">("coxcomb");
   return (
     <Card className="mb-8">
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
@@ -375,9 +446,9 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
                   d: { duration: 0.7, delay: i * 0.06, ease: [0.22, 1, 0.36, 1] },
                   opacity: { duration: 0.25, delay: i * 0.06 },
                 }}
-                fill="hsl(var(--primary))"
+                fill={stageFill(d.dimension, d.stage)}
                 fillOpacity={fillOpacity}
-                stroke="hsl(var(--primary))"
+                stroke={identityColor(d.dimension)}
                 strokeWidth={strokeWidth}
                 style={{ cursor: "pointer", transition: "fill-opacity 150ms, stroke-width 150ms" }}
                 onMouseEnter={(e) => {
