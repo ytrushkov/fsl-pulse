@@ -419,18 +419,6 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
               >
                 {d.dimension}
               </text>
-              <text
-                x={lx}
-                y={ly + 14}
-                fontSize={11}
-                fill="hsl(var(--muted-foreground))"
-                fillOpacity={isDimmed ? 0.55 : 1}
-                textAnchor={anchor}
-                dominantBaseline="middle"
-                style={{ pointerEvents: "none", transition: "fill-opacity 150ms" }}
-              >
-                Stage {d.stage}
-              </text>
             </g>
           );
         })}
