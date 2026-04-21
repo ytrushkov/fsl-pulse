@@ -20,6 +20,7 @@ tags:
   - name: exports
   - name: ai
   - name: dashboard
+  - name: storage
 
 paths:
   /healthz:
@@ -784,6 +785,40 @@ paths:
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
+
+  /engagements/{id}/storage/uploads/request-url:
+    post:
+      operationId: requestUploadUrl
+      tags: [storage]
+      summary: Request a presigned URL to upload an artifact binary to object storage.
+      description: |
+        The client posts file metadata and receives a short-lived presigned PUT URL
+        plus the canonical objectPath (e.g. `/objects/uploads/<uuid>`). The browser
+        then uploads the bytes directly to GCS, and finally calls
+        `POST /engagements/{id}/artifacts` with the returned `objectPath` to register
+        the artifact. The endpoint is scoped to the engagement so membership is
+        enforced and the server can bind the issued objectPath to the calling user;
+        only that user may later register an artifact for it (BOLA defence).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadUrlRequest" }
+      responses:
+        "200":
+          description: Presigned upload URL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadUrlResponse" }
+        "400":
+          description: Missing or invalid required fields.
+        "500":
+          description: Failed to generate upload URL.
 
   /engagements/{id}/evidence:
     get:
@@ -1900,10 +1935,29 @@ components:
         # MIME type of the original uploaded file (e.g. "application/pdf").
         # Optional — defaults to "text/plain" when omitted (legacy paste flow).
         mimeType: { type: string }
-        # Base64-encoded original file bytes, served back by the download
-        # endpoint. Optional — when omitted the download endpoint streams
-        # `content` as text/plain.
-        dataBase64: { type: string }
+        # Object storage path for the uploaded binary, e.g. `/objects/uploads/<uuid>`.
+        # Returned by `POST /storage/uploads/request-url`. Optional — when omitted
+        # the download endpoint streams `content` as text/plain (legacy paste flow).
+        objectPath: { type: string }
+        # Original file size in bytes. Used to populate the `sizeBytes` column
+        # for binary uploads (we can't infer it from `content` alone). Ignored
+        # when `objectPath` is omitted.
+        sizeBytes: { type: integer }
+
+    UploadUrlRequest:
+      type: object
+      required: [name, size, contentType]
+      properties:
+        name: { type: string, minLength: 1 }
+        size: { type: integer, minimum: 1 }
+        contentType: { type: string, minLength: 1 }
+
+    UploadUrlResponse:
+      type: object
+      required: [uploadURL, objectPath]
+      properties:
+        uploadURL: { type: string, format: uri }
+        objectPath: { type: string }
 
     DimensionScore:
       type: object

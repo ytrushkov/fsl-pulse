@@ -275,14 +275,54 @@ export const artifactDocsTable = pgTable(
     // MIME type of the original uploaded file. Defaults to text/plain so legacy
     // rows (where content was the whole document) keep working.
     mimeType: text("mime_type").notNull().default("text/plain"),
-    // Base64-encoded original file bytes. Stored inline so the download
-    // endpoint can serve the original PDF/document. Empty string means there
-    // is no separate binary (e.g. paste-only legacy uploads — the download
-    // endpoint falls back to streaming `content` as text/plain in that case).
-    dataBase64: text("data_base64").notNull().default(""),
+    // Object storage path of the original file bytes (e.g.
+    // `/objects/uploads/<uuid>`). Set when the user uploads a binary
+    // (PDF/DOCX/etc) — bytes live in App Storage, not Postgres, so the
+    // database stays lean and we can store documents larger than the old
+    // 25 MB inline-base64 cap. Empty string means there is no separate
+    // binary (paste-only uploads, where the download endpoint falls back
+    // to streaming `content` as text/plain).
+    objectKey: text("object_key").notNull().default(""),
+    // DEPRECATED — kept in the schema only so that `drizzle-kit push` on
+    // upgrade does not auto-drop the column before the runtime backfill
+    // (`migrateLegacyArtifactBlobs`) has had a chance to copy any
+    // remaining bytes into object storage. The backfill drops this
+    // column itself once every row is migrated. Once production has
+    // been confirmed clean, remove this field in a follow-up.
+    dataBase64: text("data_base64"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({ engIdx: index("artifact_docs_engagement_idx").on(t.engagementId) }),
+);
+
+// Server-issued upload intents that bind a presigned object-storage URL to
+// the engagement and user that requested it. Without this gate, knowing
+// (or guessing) any `/objects/uploads/<uuid>` would let an attacker
+// register that object as their own artifact and read it back through the
+// authorized download endpoint — a BOLA. At create-artifact time we look
+// up an unconsumed, non-expired intent matching (engagementId, userId,
+// objectKey), then mark it consumed so the same key can't be re-used.
+export const artifactUploadIntentsTable = pgTable(
+  "artifact_upload_intents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagementsTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    objectKey: text("object_key").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    keyIdx: index("artifact_upload_intents_key_idx").on(t.objectKey),
+    engIdx: index("artifact_upload_intents_engagement_idx").on(t.engagementId),
+  }),
 );
 
 // Versioned rubrics. The shipped v1.0.0 is bootstrapped on first server

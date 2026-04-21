@@ -1,6 +1,9 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { migrateLegacyConnectorTokens } from "./lib/migrations";
+import {
+  migrateLegacyArtifactBlobs,
+  migrateLegacyConnectorTokens,
+} from "./lib/migrations";
 import { startScheduler } from "./lib/scheduler";
 import { startSurveyScheduler } from "./lib/survey-scheduler";
 import { ensureSeedRubric } from "./lib/rubric-store";
@@ -38,6 +41,24 @@ app.listen(port, (err) => {
       }
     })
     .catch((e) => logger.error({ err: e }, "Token migration failed"));
+
+  // One-shot backfill of inline base64 artifact blobs into object storage.
+  // No-op once the legacy `data_base64` column has been dropped. Without
+  // this, upgrading a deployment that still carries inline blobs would
+  // silently lose the original PDFs because the new download endpoint only
+  // streams from object_key.
+  migrateLegacyArtifactBlobs()
+    .then((summary) => {
+      if (
+        summary.scanned > 0 ||
+        summary.migrated > 0 ||
+        summary.failed > 0 ||
+        summary.legacyColumnDropped
+      ) {
+        logger.info(summary, "Legacy artifact blob migration completed");
+      }
+    })
+    .catch((e) => logger.error({ err: e }, "Artifact blob migration failed"));
 
   // Make sure a baseline rubric exists before scoring runs. Idempotent.
   ensureSeedRubric().catch((e) =>

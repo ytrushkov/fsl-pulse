@@ -72,6 +72,8 @@ import type {
   UpdateRubricDraftBody,
   UpdateSurveyInput,
   UpgradeScoringRubricBody,
+  UploadUrlRequest,
+  UploadUrlResponse,
   VerifyConnectorConfigInput,
 } from "./api.schemas";
 
@@ -4215,6 +4217,101 @@ export function useDownloadArtifactDoc<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * The client posts file metadata and receives a short-lived presigned PUT URL
+plus the canonical objectPath (e.g. `/objects/uploads/<uuid>`). The browser
+then uploads the bytes directly to GCS, and finally calls
+`POST /engagements/{id}/artifacts` with the returned `objectPath` to register
+the artifact. The endpoint is scoped to the engagement so membership is
+enforced and the server can bind the issued objectPath to the calling user;
+only that user may later register an artifact for it (BOLA defence).
+
+ * @summary Request a presigned URL to upload an artifact binary to object storage.
+ */
+export const getRequestUploadUrlUrl = (id: string) => {
+  return `/api/engagements/${id}/storage/uploads/request-url`;
+};
+
+export const requestUploadUrl = async (
+  id: string,
+  uploadUrlRequest: UploadUrlRequest,
+  options?: RequestInit,
+): Promise<UploadUrlResponse> => {
+  return customFetch<UploadUrlResponse>(getRequestUploadUrlUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(uploadUrlRequest),
+  });
+};
+
+export const getRequestUploadUrlMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof requestUploadUrl>>,
+    TError,
+    { id: string; data: BodyType<UploadUrlRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof requestUploadUrl>>,
+  TError,
+  { id: string; data: BodyType<UploadUrlRequest> },
+  TContext
+> => {
+  const mutationKey = ["requestUploadUrl"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof requestUploadUrl>>,
+    { id: string; data: BodyType<UploadUrlRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return requestUploadUrl(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RequestUploadUrlMutationResult = NonNullable<
+  Awaited<ReturnType<typeof requestUploadUrl>>
+>;
+export type RequestUploadUrlMutationBody = BodyType<UploadUrlRequest>;
+export type RequestUploadUrlMutationError = ErrorType<void>;
+
+/**
+ * @summary Request a presigned URL to upload an artifact binary to object storage.
+ */
+export const useRequestUploadUrl = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof requestUploadUrl>>,
+    TError,
+    { id: string; data: BodyType<UploadUrlRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof requestUploadUrl>>,
+  TError,
+  { id: string; data: BodyType<UploadUrlRequest> },
+  TContext
+> => {
+  return useMutation(getRequestUploadUrlMutationOptions(options));
+};
 
 export const getListEngagementEvidenceUrl = (id: string) => {
   return `/api/engagements/${id}/evidence`;

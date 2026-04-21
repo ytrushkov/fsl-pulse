@@ -6,11 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface CreateArtifactInput {
-  filename: string;
-  kind: string;
-  content: string;
-  mimeType?: string;
-  objectPath?: string;
-  sizeBytes?: number;
+export interface UploadUrlResponse {
+  uploadURL: string;
+  objectPath: string;
 }

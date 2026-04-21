@@ -1,10 +1,23 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, and, desc, isNull, gt } from "drizzle-orm";
 import {
   db,
   artifactDocsTable,
-  evidenceTable,
+  artifactUploadIntentsTable,
 } from "@workspace/db";
+import { paramId } from "../lib/util";
+import { requireResourceMember } from "../middlewares/auth";
+import { recordActivity } from "../lib/audit";
+import {
+  DOCX_MIME,
+  PPTX_MIME,
+  extractDocxText,
+  extractPptxText,
+} from "../lib/document-extract";
+import {
+  ObjectStorageService,
+  ObjectNotFoundError,
+} from "../lib/objectStorage";
 
 // MIME types we allow uploaders to declare. Anything else is coerced to
 // `application/octet-stream` on serve so a malicious upload can't be
@@ -18,7 +31,8 @@ const ALLOWED_MIME = new Set<string>([
 ]);
 // MIME types whose text we extract server-side (mammoth for docx, OOXML
 // slide-text scrape for pptx). Listed separately because the client never
-// pre-extracts these — it just hands us the raw binary.
+// pre-extracts these — it just hands us the raw binary which now lives in
+// object storage by the time this handler runs.
 const SERVER_EXTRACTABLE_MIME = new Set<string>([DOCX_MIME, PPTX_MIME]);
 // Only these types are safe to render inline in the browser. Anything else
 // (including PDFs that happen to declare an unknown subtype) is forced as
@@ -27,17 +41,19 @@ const INLINE_SAFE_MIME = new Set<string>([
   "application/pdf",
   "text/plain",
 ]);
-import { paramId } from "../lib/util";
-import { requireResourceMember } from "../middlewares/auth";
-import { recordActivity } from "../lib/audit";
-import {
-  DOCX_MIME,
-  PPTX_MIME,
-  extractDocxText,
-  extractPptxText,
-} from "../lib/document-extract";
 
 const router: IRouter = Router();
+const objectStorage = new ObjectStorageService();
+
+// Presigned-URL TTL is 15 min in objectStorage.ts; keep the intent TTL the
+// same so we never let a client register an objectKey whose presigned PUT
+// has already expired.
+const UPLOAD_INTENT_TTL_MS = 15 * 60 * 1000;
+// Hard ceiling on a single artifact upload (server-enforced; the frontend
+// caps at 100 MB but we don't trust the client). Without this, a logged-in
+// user could request URLs for arbitrarily large objects and run up storage
+// cost.
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 const requireArtifactMember = requireResourceMember({
   paramName: "artifactId",
@@ -60,15 +76,10 @@ function shape(a: typeof artifactDocsTable.$inferSelect) {
     sizeBytes: a.sizeBytes,
     extractedSummary: a.extractedSummary,
     mimeType: a.mimeType,
-    hasBinary: Boolean(a.dataBase64 && a.dataBase64.length > 0),
+    hasBinary: Boolean(a.objectKey && a.objectKey.length > 0),
     createdAt: a.createdAt.toISOString(),
   };
 }
-
-// Cap inline-base64 uploads at ~25MB of decoded bytes. base64 inflates by ~4/3,
-// so the payload itself can be ~33MB — well below Express' default JSON limit
-// once we bump it. Anything larger than this should move to object storage.
-const MAX_BINARY_BYTES = 25 * 1024 * 1024;
 
 router.get("/engagements/:id/artifacts", async (req, res): Promise<void> => {
   const id = paramId(req.params.id);
@@ -76,9 +87,9 @@ router.get("/engagements/:id/artifacts", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  // Project metadata columns only — never load `dataBase64` here. Pulling
-  // every binary blob into memory just to serve a list view would balloon
-  // memory use and slow the page to a crawl as the vault grows.
+  // Project metadata columns only — we no longer need to special-case the
+  // binary column since `object_key` is just a short string, but we still
+  // skip `content` to keep the list payload small.
   const rows = await db
     .select({
       id: artifactDocsTable.id,
@@ -88,10 +99,8 @@ router.get("/engagements/:id/artifacts", async (req, res): Promise<void> => {
       sizeBytes: artifactDocsTable.sizeBytes,
       extractedSummary: artifactDocsTable.extractedSummary,
       mimeType: artifactDocsTable.mimeType,
+      objectKey: artifactDocsTable.objectKey,
       createdAt: artifactDocsTable.createdAt,
-      // Cheap boolean derived in SQL — avoids shipping the whole base64
-      // string just to compute `hasBinary` client-side.
-      hasBinary: sql<boolean>`length(${artifactDocsTable.dataBase64}) > 0`,
     })
     .from(artifactDocsTable)
     .where(eq(artifactDocsTable.engagementId, id))
@@ -105,11 +114,69 @@ router.get("/engagements/:id/artifacts", async (req, res): Promise<void> => {
       sizeBytes: r.sizeBytes,
       extractedSummary: r.extractedSummary,
       mimeType: r.mimeType,
-      hasBinary: Boolean(r.hasBinary),
+      hasBinary: Boolean(r.objectKey && r.objectKey.length > 0),
       createdAt: r.createdAt.toISOString(),
     })),
   );
 });
+
+// Issue a presigned upload URL scoped to this engagement and the calling
+// user. Path is intentionally nested under `/engagements/:id/...` so the
+// existing engagement-membership wrapper gates it; any newly issued
+// objectKey is recorded as an upload intent and must be consumed by a
+// matching POST /engagements/:id/artifacts before it can ever be served.
+router.post(
+  "/engagements/:id/storage/uploads/request-url",
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const user = req.authedUser;
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const b = req.body ?? {};
+    const name = typeof b.name === "string" ? b.name.trim() : "";
+    const size = Number(b.size);
+    const contentType =
+      typeof b.contentType === "string" ? b.contentType.trim() : "";
+    if (!name || !contentType || !Number.isFinite(size) || size <= 0) {
+      res.status(400).json({ error: "name, size, contentType required" });
+      return;
+    }
+    if (size > MAX_UPLOAD_BYTES) {
+      res
+        .status(413)
+        .json({ error: `File too large (max ${MAX_UPLOAD_BYTES} bytes)` });
+      return;
+    }
+    // Reject upfront any MIME the artifact route would coerce to
+    // octet-stream. Issuing presigned URLs for arbitrary types only invites
+    // wasted bandwidth + storage cost.
+    const declared = contentType.toLowerCase();
+    if (!ALLOWED_MIME.has(declared)) {
+      res.status(415).json({ error: "Unsupported content type" });
+      return;
+    }
+    try {
+      const uploadURL = await objectStorage.getObjectEntityUploadURL();
+      const objectPath = objectStorage.normalizeObjectEntityPath(uploadURL);
+      await db.insert(artifactUploadIntentsTable).values({
+        engagementId: id,
+        userId: user.id,
+        objectKey: objectPath,
+        expiresAt: new Date(Date.now() + UPLOAD_INTENT_TTL_MS),
+      });
+      res.json({ uploadURL, objectPath });
+    } catch (err) {
+      req.log.error({ err }, "Failed to issue upload URL");
+      res.status(500).json({ error: "Failed to generate upload URL" });
+    }
+  },
+);
 
 router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
   const id = paramId(req.params.id);
@@ -133,36 +200,73 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
   const mimeType = ALLOWED_MIME.has(requestedMime)
     ? requestedMime
     : "application/octet-stream";
-  const dataBase64 = typeof b.dataBase64 === "string" ? b.dataBase64 : "";
-  // Decoded byte size — used both for the size column (so the UI can show
-  // "1.2 MB" rather than the inflated base64 length) and for the cap check.
+
+  // The browser uploaded the binary directly to GCS via a presigned URL
+  // and is now telling us the canonical objectPath plus the original byte
+  // size. Verify this objectKey matches an upload intent we issued to
+  // *this* user for *this* engagement and hasn't already been consumed —
+  // otherwise an authenticated user could register someone else's object
+  // and read it back via the authorized download route (BOLA).
+  let objectKey = "";
   let binaryBytes = 0;
-  let binaryBuffer: Buffer | null = null;
-  if (dataBase64) {
-    binaryBuffer = Buffer.from(dataBase64, "base64");
-    binaryBytes = binaryBuffer.length;
-    if (binaryBytes > MAX_BINARY_BYTES) {
-      res.status(413).json({
-        error: `File too large. Max ${MAX_BINARY_BYTES / (1024 * 1024)}MB.`,
-      });
+  let intentId: string | null = null;
+  if (typeof b.objectPath === "string" && b.objectPath.trim()) {
+    const candidate = b.objectPath.trim();
+    if (!candidate.startsWith("/objects/")) {
+      res.status(400).json({ error: "Invalid objectPath" });
       return;
     }
+    const user = req.authedUser;
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const now = new Date();
+    const [intent] = await db
+      .select()
+      .from(artifactUploadIntentsTable)
+      .where(
+        and(
+          eq(artifactUploadIntentsTable.objectKey, candidate),
+          eq(artifactUploadIntentsTable.engagementId, id),
+          eq(artifactUploadIntentsTable.userId, user.id),
+          isNull(artifactUploadIntentsTable.consumedAt),
+          gt(artifactUploadIntentsTable.expiresAt, now),
+        ),
+      )
+      .limit(1);
+    if (!intent) {
+      res
+        .status(400)
+        .json({ error: "Unknown or expired upload — request a new URL" });
+      return;
+    }
+    objectKey = candidate;
+    intentId = intent.id;
+    const parsedSize = Number(b.sizeBytes);
+    if (Number.isFinite(parsedSize) && parsedSize > 0) {
+      binaryBytes = Math.min(Math.floor(parsedSize), MAX_UPLOAD_BYTES);
+    }
   }
-  // For docx/pptx the client ships the raw binary and an empty `content`;
-  // we extract the readable text here so the rubric/evidence pipeline has
-  // something to grep over. PDFs are still extracted in the browser via
-  // pdf.js (kept off the server to avoid the worker/font baggage).
+
+  // For docx/pptx the client uploads only the raw binary (to object storage)
+  // and ships an empty `content`. Fetch the bytes back from GCS here and run
+  // the appropriate extractor so the rubric/evidence pipeline still has
+  // searchable text. PDFs are extracted in the browser via pdf.js (kept off
+  // the server to avoid the worker/font baggage).
   let content = b.content;
   if (
-    binaryBuffer &&
+    objectKey &&
     SERVER_EXTRACTABLE_MIME.has(mimeType) &&
     content.trim().length === 0
   ) {
     try {
+      const file = await objectStorage.getObjectEntityFile(objectKey);
+      const [buffer] = await file.download();
       content =
         mimeType === DOCX_MIME
-          ? await extractDocxText(binaryBuffer)
-          : await extractPptxText(binaryBuffer);
+          ? await extractDocxText(buffer)
+          : await extractPptxText(buffer);
     } catch (err) {
       res.status(422).json({
         error: `Could not extract text from ${b.filename}: ${
@@ -178,21 +282,33 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
     }
   }
   const summary = content.length > 280 ? content.slice(0, 277) + "..." : content;
-  const [a] = await db
-    .insert(artifactDocsTable)
-    .values({
-      engagementId: id,
-      filename: b.filename,
-      kind: b.kind,
-      // Prefer the original binary size; fall back to the extracted text size
-      // for legacy paste-only uploads.
-      sizeBytes: binaryBytes || Buffer.byteLength(content, "utf8"),
-      content,
-      extractedSummary: summary,
-      mimeType,
-      dataBase64,
-    })
-    .returning();
+  // Insert + intent consume in a single transaction so a failed insert
+  // doesn't burn the intent (preventing a retry) and a successful insert
+  // never leaves an unconsumed intent for the same object key around.
+  const a = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(artifactDocsTable)
+      .values({
+        engagementId: id,
+        filename: b.filename,
+        kind: b.kind,
+        // Prefer the original binary size; fall back to the extracted text size
+        // for legacy paste-only uploads.
+        sizeBytes: binaryBytes || Buffer.byteLength(content, "utf8"),
+        content,
+        extractedSummary: summary,
+        mimeType,
+        objectKey,
+      })
+      .returning();
+    if (intentId) {
+      await tx
+        .update(artifactUploadIntentsTable)
+        .set({ consumedAt: new Date() })
+        .where(eq(artifactUploadIntentsTable.id, intentId));
+    }
+    return row;
+  });
   await recordActivity(req, {
     engagementId: id,
     kind: "artifact_uploaded",
@@ -220,17 +336,11 @@ router.get(
       res.status(404).json({ error: "Not found" });
       return;
     }
-    // When a binary is on file, stream it back with the stored MIME type so
-    // PDFs render in the browser. For legacy paste-only rows fall back to the
-    // extracted text content as text/plain.
-    const buffer = a.dataBase64
-      ? Buffer.from(a.dataBase64, "base64")
-      : Buffer.from(a.content, "utf8");
     // Re-validate the stored MIME against the allowlist on every serve.
     // Rows uploaded before this allowlist landed, or rows somehow holding a
     // disallowed value, are demoted to octet-stream + attachment so they
     // can never be rendered as HTML/script in the app origin.
-    const storedMime = a.dataBase64 ? a.mimeType : "text/plain";
+    const storedMime = a.objectKey ? a.mimeType : "text/plain";
     const safeMime = ALLOWED_MIME.has(storedMime)
       ? storedMime
       : "application/octet-stream";
@@ -249,8 +359,49 @@ router.get(
       "Content-Disposition",
       `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(a.filename)}`,
     );
-    res.setHeader("Content-Length", String(buffer.length));
-    res.end(buffer);
+
+    if (!a.objectKey) {
+      // Two cases land here:
+      //   1. Legacy paste-only upload (no binary): stream the extracted text.
+      //   2. Pre-migration row whose binary still lives in `data_base64`
+      //      because the runtime backfill hasn't run yet (or failed for this
+      //      row). Decode and stream the inline base64 so users aren't
+      //      locked out of their own files mid-rollout.
+      if (a.dataBase64 && a.dataBase64.length > 0) {
+        const buffer = Buffer.from(a.dataBase64, "base64");
+        res.setHeader("Content-Length", String(buffer.length));
+        res.end(buffer);
+        return;
+      }
+      const buffer = Buffer.from(a.content, "utf8");
+      res.setHeader("Content-Length", String(buffer.length));
+      res.end(buffer);
+      return;
+    }
+
+    // Binary lives in object storage — stream it through this endpoint so
+    // the requireArtifactMember auth check still gates access. We deliberately
+    // do NOT 302 to the GCS signed URL because that would leak data to anyone
+    // with the artifactId.
+    try {
+      const file = await objectStorage.getObjectEntityFile(a.objectKey);
+      const [metadata] = await file.getMetadata();
+      if (metadata.size) {
+        res.setHeader("Content-Length", String(metadata.size));
+      }
+      file.createReadStream().on("error", (err) => {
+        req.log.error({ err }, "Object storage stream error");
+        if (!res.headersSent) res.status(500).json({ error: "Read failed" });
+        else res.end();
+      }).pipe(res);
+    } catch (err) {
+      if (err instanceof ObjectNotFoundError) {
+        res.status(404).json({ error: "Object not found" });
+        return;
+      }
+      req.log.error({ err }, "Failed to fetch artifact object");
+      res.status(500).json({ error: "Failed to read object" });
+    }
   },
 );
 
@@ -267,6 +418,17 @@ router.delete("/artifacts/:artifactId", requireArtifactMember, async (req, res):
     .limit(1);
   await db.delete(artifactDocsTable).where(eq(artifactDocsTable.id, id));
   if (doomed) {
+    // Best-effort cleanup of the GCS object — failures here shouldn't block
+    // the API response since the row is already gone, but we log them so an
+    // operator can sweep orphaned objects later if needed.
+    if (doomed.objectKey) {
+      try {
+        const file = await objectStorage.getObjectEntityFile(doomed.objectKey);
+        await file.delete({ ignoreNotFound: true });
+      } catch (err) {
+        req.log.warn({ err, objectKey: doomed.objectKey }, "Failed to delete artifact object");
+      }
+    }
     await recordActivity(req, {
       engagementId: doomed.engagementId,
       kind: "artifact_deleted",

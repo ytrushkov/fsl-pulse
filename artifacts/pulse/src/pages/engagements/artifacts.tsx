@@ -59,27 +59,15 @@ const ACCEPTED_MIME = [
   DOCX_MIME,
   PPTX_MIME,
 ].join(",");
-const MAX_BYTES = 25 * 1024 * 1024;
+// Bytes now flow through object storage rather than inline JSON, so we can
+// comfortably accept larger documents than the legacy 25 MB inline cap.
+const MAX_BYTES = 100 * 1024 * 1024;
 
 function formatBytes(n: number): string {
   if (!n) return "—";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function arrayBufferToBase64(buf: ArrayBuffer): string {
-  // Chunk the conversion so we don't blow the call stack on large PDFs.
-  const bytes = new Uint8Array(buf);
-  const CHUNK = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(
-      null,
-      bytes.subarray(i, i + CHUNK) as unknown as number[],
-    );
-  }
-  return btoa(binary);
 }
 
 async function extractPdfText(buf: ArrayBuffer): Promise<string> {
@@ -107,7 +95,10 @@ async function extractPdfText(buf: ArrayBuffer): Promise<string> {
 type StagedFile = {
   file: File;
   mimeType: string;
-  dataBase64: string;
+  // The raw bytes; uploaded directly to object storage via a presigned URL
+  // when the user clicks "Upload" — never sent inline through our JSON API.
+  // null for plain-text/markdown uploads where the extracted text IS the file.
+  buffer: ArrayBuffer | null;
   extractedText: string;
 };
 
@@ -159,14 +150,14 @@ export default function ArtifactsView() {
           file.type === PPTX_MIME || lname.endsWith(".pptx");
         let mime: string;
         let extractedText = "";
-        // For text/markdown there's no value in shipping a separate base64
-        // copy — the extracted content IS the file. Skipping the binary
-        // also keeps us comfortably under the 40MB JSON body limit since
-        // base64 inflates payload by ~33%.
-        let dataBase64 = "";
+        // For text/markdown there's no value in uploading the bytes
+        // separately — the extracted content IS the file, and the download
+        // endpoint streams `content` back as text/plain. Only PDFs need the
+        // original binary preserved in object storage.
+        let buffer: ArrayBuffer | null = null;
         if (isPdf) {
           mime = "application/pdf";
-          dataBase64 = arrayBufferToBase64(buf);
+          buffer = buf;
           try {
             extractedText = await extractPdfText(buf);
           } catch (err) {
@@ -174,17 +165,19 @@ export default function ArtifactsView() {
             extractedText = `[PDF: ${file.name} — text extraction failed, original file still attached]`;
           }
         } else if (isDocx || isPptx) {
-          // Office docs are extracted server-side (mammoth for .docx, an
-          // OOXML scrape for .pptx) so we don't have to ship those parsers
-          // — and their fonts/workers — into the browser bundle.
+          // Office docs go straight to object storage as raw bytes; the
+          // server fetches them back from GCS to extract text after the
+          // record is created (mammoth for .docx, an OOXML scrape for
+          // .pptx) so we don't ship those parsers — and their fonts /
+          // workers — into the browser bundle.
           mime = isDocx ? DOCX_MIME : PPTX_MIME;
-          dataBase64 = arrayBufferToBase64(buf);
+          buffer = buf;
           extractedText = "";
         } else {
           mime = isMarkdown ? "text/markdown" : "text/plain";
           extractedText = new TextDecoder().decode(buf);
         }
-        setStaged({ file, mimeType: mime, dataBase64, extractedText });
+        setStaged({ file, mimeType: mime, buffer, extractedText });
         if (!filename) setFilename(file.name);
         setContent(extractedText);
       } catch (err) {
@@ -219,13 +212,58 @@ export default function ArtifactsView() {
     setContent("");
   };
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     // For docx/pptx the server extracts text after upload, so an empty
     // `content` is legitimate as long as we have a binary to hand it.
     const hasServerExtractable =
       staged?.mimeType === DOCX_MIME || staged?.mimeType === PPTX_MIME;
     if (!filename) return;
     if (!content && !hasServerExtractable) return;
+    let objectPath: string | undefined;
+    let sizeBytes: number | undefined;
+    // PDFs (and any future binary type) get uploaded straight to object
+    // storage via a presigned URL. We only register the artifact metadata
+    // through our API once the bytes are safely in GCS, so a network
+    // failure mid-upload doesn't leave a broken DB row behind.
+    if (staged && staged.buffer) {
+      try {
+        const token = await getToken().catch(() => null);
+        const reqRes = await fetch(`/api/engagements/${id}/storage/uploads/request-url`, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            name: staged.file.name,
+            size: staged.file.size,
+            contentType: staged.mimeType,
+          }),
+        });
+        if (!reqRes.ok) throw new Error(`Upload URL request failed (HTTP ${reqRes.status})`);
+        const { uploadURL, objectPath: path } = (await reqRes.json()) as {
+          uploadURL: string;
+          objectPath: string;
+        };
+        const putRes = await fetch(uploadURL, {
+          method: "PUT",
+          headers: { "Content-Type": staged.mimeType },
+          body: staged.buffer,
+        });
+        if (!putRes.ok) throw new Error(`Direct upload failed (HTTP ${putRes.status})`);
+        objectPath = path;
+        sizeBytes = staged.file.size;
+      } catch (err) {
+        toast({
+          variant: "destructive",
+          title: "Upload failed",
+          description: err instanceof Error ? err.message : "Could not upload file",
+        });
+        return;
+      }
+    }
+
     createArtifact.mutate(
       {
         id,
@@ -236,11 +274,9 @@ export default function ArtifactsView() {
           ...(staged
             ? {
                 mimeType: staged.mimeType,
-                // Only attach the binary when we actually have one (PDFs).
-                // Text uploads round-trip via `content` alone.
-                ...(staged.dataBase64
-                  ? { dataBase64: staged.dataBase64 }
-                  : {}),
+                // Only attach the binary path when we actually have one
+                // (PDFs). Text uploads round-trip via `content` alone.
+                ...(objectPath ? { objectPath, sizeBytes } : {}),
               }
             : {}),
         },
@@ -398,7 +434,7 @@ export default function ArtifactsView() {
                       Drop a file or click to browse
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      PDF, DOCX, PPTX, TXT, MD · up to 25 MB
+                      PDF, DOCX, PPTX, TXT, MD · up to 100 MB
                     </div>
                   </>
                 )}

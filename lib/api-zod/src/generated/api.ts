@@ -1161,7 +1161,8 @@ export const CreateArtifactBody = zod.object({
   kind: zod.string(),
   content: zod.string(),
   mimeType: zod.string().optional(),
-  dataBase64: zod.string().optional(),
+  objectPath: zod.string().optional(),
+  sizeBytes: zod.number().optional(),
 });
 
 export const DeleteArtifactDocParams = zod.object({
@@ -1170,6 +1171,32 @@ export const DeleteArtifactDocParams = zod.object({
 
 export const DownloadArtifactDocParams = zod.object({
   artifactId: zod.coerce.string(),
+});
+
+/**
+ * The client posts file metadata and receives a short-lived presigned PUT URL
+plus the canonical objectPath (e.g. `/objects/uploads/<uuid>`). The browser
+then uploads the bytes directly to GCS, and finally calls
+`POST /engagements/{id}/artifacts` with the returned `objectPath` to register
+the artifact. The endpoint is scoped to the engagement so membership is
+enforced and the server can bind the issued objectPath to the calling user;
+only that user may later register an artifact for it (BOLA defence).
+
+ * @summary Request a presigned URL to upload an artifact binary to object storage.
+ */
+export const RequestUploadUrlParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const RequestUploadUrlBody = zod.object({
+  name: zod.string().min(1),
+  size: zod.number().min(1),
+  contentType: zod.string().min(1),
+});
+
+export const RequestUploadUrlResponse = zod.object({
+  uploadURL: zod.string().url(),
+  objectPath: zod.string(),
 });
 
 export const ListEngagementEvidenceParams = zod.object({
