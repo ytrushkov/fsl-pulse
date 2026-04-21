@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useParams } from "wouter";
 import {
   useGetScoring,
@@ -267,7 +268,13 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
   // True coxcomb / Nightingale rose: each dimension gets an equal angular slice;
   // the radial extent of each slice scales with score / 5. Drawn directly in SVG
   // for predictable geometry — Recharts has no first-class coxcomb primitive.
+  // Animation, hover-highlight, and tooltip are layered on with framer-motion +
+  // local state so the experience matches the radar view's polish.
   const n = dimensions.length;
+  const [hovered, setHovered] = useState<number | null>(null);
+  const [tip, setTip] = useState<{ x: number; y: number; idx: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
   if (n === 0) return <div className="w-full h-[380px]" />;
   const size = 380;
   const cx = size / 2;
@@ -275,16 +282,36 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
   const maxR = size * 0.36;
   const labelR = size * 0.46;
   const sliceAngle = (2 * Math.PI) / n;
-  // Start at -90° so the first slice points up.
   const startOffset = -Math.PI / 2 - sliceAngle / 2;
-
   const polar = (r: number, a: number) => [cx + r * Math.cos(a), cy + r * Math.sin(a)] as const;
-
-  // Rings for the 1..5 scale guides
   const rings = [1, 2, 3, 4, 5].map((stage) => (maxR * stage) / 5);
 
+  const pathFor = (score: number, a0: number, a1: number) => {
+    const r = (Math.max(0, Math.min(5, score)) / 5) * maxR;
+    if (r <= 0.0001) return `M ${cx} ${cy} Z`;
+    const [x0, y0] = polar(r, a0);
+    const [x1, y1] = polar(r, a1);
+    const largeArc = sliceAngle > Math.PI ? 1 : 0;
+    return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${largeArc} 1 ${x1} ${y1} Z`;
+  };
+
+  const handleMove = (e: React.MouseEvent, idx: number) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setTip({ x: e.clientX - rect.left, y: e.clientY - rect.top, idx });
+  };
+
+  const tipDim = tip ? dimensions[tip.idx] : null;
+
   return (
-    <div className="w-full h-[380px] flex items-center justify-center">
+    <div
+      ref={wrapRef}
+      className="w-full h-[380px] flex items-center justify-center relative"
+      onMouseLeave={() => {
+        setHovered(null);
+        setTip(null);
+      }}
+    >
       <svg
         viewBox={`0 0 ${size} ${size}`}
         className="w-full h-full max-w-[520px]"
@@ -322,13 +349,11 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
         {dimensions.map((d, i) => {
           const a0 = startOffset + i * sliceAngle;
           const a1 = a0 + sliceAngle;
-          const r = (Math.max(0, Math.min(5, d.score ?? 0)) / 5) * maxR;
-          const [x0, y0] = polar(r, a0);
-          const [x1, y1] = polar(r, a1);
-          const largeArc = sliceAngle > Math.PI ? 1 : 0;
-          const path = `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${largeArc} 1 ${x1} ${y1} Z`;
-          // Vary opacity by score so higher scores read stronger.
-          const opacity = 0.35 + (d.score / 5) * 0.45;
+          const baseOpacity = 0.35 + (d.score / 5) * 0.45;
+          const isHovered = hovered === i;
+          const isDimmed = hovered !== null && !isHovered;
+          const fillOpacity = isHovered ? 0.95 : isDimmed ? baseOpacity * 0.45 : baseOpacity;
+          const strokeWidth = isHovered ? 2.5 : 1.5;
           const labelAngle = a0 + sliceAngle / 2;
           const [lx, ly] = polar(labelR, labelAngle);
           const anchor =
@@ -337,26 +362,39 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
               : Math.cos(labelAngle) > 0
                 ? "start"
                 : "end";
+          const finalPath = pathFor(d.score, a0, a1);
+          const initialPath = pathFor(0, a0, a1);
           return (
             <g key={d.dimension}>
-              <path
-                d={path}
+              <motion.path
+                initial={{ d: initialPath, opacity: 0 }}
+                animate={{ d: finalPath, opacity: 1 }}
+                transition={{
+                  d: { duration: 0.7, delay: i * 0.06, ease: [0.22, 1, 0.36, 1] },
+                  opacity: { duration: 0.25, delay: i * 0.06 },
+                }}
                 fill="hsl(var(--primary))"
-                fillOpacity={opacity}
+                fillOpacity={fillOpacity}
                 stroke="hsl(var(--primary))"
-                strokeWidth={1.5}
-              >
-                <title>{`${d.dimension}: ${d.score.toFixed(2)} / 5 (Stage ${d.stage})`}</title>
-              </path>
+                strokeWidth={strokeWidth}
+                style={{ cursor: "pointer", transition: "fill-opacity 150ms, stroke-width 150ms" }}
+                onMouseEnter={(e) => {
+                  setHovered(i);
+                  handleMove(e as unknown as React.MouseEvent, i);
+                }}
+                onMouseMove={(e) => handleMove(e as unknown as React.MouseEvent, i)}
+                data-testid={`coxcomb-slice-${d.dimension}`}
+              />
               <text
                 x={lx}
                 y={ly}
                 fontSize={12}
                 fontWeight={600}
                 fill="hsl(var(--foreground))"
+                fillOpacity={isDimmed ? 0.55 : 1}
                 textAnchor={anchor}
                 dominantBaseline="middle"
-                style={{ textTransform: "capitalize" }}
+                style={{ textTransform: "capitalize", pointerEvents: "none", transition: "fill-opacity 150ms" }}
               >
                 {d.dimension}
               </text>
@@ -365,8 +403,10 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
                 y={ly + 14}
                 fontSize={11}
                 fill="hsl(var(--muted-foreground))"
+                fillOpacity={isDimmed ? 0.55 : 1}
                 textAnchor={anchor}
                 dominantBaseline="middle"
+                style={{ pointerEvents: "none", transition: "fill-opacity 150ms" }}
               >
                 {d.score.toFixed(1)}
               </text>
@@ -374,6 +414,30 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
           );
         })}
       </svg>
+      <AnimatePresence>
+        {tip && tipDim && (
+          <motion.div
+            key="coxcomb-tip"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.12 }}
+            className="pointer-events-none absolute z-10 rounded-md border px-3 py-2 text-xs shadow-md"
+            style={{
+              left: Math.min(Math.max(tip.x + 12, 0), (wrapRef.current?.clientWidth ?? 999) - 180),
+              top: Math.max(tip.y - 8, 0),
+              background: "hsl(var(--card))",
+              borderColor: "hsl(var(--border))",
+              color: "hsl(var(--foreground))",
+            }}
+            data-testid="coxcomb-tooltip"
+          >
+            <div className="font-semibold capitalize mb-0.5">{tipDim.dimension}</div>
+            <div className="font-mono">{tipDim.score.toFixed(2)} / 5</div>
+            <div className="text-muted-foreground">Stage {tipDim.stage}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
