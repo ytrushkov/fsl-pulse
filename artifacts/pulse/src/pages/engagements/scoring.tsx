@@ -286,9 +286,11 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
   const polar = (r: number, a: number) => [cx + r * Math.cos(a), cy + r * Math.sin(a)] as const;
   const rings = [1, 2, 3, 4, 5].map((stage) => (maxR * stage) / 5);
 
+  // Always emits the same `M-L-A-Z` command structure so framer-motion can
+  // smoothly interpolate `d` between initial (radius epsilon) and final.
   const pathFor = (score: number, a0: number, a1: number) => {
-    const r = (Math.max(0, Math.min(5, score)) / 5) * maxR;
-    if (r <= 0.0001) return `M ${cx} ${cy} Z`;
+    const rRaw = (Math.max(0, Math.min(5, score)) / 5) * maxR;
+    const r = Math.max(rRaw, 0.5);
     const [x0, y0] = polar(r, a0);
     const [x1, y1] = polar(r, a1);
     const largeArc = sliceAngle > Math.PI ? 1 : 0;
