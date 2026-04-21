@@ -294,7 +294,7 @@ function stageTextColor(dimension: string, stage: number): string {
 }
 
 function identityColor(dimension: string, alpha = 1): string {
-  return `hsla(${dimensionHue(dimension)}, 72%, 50%, ${alpha})`;
+  return `hsla(${dimensionHue(dimension)}, 88%, 48%, ${alpha})`;
 }
 
 function MaturityVizCard({ dimensions }: { dimensions: Array<{ dimension: string; score: number; stage: number }> }) {
