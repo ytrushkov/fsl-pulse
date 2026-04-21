@@ -42,8 +42,23 @@ import { formatRelative } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@clerk/react";
 
-const ACCEPTED_MIME =
-  ".pdf,.txt,.md,.markdown,application/pdf,text/plain,text/markdown";
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PPTX_MIME =
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const ACCEPTED_MIME = [
+  ".pdf",
+  ".txt",
+  ".md",
+  ".markdown",
+  ".docx",
+  ".pptx",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  DOCX_MIME,
+  PPTX_MIME,
+].join(",");
 const MAX_BYTES = 25 * 1024 * 1024;
 
 function formatBytes(n: number): string {
@@ -138,6 +153,10 @@ export default function ArtifactsView() {
           file.type === "text/markdown" ||
           lname.endsWith(".md") ||
           lname.endsWith(".markdown");
+        const isDocx =
+          file.type === DOCX_MIME || lname.endsWith(".docx");
+        const isPptx =
+          file.type === PPTX_MIME || lname.endsWith(".pptx");
         let mime: string;
         let extractedText = "";
         // For text/markdown there's no value in shipping a separate base64
@@ -154,6 +173,13 @@ export default function ArtifactsView() {
             console.warn("PDF text extraction failed", err);
             extractedText = `[PDF: ${file.name} — text extraction failed, original file still attached]`;
           }
+        } else if (isDocx || isPptx) {
+          // Office docs are extracted server-side (mammoth for .docx, an
+          // OOXML scrape for .pptx) so we don't have to ship those parsers
+          // — and their fonts/workers — into the browser bundle.
+          mime = isDocx ? DOCX_MIME : PPTX_MIME;
+          dataBase64 = arrayBufferToBase64(buf);
+          extractedText = "";
         } else {
           mime = isMarkdown ? "text/markdown" : "text/plain";
           extractedText = new TextDecoder().decode(buf);
@@ -194,7 +220,12 @@ export default function ArtifactsView() {
   };
 
   const handleUpload = () => {
-    if (!filename || !content) return;
+    // For docx/pptx the server extracts text after upload, so an empty
+    // `content` is legitimate as long as we have a binary to hand it.
+    const hasServerExtractable =
+      staged?.mimeType === DOCX_MIME || staged?.mimeType === PPTX_MIME;
+    if (!filename) return;
+    if (!content && !hasServerExtractable) return;
     createArtifact.mutate(
       {
         id,
@@ -304,7 +335,7 @@ export default function ArtifactsView() {
             <CardHeader>
               <CardTitle>Upload Artifact</CardTitle>
               <CardDescription>
-                Drop a PDF or text file, or paste content below.
+                Drop a PDF, Word doc, slide deck, or text file — or paste content below.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -367,7 +398,7 @@ export default function ArtifactsView() {
                       Drop a file or click to browse
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      PDF, TXT, MD · up to 25 MB
+                      PDF, DOCX, PPTX, TXT, MD · up to 25 MB
                     </div>
                   </>
                 )}
@@ -396,7 +427,10 @@ export default function ArtifactsView() {
                   Extracted Content
                   {staged ? (
                     <span className="ml-2 text-xs text-muted-foreground font-normal">
-                      (auto-extracted, editable)
+                      {staged.mimeType === DOCX_MIME ||
+                      staged.mimeType === PPTX_MIME
+                        ? "(extracted on the server after upload)"
+                        : "(auto-extracted, editable)"}
                     </span>
                   ) : null}
                 </Label>
@@ -404,7 +438,12 @@ export default function ArtifactsView() {
                   id="content"
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder="Paste document text here, or drop a file above…"
+                  placeholder={
+                    staged?.mimeType === DOCX_MIME ||
+                    staged?.mimeType === PPTX_MIME
+                      ? "Leave blank — text will be extracted from the file after upload."
+                      : "Paste document text here, or drop a file above…"
+                  }
                   className="min-h-[160px] font-mono text-sm"
                 />
               </div>
@@ -412,7 +451,12 @@ export default function ArtifactsView() {
                 className="w-full"
                 onClick={handleUpload}
                 disabled={
-                  createArtifact.isPending || !filename || !content || isProcessing
+                  createArtifact.isPending ||
+                  !filename ||
+                  isProcessing ||
+                  (!content &&
+                    staged?.mimeType !== DOCX_MIME &&
+                    staged?.mimeType !== PPTX_MIME)
                 }
               >
                 {createArtifact.isPending ? (

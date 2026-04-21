@@ -13,7 +13,13 @@ const ALLOWED_MIME = new Set<string>([
   "application/pdf",
   "text/plain",
   "text/markdown",
+  DOCX_MIME,
+  PPTX_MIME,
 ]);
+// MIME types whose text we extract server-side (mammoth for docx, OOXML
+// slide-text scrape for pptx). Listed separately because the client never
+// pre-extracts these — it just hands us the raw binary.
+const SERVER_EXTRACTABLE_MIME = new Set<string>([DOCX_MIME, PPTX_MIME]);
 // Only these types are safe to render inline in the browser. Anything else
 // (including PDFs that happen to declare an unknown subtype) is forced as
 // an attachment download.
@@ -24,6 +30,12 @@ const INLINE_SAFE_MIME = new Set<string>([
 import { paramId } from "../lib/util";
 import { requireResourceMember } from "../middlewares/auth";
 import { recordActivity } from "../lib/audit";
+import {
+  DOCX_MIME,
+  PPTX_MIME,
+  extractDocxText,
+  extractPptxText,
+} from "../lib/document-extract";
 
 const router: IRouter = Router();
 
@@ -125,8 +137,10 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
   // Decoded byte size — used both for the size column (so the UI can show
   // "1.2 MB" rather than the inflated base64 length) and for the cap check.
   let binaryBytes = 0;
+  let binaryBuffer: Buffer | null = null;
   if (dataBase64) {
-    binaryBytes = Math.floor((dataBase64.length * 3) / 4);
+    binaryBuffer = Buffer.from(dataBase64, "base64");
+    binaryBytes = binaryBuffer.length;
     if (binaryBytes > MAX_BINARY_BYTES) {
       res.status(413).json({
         error: `File too large. Max ${MAX_BINARY_BYTES / (1024 * 1024)}MB.`,
@@ -134,7 +148,36 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
       return;
     }
   }
-  const summary = b.content.length > 280 ? b.content.slice(0, 277) + "..." : b.content;
+  // For docx/pptx the client ships the raw binary and an empty `content`;
+  // we extract the readable text here so the rubric/evidence pipeline has
+  // something to grep over. PDFs are still extracted in the browser via
+  // pdf.js (kept off the server to avoid the worker/font baggage).
+  let content = b.content;
+  if (
+    binaryBuffer &&
+    SERVER_EXTRACTABLE_MIME.has(mimeType) &&
+    content.trim().length === 0
+  ) {
+    try {
+      content =
+        mimeType === DOCX_MIME
+          ? await extractDocxText(binaryBuffer)
+          : await extractPptxText(binaryBuffer);
+    } catch (err) {
+      res.status(422).json({
+        error: `Could not extract text from ${b.filename}: ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+      });
+      return;
+    }
+    if (!content.trim()) {
+      // Keep a placeholder so downstream code that assumes non-empty content
+      // (summary slicing, rubric search) still has something deterministic.
+      content = `[${b.filename} — no extractable text found]`;
+    }
+  }
+  const summary = content.length > 280 ? content.slice(0, 277) + "..." : content;
   const [a] = await db
     .insert(artifactDocsTable)
     .values({
@@ -143,8 +186,8 @@ router.post("/engagements/:id/artifacts", async (req, res): Promise<void> => {
       kind: b.kind,
       // Prefer the original binary size; fall back to the extracted text size
       // for legacy paste-only uploads.
-      sizeBytes: binaryBytes || Buffer.byteLength(b.content, "utf8"),
-      content: b.content,
+      sizeBytes: binaryBytes || Buffer.byteLength(content, "utf8"),
+      content,
       extractedSummary: summary,
       mimeType,
       dataBase64,
