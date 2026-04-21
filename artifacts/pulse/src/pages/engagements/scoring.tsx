@@ -193,12 +193,12 @@ export default function ScoringView() {
                   <CardContent className="flex-1">
                     <div className="flex items-end gap-2 mb-4">
                       <span
-                        className="text-3xl font-bold font-mono"
+                        className="text-3xl font-bold"
                         style={{ color: stageTextColor(dim.dimension, dim.stage) }}
                       >
-                        {dim.score.toFixed(1)}
+                        Stage {dim.stage}
                       </span>
-                      <span className="text-sm text-muted-foreground font-medium mb-1">Stage {dim.stage}</span>
+                      <span className="text-sm text-muted-foreground font-medium font-mono mb-1">Score {dim.score.toFixed(1)}</span>
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-3" title={dim.rationale}>
                       {dim.rationale}
@@ -359,8 +359,8 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
 
   // Always emits the same `M-L-A-Z` command structure so framer-motion can
   // smoothly interpolate `d` between initial (radius epsilon) and final.
-  const pathFor = (score: number, a0: number, a1: number) => {
-    const rRaw = (Math.max(0, Math.min(5, score)) / 5) * maxR;
+  const pathFor = (stage: number, a0: number, a1: number) => {
+    const rRaw = (Math.max(0, Math.min(5, stage)) / 5) * maxR;
     const r = Math.max(rRaw, 0.5);
     const [x0, y0] = polar(r, a0);
     const [x1, y1] = polar(r, a1);
@@ -415,14 +415,14 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
             fill="hsl(var(--muted-foreground))"
             dominantBaseline="middle"
           >
-            {i + 1}
+            Stage {i + 1}
           </text>
         ))}
         {/* slices */}
         {dimensions.map((d, i) => {
           const a0 = startOffset + i * sliceAngle;
           const a1 = a0 + sliceAngle;
-          const baseOpacity = 0.35 + (d.score / 5) * 0.45;
+          const baseOpacity = 0.35 + (d.stage / 5) * 0.45;
           const isHovered = hovered === i;
           const isDimmed = hovered !== null && !isHovered;
           const fillOpacity = isHovered ? 0.95 : isDimmed ? baseOpacity * 0.45 : baseOpacity;
@@ -435,7 +435,7 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
               : Math.cos(labelAngle) > 0
                 ? "start"
                 : "end";
-          const finalPath = pathFor(d.score, a0, a1);
+          const finalPath = pathFor(d.stage, a0, a1);
           const initialPath = pathFor(0, a0, a1);
           return (
             <g key={d.dimension}>
@@ -481,7 +481,7 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
                 dominantBaseline="middle"
                 style={{ pointerEvents: "none", transition: "fill-opacity 150ms" }}
               >
-                {d.score.toFixed(1)}
+                Stage {d.stage}
               </text>
             </g>
           );
@@ -506,8 +506,8 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
             data-testid="coxcomb-tooltip"
           >
             <div className="font-semibold capitalize mb-0.5">{tipDim.dimension}</div>
-            <div className="font-mono">{tipDim.score.toFixed(2)} / 5</div>
-            <div className="text-muted-foreground">Stage {tipDim.stage}</div>
+            <div className="font-semibold">Stage {tipDim.stage}</div>
+            <div className="text-muted-foreground text-[11px] font-mono">Score {tipDim.score.toFixed(2)} / 5</div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -518,6 +518,7 @@ function DimensionCoxcomb({ dimensions }: { dimensions: Array<{ dimension: strin
 function DimensionRadar({ dimensions }: { dimensions: Array<{ dimension: string; score: number; stage: number }> }) {
   const data = dimensions.map((d) => ({
     dimension: d.dimension.charAt(0).toUpperCase() + d.dimension.slice(1),
+    stage: d.stage,
     score: Number((d.score ?? 0).toFixed(2)),
     fullMark: 5,
   }));
@@ -534,12 +535,13 @@ function DimensionRadar({ dimensions }: { dimensions: Array<{ dimension: string;
             angle={90}
             domain={[0, 5]}
             tickCount={6}
+            tickFormatter={(v: number) => (v >= 1 ? `Stage ${v}` : "")}
             tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
             stroke="hsl(var(--border))"
           />
           <Radar
             name="Maturity"
-            dataKey="score"
+            dataKey="stage"
             stroke="hsl(var(--primary))"
             fill="hsl(var(--primary))"
             fillOpacity={0.35}
@@ -550,6 +552,7 @@ function DimensionRadar({ dimensions }: { dimensions: Array<{ dimension: string;
               fontSize: 12,
               fontWeight: 700,
               offset: 8,
+              formatter: (v: number) => `Stage ${v}`,
             }}
           />
           <Tooltip
@@ -559,7 +562,11 @@ function DimensionRadar({ dimensions }: { dimensions: Array<{ dimension: string;
               borderRadius: 8,
               color: "hsl(var(--foreground))",
             }}
-            formatter={(v: number) => [`${v.toFixed(2)} / 5`, "Score"]}
+            formatter={(v: number, _name: string, item: { payload?: { score?: number } }) => {
+              const score = item?.payload?.score;
+              const secondary = typeof score === "number" ? ` (Score ${score.toFixed(2)})` : "";
+              return [`Stage ${v}${secondary}`, "Maturity"];
+            }}
           />
         </RadarChart>
       </ResponsiveContainer>
