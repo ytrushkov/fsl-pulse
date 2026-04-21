@@ -6,6 +6,7 @@ import {
 } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface TopbarProps {
   engagementId?: string;
@@ -67,6 +68,7 @@ export function Topbar({ engagementId }: TopbarProps) {
           >
             Get Started
           </a>
+          <ThemeToggle />
           <UserButton
             appearance={{
               elements: {
