@@ -115,19 +115,22 @@ export default function ScoringView() {
               ) : scoring?.overall ? (
                 <>
                   <span className="text-4xl font-bold font-mono leading-none">
-                    {scoring.overall.score.toFixed(1)}
+                    {scoring.overall.score.toFixed(2)}
                   </span>
-                  <span className="text-xl font-medium mb-1">/ 5.0</span>
+                  <span className="text-xl font-medium mb-1">/ 5.00</span>
                 </>
               ) : (
                 <span className="text-2xl font-bold">Unscored</span>
               )}
             </div>
+            <p className="text-xs text-primary-foreground/70 mt-2">
+              Weighted average across 6 dimensions
+            </p>
           </div>
           {scoring?.overall && (
             <div className="text-right">
-              <div className="text-sm font-medium uppercase tracking-wider text-primary-foreground/80 mb-1">Target Stage</div>
-              <div className="text-2xl">Stage {Math.ceil(scoring.overall.score)}</div>
+              <div className="text-sm font-medium uppercase tracking-wider text-primary-foreground/80 mb-1">Current Stage</div>
+              <div className="text-2xl">Stage {scoring.overall.stage}</div>
             </div>
           )}
         </div>
