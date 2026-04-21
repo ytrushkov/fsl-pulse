@@ -772,6 +772,19 @@ paths:
         "204":
           description: Deleted
 
+  /artifacts/{artifactId}/download:
+    get:
+      operationId: downloadArtifactDoc
+      tags: [artifacts]
+      parameters:
+        - { name: artifactId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Original file bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
   /engagements/{id}/evidence:
     get:
       operationId: listEngagementEvidence
@@ -1865,6 +1878,13 @@ components:
         kind: { type: string }
         sizeBytes: { type: integer }
         extractedSummary: { type: string }
+        # MIME type of the original uploaded file. The download endpoint uses
+        # this to set Content-Type so PDFs render natively in the browser.
+        mimeType: { type: string }
+        # True when an original binary is on file (PDF/DOCX). False for
+        # legacy paste-only uploads. Drives whether the UI shows a "Download"
+        # vs a plain text view.
+        hasBinary: { type: boolean }
         createdAt: { type: string }
 
     CreateArtifactInput:
@@ -1873,7 +1893,17 @@ components:
       properties:
         filename: { type: string }
         kind: { type: string }
+        # Extracted plain-text representation. Used for analysis & summaries.
+        # For PDFs the client extracts text and sends it here; for plain
+        # text/markdown uploads it's the raw file body.
         content: { type: string }
+        # MIME type of the original uploaded file (e.g. "application/pdf").
+        # Optional — defaults to "text/plain" when omitted (legacy paste flow).
+        mimeType: { type: string }
+        # Base64-encoded original file bytes, served back by the download
+        # endpoint. Optional — when omitted the download endpoint streams
+        # `content` as text/plain.
+        dataBase64: { type: string }
 
     DimensionScore:
       type: object

@@ -745,6 +745,8 @@ export interface ArtifactDoc {
   kind: string;
   sizeBytes?: number;
   extractedSummary?: string;
+  mimeType?: string;
+  hasBinary?: boolean;
   createdAt: string;
 }
 
@@ -752,6 +754,8 @@ export interface CreateArtifactInput {
   filename: string;
   kind: string;
   content: string;
+  mimeType?: string;
+  dataBase64?: string;
 }
 
 export type DimensionScoreSignalsBySource = {

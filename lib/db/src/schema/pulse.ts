@@ -272,6 +272,14 @@ export const artifactDocsTable = pgTable(
     sizeBytes: integer("size_bytes").notNull().default(0),
     content: text("content").notNull().default(""),
     extractedSummary: text("extracted_summary").notNull().default(""),
+    // MIME type of the original uploaded file. Defaults to text/plain so legacy
+    // rows (where content was the whole document) keep working.
+    mimeType: text("mime_type").notNull().default("text/plain"),
+    // Base64-encoded original file bytes. Stored inline so the download
+    // endpoint can serve the original PDF/document. Empty string means there
+    // is no separate binary (e.g. paste-only legacy uploads — the download
+    // endpoint falls back to streaming `content` as text/plain in that case).
+    dataBase64: text("data_base64").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({ engIdx: index("artifact_docs_engagement_idx").on(t.engagementId) }),

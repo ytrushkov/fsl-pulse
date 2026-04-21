@@ -4134,6 +4134,88 @@ export const useDeleteArtifactDoc = <
   return useMutation(getDeleteArtifactDocMutationOptions(options));
 };
 
+export const getDownloadArtifactDocUrl = (artifactId: string) => {
+  return `/api/artifacts/${artifactId}/download`;
+};
+
+export const downloadArtifactDoc = async (
+  artifactId: string,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getDownloadArtifactDocUrl(artifactId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadArtifactDocQueryKey = (artifactId: string) => {
+  return [`/api/artifacts/${artifactId}/download`] as const;
+};
+
+export const getDownloadArtifactDocQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadArtifactDoc>>,
+  TError = ErrorType<unknown>,
+>(
+  artifactId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadArtifactDoc>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getDownloadArtifactDocQueryKey(artifactId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadArtifactDoc>>
+  > = ({ signal }) =>
+    downloadArtifactDoc(artifactId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!artifactId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadArtifactDoc>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadArtifactDocQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadArtifactDoc>>
+>;
+export type DownloadArtifactDocQueryError = ErrorType<unknown>;
+
+export function useDownloadArtifactDoc<
+  TData = Awaited<ReturnType<typeof downloadArtifactDoc>>,
+  TError = ErrorType<unknown>,
+>(
+  artifactId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadArtifactDoc>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadArtifactDocQueryOptions(artifactId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
 export const getListEngagementEvidenceUrl = (id: string) => {
   return `/api/engagements/${id}/evidence`;
 };

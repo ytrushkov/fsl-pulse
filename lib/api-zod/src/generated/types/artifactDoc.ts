@@ -13,5 +13,7 @@ export interface ArtifactDoc {
   kind: string;
   sizeBytes?: number;
   extractedSummary?: string;
+  mimeType?: string;
+  hasBinary?: boolean;
   createdAt: string;
 }

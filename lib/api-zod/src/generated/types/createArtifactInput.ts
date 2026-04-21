@@ -10,4 +10,6 @@ export interface CreateArtifactInput {
   filename: string;
   kind: string;
   content: string;
+  mimeType?: string;
+  dataBase64?: string;
 }

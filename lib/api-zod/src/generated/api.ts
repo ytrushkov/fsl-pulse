@@ -1146,6 +1146,8 @@ export const ListArtifactsResponseItem = zod.object({
   kind: zod.string(),
   sizeBytes: zod.number().optional(),
   extractedSummary: zod.string().optional(),
+  mimeType: zod.string().optional(),
+  hasBinary: zod.boolean().optional(),
   createdAt: zod.string(),
 });
 export const ListArtifactsResponse = zod.array(ListArtifactsResponseItem);
@@ -1158,9 +1160,15 @@ export const CreateArtifactBody = zod.object({
   filename: zod.string(),
   kind: zod.string(),
   content: zod.string(),
+  mimeType: zod.string().optional(),
+  dataBase64: zod.string().optional(),
 });
 
 export const DeleteArtifactDocParams = zod.object({
+  artifactId: zod.coerce.string(),
+});
+
+export const DownloadArtifactDocParams = zod.object({
   artifactId: zod.coerce.string(),
 });
 

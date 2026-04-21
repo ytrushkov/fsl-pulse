@@ -104,8 +104,11 @@ app.use(
     },
   }),
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Bumped from the 100kb default to support inline base64 file uploads
+// (artifact docs cap binary payloads at 25MB decoded ≈ 33MB base64; round
+// up so the body parser doesn't reject borderline cases).
+app.use(express.json({ limit: "40mb" }));
+app.use(express.urlencoded({ extended: true, limit: "40mb" }));
 
 app.use(clerkMiddleware());
 
