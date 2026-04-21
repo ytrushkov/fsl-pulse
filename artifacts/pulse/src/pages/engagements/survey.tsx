@@ -470,7 +470,30 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
         </CardContent>
       </Card>
 
-      {aggregates.byRole && aggregates.byRole.length > 0 && (
+      {aggregates.byRole && aggregates.byRole.length > 0 && (() => {
+        const ROLE_LABELS: Record<string, string> = {
+          ic: "Individual Contributor",
+          tl: "Tech Lead",
+          em: "Engineering Manager",
+          sm: "Senior Manager",
+          dir: "Director",
+          vp: "VP",
+          cxo: "C-Suite",
+          pm: "Product Manager",
+          po: "Product Owner",
+          ds: "Data Scientist",
+          de: "Data Engineer",
+          se: "Software Engineer",
+          sre: "Site Reliability Engineer",
+          qa: "QA Engineer",
+          des: "Designer",
+          ops: "Operations",
+          unknown: "Unknown",
+        };
+        const labelFor = (r: string) =>
+          ROLE_LABELS[r.toLowerCase()] ??
+          r.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        return (
         <Card>
           <CardHeader>
             <CardTitle>Demographic mix — by role</CardTitle>
@@ -488,7 +511,7 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={aggregates.byRole.map((r) => ({
-                    role: r.role,
+                    role: labelFor(r.role),
                     count: r.suppressed ? 4 : (r.completedCount ?? 0),
                     suppressed: r.suppressed,
                   }))}
@@ -530,7 +553,7 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
               <TableBody>
                 {aggregates.byRole.map((r, i) => (
                   <TableRow key={i}>
-                    <TableCell className="font-medium">{r.role}</TableCell>
+                    <TableCell className="font-medium">{labelFor(r.role)}</TableCell>
                     <TableCell>
                       {r.suppressed ? (
                         <span className="text-muted-foreground italic text-sm">
@@ -546,7 +569,8 @@ function SurveyResponses({ engagementId }: { engagementId: string }) {
             </Table>
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
     </div>
   );
 }
