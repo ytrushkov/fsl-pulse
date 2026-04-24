@@ -194,7 +194,7 @@ export default function PortfolioPage() {
       </Card>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <StatCard
           label="Engagements in scope"
           value={loadingSummary ? "—" : engagements.length.toString()}
@@ -203,11 +203,6 @@ export default function PortfolioPage() {
           label="Stalled engagements"
           value={loadingSummary ? "—" : stalled.length.toString()}
           tone={stalled.length > 0 ? "warn" : "ok"}
-        />
-        <StatCard
-          label="Anonymity floor"
-          value={`≥ ${heatmap?.anonymityFloor ?? 5}`}
-          subtitle="Cells below the floor are suppressed"
         />
       </div>
 
