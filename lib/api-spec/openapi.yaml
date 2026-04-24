@@ -1016,6 +1016,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Scoring" }
 
+  /engagements/{id}/scoring/narrative:
+    put:
+      operationId: setDimensionNarrative
+      tags: [scoring]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScoringNarrativeInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScoringNarrativeResponse" }
+
   /engagements/{id}/deliverables:
     get:
       operationId: getDeliverables
@@ -1971,6 +1989,10 @@ components:
           type: array
           items: { type: string }
         rationale: { type: string }
+        narrative: { type: string, nullable: true }
+        narrativeUpdatedByName: { type: string, nullable: true }
+        narrativeUpdatedByEmail: { type: string, nullable: true }
+        narrativeUpdatedAt: { type: string, nullable: true }
         overrideJustification: { type: string, nullable: true }
         overrideAuthorName: { type: string, nullable: true }
         overrideAuthorEmail: { type: string, nullable: true }
@@ -2050,6 +2072,24 @@ components:
         stage: { type: integer, minimum: 1, maximum: 5 }
         score: { type: number, nullable: true }
         justification: { type: string }
+
+    ScoringNarrativeInput:
+      type: object
+      required: [dimension, narrative]
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        narrative: { type: string, description: "Empty string clears the narrative." }
+
+    ScoringNarrativeResponse:
+      type: object
+      required: [engagementId, dimension]
+      properties:
+        engagementId: { type: string }
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        narrative: { type: string, nullable: true }
+        narrativeUpdatedByName: { type: string, nullable: true }
+        narrativeUpdatedByEmail: { type: string, nullable: true }
+        narrativeUpdatedAt: { type: string, nullable: true }
 
     HeatmapCell:
       type: object

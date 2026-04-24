@@ -4,6 +4,7 @@ import {
   evidenceTable,
   scoringTable,
   scoreOverridesTable,
+  scoringNarrativesTable,
   surveyResponsesTable,
   connectorsTable,
   connectorRunsTable,
@@ -48,6 +49,12 @@ interface DimensionAggregate {
   overrideAuthorName: string | null;
   overrideAuthorEmail: string | null;
   overrideAt: string | null;
+  // Free-text 2-line narrative the assessor authors per dimension.
+  // Lives in `scoring_narratives` so it survives recomputes.
+  narrative: string | null;
+  narrativeUpdatedByName: string | null;
+  narrativeUpdatedByEmail: string | null;
+  narrativeUpdatedAt: string | null;
 }
 
 const SIGNAL_WEIGHTS = {
@@ -207,6 +214,14 @@ async function computeWithRubric(
     .from(scoreOverridesTable)
     .where(eq(scoreOverridesTable.engagementId, engagementId));
 
+  // Pull narratives once and index by dimension so each aggregate can pick
+  // its row without an extra round-trip.
+  const narrativeRows = await db
+    .select()
+    .from(scoringNarrativesTable)
+    .where(eq(scoringNarrativesTable.engagementId, engagementId));
+  const narrativeByDim = new Map(narrativeRows.map((n) => [n.dimension, n]));
+
   const surveyMeans = await aggregateSurveyByDimension(engagementId);
   const systemSignals = await getSystemSignals(engagementId);
 
@@ -278,6 +293,8 @@ async function computeWithRubric(
           2,
         )}) | system Δ ${sysAdj.toFixed(2)} → ${combined.toFixed(2)} (stage ${stage}).`;
 
+    const narrativeRow = narrativeByDim.get(dim) ?? null;
+
     aggregates.push({
       dimension: dim,
       rawScore: combined,
@@ -290,6 +307,10 @@ async function computeWithRubric(
       overrideAuthorName,
       overrideAuthorEmail,
       overrideAt,
+      narrative: narrativeRow?.narrative ?? null,
+      narrativeUpdatedByName: narrativeRow?.updatedByName ?? null,
+      narrativeUpdatedByEmail: narrativeRow?.updatedByEmail ?? null,
+      narrativeUpdatedAt: narrativeRow?.updatedAt.toISOString() ?? null,
     });
   }
 
@@ -335,6 +356,10 @@ async function computeWithRubric(
       overrideAuthorEmail: a.overrideAuthorEmail,
       overrideAt: a.overrideAt,
       signalsBySource: a.signalsBySource,
+      narrative: a.narrative,
+      narrativeUpdatedByName: a.narrativeUpdatedByName,
+      narrativeUpdatedByEmail: a.narrativeUpdatedByEmail,
+      narrativeUpdatedAt: a.narrativeUpdatedAt,
     })),
     overall: {
       score: Number(overallScore.toFixed(2)),

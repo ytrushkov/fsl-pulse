@@ -5,6 +5,7 @@ import {
   useGetScoring,
   useComputeScoring,
   useOverrideDimensionScore,
+  useSetDimensionNarrative,
   useListRubrics,
   usePreviewScoring,
   useUpgradeScoringRubric,
@@ -204,9 +205,28 @@ export default function ScoringView() {
                       </span>
                       <span className="text-sm text-muted-foreground font-medium font-mono mb-1">Score {dim.score.toFixed(1)}</span>
                     </div>
-                    <p className="text-sm text-muted-foreground line-clamp-3" title={dim.rationale}>
-                      {dim.rationale}
-                    </p>
+                    {dim.narrative ? (
+                      <>
+                        <p
+                          className="text-sm text-foreground italic leading-snug line-clamp-3 border-l-2 pl-3 mb-2"
+                          style={{ borderColor: identityColor(dim.dimension) }}
+                          title={dim.narrative}
+                          data-testid={`narrative-${dim.dimension}`}
+                        >
+                          “{dim.narrative}”
+                        </p>
+                        <p
+                          className="text-xs text-muted-foreground line-clamp-2 font-mono"
+                          title={dim.rationale}
+                        >
+                          {dim.rationale}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground line-clamp-3" title={dim.rationale}>
+                        {dim.rationale}
+                      </p>
+                    )}
                     {dim.overrideJustification && (
                       <div className="mt-4 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs text-yellow-800 dark:text-yellow-400 flex gap-2 items-start">
                         <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -515,10 +535,36 @@ function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: st
   const [stage, setStage] = useState<number>(dimension.stage);
   const [score, setScore] = useState<number | "">(dimension.score);
   const [justification, setJustification] = useState(dimension.overrideJustification || "");
-  
+  const [narrative, setNarrative] = useState(dimension.narrative ?? "");
+
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const overrideScore = useOverrideDimensionScore();
+  const saveNarrative = useSetDimensionNarrative();
+
+  const NARRATIVE_MAX = 280;
+  const narrativeDirty = (narrative ?? "").trim() !== (dimension.narrative ?? "").trim();
+
+  const handleSaveNarrative = () => {
+    saveNarrative.mutate(
+      {
+        id: engagementId,
+        data: { dimension: dimension.dimension, narrative: narrative.trim() },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetScoringQueryKey(engagementId) });
+          toast({
+            title: narrative.trim() ? "Narrative saved" : "Narrative cleared",
+            description: `Updated ${dimension.dimension} narrative.`,
+          });
+        },
+        onError: () => {
+          toast({ variant: "destructive", title: "Error", description: "Failed to save narrative." });
+        },
+      },
+    );
+  };
 
   const handleSave = () => {
     if (!justification) {
@@ -560,14 +606,58 @@ function OverrideDialog({ engagementId, dimension, trigger }: { engagementId: st
             {dimension.dimension} Details
           </DialogTitle>
           <DialogDescription>
-            Review the AI rationale and evidence breakdown, or apply a manual override for this dimension's score.
+            Write a short assessor narrative, review the AI rationale and evidence breakdown, or apply a manual override for this dimension's score.
           </DialogDescription>
         </DialogHeader>
         
         <div className="grid gap-6 py-4">
+          <div className="border rounded-md p-4 space-y-3 bg-card">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="font-semibold text-sm uppercase tracking-wider">Assessor Narrative</h4>
+              <span className="text-xs text-muted-foreground">
+                {narrative.length}/{NARRATIVE_MAX}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground -mt-1">
+              ~2 lines describing the human picture for this dimension. Survives recompute.
+            </p>
+            <Textarea
+              data-testid={`narrative-input-${dimension.dimension}`}
+              rows={3}
+              maxLength={NARRATIVE_MAX}
+              placeholder="e.g. Engineering leadership is bought-in but tooling adoption is uneven across squads."
+              value={narrative}
+              onChange={(e) => setNarrative(e.target.value)}
+            />
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs text-muted-foreground">
+                {dimension.narrativeUpdatedByName || dimension.narrativeUpdatedByEmail
+                  ? `Last edited by ${dimension.narrativeUpdatedByName || dimension.narrativeUpdatedByEmail}${
+                      dimension.narrativeUpdatedAt
+                        ? ` · ${new Date(dimension.narrativeUpdatedAt).toLocaleDateString()}`
+                        : ""
+                    }`
+                  : "Not yet written"}
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleSaveNarrative}
+                disabled={saveNarrative.isPending || !narrativeDirty}
+                data-testid={`narrative-save-${dimension.dimension}`}
+              >
+                {saveNarrative.isPending
+                  ? "Saving..."
+                  : narrative.trim()
+                    ? "Save Narrative"
+                    : "Clear Narrative"}
+              </Button>
+            </div>
+          </div>
+
           <div className="bg-muted p-4 rounded-md">
             <h4 className="font-semibold text-sm mb-2 uppercase tracking-wider">AI Rationale</h4>
-            <p className="text-sm">{dimension.rationale}</p>
+            <p className="text-sm font-mono">{dimension.rationale}</p>
           </div>
 
           <div>

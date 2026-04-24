@@ -1258,6 +1258,10 @@ export const GetScoringResponse = zod.object({
       confidence: zod.enum(["low", "medium", "high"]),
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
+      narrative: zod.string().nullish(),
+      narrativeUpdatedByName: zod.string().nullish(),
+      narrativeUpdatedByEmail: zod.string().nullish(),
+      narrativeUpdatedAt: zod.string().nullish(),
       overrideJustification: zod.string().nullish(),
       overrideAuthorName: zod.string().nullish(),
       overrideAuthorEmail: zod.string().nullish(),
@@ -1308,6 +1312,10 @@ export const ComputeScoringResponse = zod.object({
       confidence: zod.enum(["low", "medium", "high"]),
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
+      narrative: zod.string().nullish(),
+      narrativeUpdatedByName: zod.string().nullish(),
+      narrativeUpdatedByEmail: zod.string().nullish(),
+      narrativeUpdatedAt: zod.string().nullish(),
       overrideJustification: zod.string().nullish(),
       overrideAuthorName: zod.string().nullish(),
       overrideAuthorEmail: zod.string().nullish(),
@@ -1365,6 +1373,10 @@ export const PreviewScoringResponse = zod.object({
         confidence: zod.enum(["low", "medium", "high"]),
         evidenceIds: zod.array(zod.string()),
         rationale: zod.string(),
+        narrative: zod.string().nullish(),
+        narrativeUpdatedByName: zod.string().nullish(),
+        narrativeUpdatedByEmail: zod.string().nullish(),
+        narrativeUpdatedAt: zod.string().nullish(),
         overrideJustification: zod.string().nullish(),
         overrideAuthorName: zod.string().nullish(),
         overrideAuthorEmail: zod.string().nullish(),
@@ -1409,6 +1421,10 @@ export const PreviewScoringResponse = zod.object({
           confidence: zod.enum(["low", "medium", "high"]),
           evidenceIds: zod.array(zod.string()),
           rationale: zod.string(),
+          narrative: zod.string().nullish(),
+          narrativeUpdatedByName: zod.string().nullish(),
+          narrativeUpdatedByEmail: zod.string().nullish(),
+          narrativeUpdatedAt: zod.string().nullish(),
           overrideJustification: zod.string().nullish(),
           overrideAuthorName: zod.string().nullish(),
           overrideAuthorEmail: zod.string().nullish(),
@@ -1465,6 +1481,10 @@ export const UpgradeScoringRubricResponse = zod.object({
       confidence: zod.enum(["low", "medium", "high"]),
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
+      narrative: zod.string().nullish(),
+      narrativeUpdatedByName: zod.string().nullish(),
+      narrativeUpdatedByEmail: zod.string().nullish(),
+      narrativeUpdatedAt: zod.string().nullish(),
       overrideJustification: zod.string().nullish(),
       overrideAuthorName: zod.string().nullish(),
       overrideAuthorEmail: zod.string().nullish(),
@@ -1773,6 +1793,10 @@ export const OverrideDimensionScoreResponse = zod.object({
       confidence: zod.enum(["low", "medium", "high"]),
       evidenceIds: zod.array(zod.string()),
       rationale: zod.string(),
+      narrative: zod.string().nullish(),
+      narrativeUpdatedByName: zod.string().nullish(),
+      narrativeUpdatedByEmail: zod.string().nullish(),
+      narrativeUpdatedAt: zod.string().nullish(),
       overrideJustification: zod.string().nullish(),
       overrideAuthorName: zod.string().nullish(),
       overrideAuthorEmail: zod.string().nullish(),
@@ -1793,6 +1817,38 @@ export const OverrideDimensionScoreResponse = zod.object({
     confidence: zod.enum(["low", "medium", "high"]),
   }),
   computedAt: zod.string(),
+});
+
+export const SetDimensionNarrativeParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const SetDimensionNarrativeBody = zod.object({
+  dimension: zod.enum([
+    "tooling",
+    "measurement",
+    "process",
+    "people",
+    "governance",
+    "culture",
+  ]),
+  narrative: zod.string().describe("Empty string clears the narrative."),
+});
+
+export const SetDimensionNarrativeResponse = zod.object({
+  engagementId: zod.string(),
+  dimension: zod.enum([
+    "tooling",
+    "measurement",
+    "process",
+    "people",
+    "governance",
+    "culture",
+  ]),
+  narrative: zod.string().nullish(),
+  narrativeUpdatedByName: zod.string().nullish(),
+  narrativeUpdatedByEmail: zod.string().nullish(),
+  narrativeUpdatedAt: zod.string().nullish(),
 });
 
 export const GetDeliverablesParams = zod.object({

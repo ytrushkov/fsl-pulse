@@ -20,6 +20,10 @@ export interface DimensionScore {
   confidence: Confidence;
   evidenceIds: string[];
   rationale: string;
+  narrative?: string | null;
+  narrativeUpdatedByName?: string | null;
+  narrativeUpdatedByEmail?: string | null;
+  narrativeUpdatedAt?: string | null;
   overrideJustification?: string | null;
   overrideAuthorName?: string | null;
   overrideAuthorEmail?: string | null;

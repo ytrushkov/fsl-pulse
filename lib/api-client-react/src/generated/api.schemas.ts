@@ -791,6 +791,10 @@ export interface DimensionScore {
   confidence: Confidence;
   evidenceIds: string[];
   rationale: string;
+  narrative?: string | null;
+  narrativeUpdatedByName?: string | null;
+  narrativeUpdatedByEmail?: string | null;
+  narrativeUpdatedAt?: string | null;
   overrideJustification?: string | null;
   overrideAuthorName?: string | null;
   overrideAuthorEmail?: string | null;
@@ -864,6 +868,21 @@ export interface ScoreOverrideInput {
   stage: number;
   score?: number | null;
   justification: string;
+}
+
+export interface ScoringNarrativeInput {
+  dimension: Dimension;
+  /** Empty string clears the narrative. */
+  narrative: string;
+}
+
+export interface ScoringNarrativeResponse {
+  engagementId: string;
+  dimension: Dimension;
+  narrative?: string | null;
+  narrativeUpdatedByName?: string | null;
+  narrativeUpdatedByEmail?: string | null;
+  narrativeUpdatedAt?: string | null;
 }
 
 export interface HeatmapCell {

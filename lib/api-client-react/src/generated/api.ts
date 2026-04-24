@@ -61,6 +61,8 @@ import type {
   SaveSurveyDraftInput,
   ScoreOverrideInput,
   Scoring,
+  ScoringNarrativeInput,
+  ScoringNarrativeResponse,
   SubmitSurveyResponseInput,
   Survey,
   SurveyAggregates,
@@ -5257,6 +5259,90 @@ export const useOverrideDimensionScore = <
   TContext
 > => {
   return useMutation(getOverrideDimensionScoreMutationOptions(options));
+};
+
+export const getSetDimensionNarrativeUrl = (id: string) => {
+  return `/api/engagements/${id}/scoring/narrative`;
+};
+
+export const setDimensionNarrative = async (
+  id: string,
+  scoringNarrativeInput: ScoringNarrativeInput,
+  options?: RequestInit,
+): Promise<ScoringNarrativeResponse> => {
+  return customFetch<ScoringNarrativeResponse>(
+    getSetDimensionNarrativeUrl(id),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(scoringNarrativeInput),
+    },
+  );
+};
+
+export const getSetDimensionNarrativeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setDimensionNarrative>>,
+    TError,
+    { id: string; data: BodyType<ScoringNarrativeInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setDimensionNarrative>>,
+  TError,
+  { id: string; data: BodyType<ScoringNarrativeInput> },
+  TContext
+> => {
+  const mutationKey = ["setDimensionNarrative"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setDimensionNarrative>>,
+    { id: string; data: BodyType<ScoringNarrativeInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return setDimensionNarrative(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SetDimensionNarrativeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setDimensionNarrative>>
+>;
+export type SetDimensionNarrativeMutationBody = BodyType<ScoringNarrativeInput>;
+export type SetDimensionNarrativeMutationError = ErrorType<unknown>;
+
+export const useSetDimensionNarrative = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setDimensionNarrative>>,
+    TError,
+    { id: string; data: BodyType<ScoringNarrativeInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof setDimensionNarrative>>,
+  TError,
+  { id: string; data: BodyType<ScoringNarrativeInput> },
+  TContext
+> => {
+  return useMutation(getSetDimensionNarrativeMutationOptions(options));
 };
 
 export const getGetDeliverablesUrl = (id: string) => {

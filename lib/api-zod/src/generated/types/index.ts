@@ -103,6 +103,8 @@ export * from "./saveSurveyDraftInput";
 export * from "./saveSurveyDraftInputAnswersItem";
 export * from "./scoreOverrideInput";
 export * from "./scoring";
+export * from "./scoringNarrativeInput";
+export * from "./scoringNarrativeResponse";
 export * from "./scoringOverall";
 export * from "./signalType";
 export * from "./sourceType";

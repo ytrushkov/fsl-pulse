@@ -8,6 +8,7 @@ import {
   boolean,
   doublePrecision,
   index,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 export const usersTable = pgTable(
@@ -377,6 +378,34 @@ export const scoringTable = pgTable("scoring", {
   overall: jsonb("overall").notNull().default({}),
   computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Per-dimension human narrative the assessor writes alongside the AI
+// rationale. Lives in its own table so it survives every recompute of the
+// scoring (the `byDimension` JSON is rebuilt from scratch each time and would
+// otherwise wipe the assessor's words). Composite PK keeps it strictly
+// one-narrative-per-dimension-per-engagement so writes are an upsert.
+export const scoringNarrativesTable = pgTable(
+  "scoring_narratives",
+  {
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagementsTable.id, { onDelete: "cascade" }),
+    dimension: text("dimension").notNull(),
+    narrative: text("narrative").notNull(),
+    updatedByUserId: uuid("updated_by_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    updatedByName: text("updated_by_name"),
+    updatedByEmail: text("updated_by_email"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.engagementId, t.dimension] }),
+  }),
+);
 
 export const scoreOverridesTable = pgTable("score_overrides", {
   id: uuid("id").primaryKey().defaultRandom(),
