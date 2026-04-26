@@ -10,6 +10,7 @@ import { Link } from "wouter";
 import {
   useGetPortfolioSummary,
   useGetPortfolioDistribution,
+  getGetPortfolioDistributionQueryKey,
   useGetPortfolioDistributionHistory,
   useGetMe,
   PortfolioSizeBand,
@@ -118,13 +119,16 @@ export default function PortfolioPage() {
   // distribution rendered while the next one is fetching, so dragging the
   // playhead updates the snapshot's content in place rather than flashing
   // a skeleton on every step.
+  const distributionParams = effectiveMonth
+    ? { ...filterParams, month: effectiveMonth }
+    : filterParams;
   const { data: distribution, isLoading: loadingDistribution } =
-    useGetPortfolioDistribution(
-      effectiveMonth
-        ? { ...filterParams, month: effectiveMonth }
-        : filterParams,
-      { query: { placeholderData: (prev) => prev } },
-    );
+    useGetPortfolioDistribution(distributionParams, {
+      query: {
+        queryKey: getGetPortfolioDistributionQueryKey(distributionParams),
+        placeholderData: (prev) => prev,
+      },
+    });
 
   const { data: me } = useGetMe();
   const isAdmin = me?.role === "admin";
