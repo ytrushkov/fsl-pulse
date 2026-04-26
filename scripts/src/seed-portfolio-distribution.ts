@@ -50,38 +50,35 @@ const SPONSORS = [
   "Head of Architecture",
 ];
 
-// Trajectory recipe — each row says "this many engagements move from
-// `startStage` at the oldest month in the trend strip to `endStage` at the
-// current month". Counts are tuned so the **current-month** distribution
-// across all 199 demo engagements (plus the 1 real Acme engagement at
-// stage 3) is exactly:
-//   Stage 1: 31%   (62/200)
-//   Stage 2: 52%   (104/200)
-//   Stage 3: 14%   (27 demo + 1 Acme = 28/200)
-//   Stage 4: 2.5%  (5/200)
-//   Stage 5: 0.5%  (1/200)
-// The earliest month is intentionally heavy on stages 1–2 so the trend
-// strip reads as "we're slowly moving the book up", not as if everyone is
-// already mature.
-const TRAJECTORIES: Array<{
-  count: number;
-  startStage: number;
-  endStage: number;
-}> = [
-  { count: 62, startStage: 1, endStage: 1 },
-  { count: 60, startStage: 1, endStage: 2 },
-  { count: 24, startStage: 1, endStage: 3 },
-  { count: 44, startStage: 2, endStage: 2 },
-  { count: 5, startStage: 2, endStage: 4 },
-  { count: 3, startStage: 3, endStage: 3 },
-  { count: 1, startStage: 3, endStage: 5 },
+// End-stage recipe: how many demo engagements should be at each stage in
+// the *current* month (April 2026). With Acme — the one real engagement,
+// pinned at stage 3 — added on top, the totals become:
+//   Stage 1: 62           → 31%
+//   Stage 2: 104          → 52%
+//   Stage 3: 27 + Acme    → 14%
+//   Stage 4: 5            → 2.5%
+//   Stage 5: 1            → 0.5%
+//                  total: 200
+const END_STAGE_RECIPE: Array<{ count: number; endStage: number }> = [
+  { count: 62, endStage: 1 },
+  { count: 104, endStage: 2 },
+  { count: 27, endStage: 3 },
+  { count: 5, endStage: 4 },
+  { count: 1, endStage: 5 },
 ];
 
-const HORIZON_MONTHS = 12;
-// Per-month deterministic noise amplitude. Kept below 0.5 so it never
-// pushes a snapshot across an integer stage boundary at the *endpoints*
-// (where idealScore == startStage / endStage), which would corrupt the
-// target current-month distribution.
+// New-engagements-per-month vector. Index 0 = oldest month in the trend
+// strip (May 2025 when run April 2026), index 11 = current month. Sums to
+// 199 to match END_STAGE_RECIPE. Cumulative grows roughly linearly:
+//   5, 23, 40, 58, 76, 93, 111, 129, 147, 165, 182, 199
+// so the 100% stacked-area chart starts narrow on the left and widens to
+// the full book on the right.
+const COHORT_SIZES = [5, 18, 17, 18, 18, 17, 18, 18, 18, 18, 17, 17];
+
+const HORIZON_MONTHS = COHORT_SIZES.length; // 12
+// Per-month deterministic noise amplitude on the linearly-interpolated
+// score path. Endpoints are locked to integer stage values so the
+// current-month aggregate stays exact regardless of jitter.
 const JITTER = 0.18;
 
 interface SeedEngagement {
@@ -90,18 +87,29 @@ interface SeedEngagement {
   sponsor: string;
   industry: string;
   teamCount: number;
-  startStage: number;
   endStage: number;
+  firstMonthIndex: number; // 0..HORIZON_MONTHS-1
 }
 
 function pad(n: number, width: number): string {
   return n.toString().padStart(width, "0");
 }
 
+/**
+ * Climb amount from `startStage` to `endStage` based on how long the
+ * engagement has been on the books. Newer engagements stay flat (we don't
+ * have history to invent); older ones show modest upward movement.
+ */
+function startStageFor(endStage: number, monthsActive: number): number {
+  if (monthsActive >= 10) return Math.max(1, endStage - 2);
+  if (monthsActive >= 5) return Math.max(1, endStage - 1);
+  return endStage;
+}
+
 function buildEngagement(
   index: number,
-  startStage: number,
   endStage: number,
+  firstMonthIndex: number,
 ): SeedEngagement {
   const industry = INDUSTRIES[index % INDUSTRIES.length];
   const industryLabel = industry.charAt(0).toUpperCase() + industry.slice(1);
@@ -111,17 +119,55 @@ function buildEngagement(
     sponsor: SPONSORS[index % SPONSORS.length],
     industry,
     teamCount: 4 + (index % 30),
-    startStage,
     endStage,
+    firstMonthIndex,
   };
 }
 
-function expandTrajectories(): SeedEngagement[] {
+/** Deterministic 32-bit hash → float in [0,1). Used to seed the shuffle. */
+function pseudoRandom(seed: number): number {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** Fisher–Yates with deterministic seed so reruns produce identical data. */
+function deterministicShuffle<T>(items: T[], seed: number): T[] {
+  const arr = items.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(pseudoRandom(seed + i) * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * Expand the end-stage recipe into 199 concrete engagements, then
+ * deterministically interleave so each cohort gets a proportional mix of
+ * stages, then slice into per-month cohorts using COHORT_SIZES.
+ */
+function expandEngagements(): SeedEngagement[] {
+  const endStages: number[] = [];
+  for (const r of END_STAGE_RECIPE) {
+    for (let i = 0; i < r.count; i++) endStages.push(r.endStage);
+  }
+  const totalNeeded = COHORT_SIZES.reduce((a, b) => a + b, 0);
+  if (endStages.length !== totalNeeded) {
+    throw new Error(
+      `END_STAGE_RECIPE total (${endStages.length}) does not match COHORT_SIZES total (${totalNeeded})`,
+    );
+  }
+
+  // Mix the end-stages so e.g. May 2025's 5 engagements aren't all stage 1.
+  const shuffled = deterministicShuffle(endStages, 1729);
+
   const engagements: SeedEngagement[] = [];
+  let cursor = 0;
   let idx = 1;
-  for (const t of TRAJECTORIES) {
-    for (let i = 0; i < t.count; i++) {
-      engagements.push(buildEngagement(idx, t.startStage, t.endStage));
+  for (let m = 0; m < COHORT_SIZES.length; m++) {
+    const size = COHORT_SIZES[m];
+    for (let i = 0; i < size; i++) {
+      const endStage = shuffled[cursor++];
+      engagements.push(buildEngagement(idx, endStage, m));
       idx++;
     }
   }
@@ -147,15 +193,9 @@ function clampScore(n: number): number {
 }
 
 async function wipePriorDemoSeed(): Promise<number> {
-  // Prior runs may have used a different TRAJECTORIES recipe; clearing all
-  // engagements with the demo id prefix guarantees the new distribution
-  // isn't polluted by leftover rows. FK cascades take care of members,
-  // snapshots, scoring, narratives, etc.
   const result = await db.execute(
     sql`DELETE FROM engagements WHERE id::text LIKE 'd1a00001-%'`,
   );
-  // `db.execute` returns a result object; `rowCount` is on the underlying
-  // pg result.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const count = (result as any)?.rowCount ?? 0;
   return count;
@@ -205,22 +245,27 @@ async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
   const baseYear = now.getUTCFullYear();
   const baseMonth = now.getUTCMonth();
 
+  // monthsActive includes both endpoints (firstMonthIndex .. current month).
+  const monthsActive = HORIZON_MONTHS - eng.firstMonthIndex;
+  const startStage = startStageFor(eng.endStage, monthsActive);
+
   let latest: LatestSnapshot = {
-    overallScore: eng.startStage,
-    overallStage: clampStage(eng.startStage),
+    overallScore: eng.endStage,
+    overallStage: eng.endStage,
     byDimensionScores: {},
     byDimensionStages: {},
   };
 
-  for (let i = 0; i < HORIZON_MONTHS; i++) {
-    const offsetFromOldest = i;
-    const monthsBack = HORIZON_MONTHS - 1 - offsetFromOldest;
+  for (let i = eng.firstMonthIndex; i < HORIZON_MONTHS; i++) {
+    const monthsBack = HORIZON_MONTHS - 1 - i;
     const month = monthBucket(baseYear, baseMonth - monthsBack);
 
-    const span = HORIZON_MONTHS - 1;
-    const t = span <= 0 ? 1 : offsetFromOldest / span;
-    const idealScore =
-      eng.startStage + (eng.endStage - eng.startStage) * t;
+    // Local progress through this engagement's own lifespan: 0 at
+    // firstMonthIndex, 1 at the current month. For one-month-old
+    // engagements (monthsActive == 1) we skip interpolation entirely.
+    const localSpan = monthsActive - 1;
+    const t = localSpan <= 0 ? 1 : (i - eng.firstMonthIndex) / localSpan;
+    const idealScore = startStage + (eng.endStage - startStage) * t;
 
     const seedBase =
       Math.floor(month.getTime() / 86_400_000) +
@@ -231,10 +276,7 @@ async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
         .split("")
         .reduce((a, c) => a + c.charCodeAt(0), 0);
 
-    // At the endpoints (i=0 and i=HORIZON-1) we lock to startStage/endStage
-    // exactly — that's how we guarantee the current-month aggregate matches
-    // the headline percentages (31/52/14/2.5/0.5).
-    const isEndpoint = i === 0 || i === HORIZON_MONTHS - 1;
+    const isEndpoint = i === eng.firstMonthIndex || i === HORIZON_MONTHS - 1;
     const overallScoreRaw = isEndpoint
       ? idealScore
       : idealScore + jitter(seedBase, JITTER);
@@ -329,11 +371,12 @@ async function upsertScoring(eng: SeedEngagement, latest: LatestSnapshot) {
 }
 
 async function main() {
-  const engagements = expandTrajectories();
+  const engagements = expandEngagements();
   console.log(`Seeding portfolio distribution demo data`);
   console.log(`  member email: ${DEMO_EMAIL}`);
   console.log(`  engagements:  ${engagements.length}`);
-  console.log(`  months/each:  ${HORIZON_MONTHS}\n`);
+  console.log(`  months/each:  ${HORIZON_MONTHS}`);
+  console.log(`  cohort sizes: ${COHORT_SIZES.join(", ")}\n`);
 
   const wiped = await wipePriorDemoSeed();
   if (wiped > 0) {
