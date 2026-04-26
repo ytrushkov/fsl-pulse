@@ -30,7 +30,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 import { Download, AlertTriangle } from "lucide-react";
 import { formatRelative } from "@/lib/format";
 import {
@@ -519,18 +518,8 @@ function HistoryStrip({
           <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-foreground border-2 border-background shadow" />
         </div>
       </div>
-      <div className="mx-6 mt-2 flex items-center gap-4">
-        <Slider
-          value={[selectedIndex]}
-          min={0}
-          max={Math.max(0, months.length - 1)}
-          step={1}
-          onValueChange={(vals) => handleSelectByIndex(vals[0] ?? 0)}
-          aria-label="Snapshot month"
-          data-testid="history-slider"
-          className="flex-1"
-        />
-        <div className="text-xs font-mono text-muted-foreground min-w-[120px] text-right">
+      <div className="mx-6 mt-2 flex justify-end">
+        <div className="text-xs font-mono text-muted-foreground">
           {formatMonthLabel(months[selectedIndex]?.month ?? "")}
         </div>
       </div>
