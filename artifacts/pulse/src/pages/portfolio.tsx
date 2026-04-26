@@ -114,11 +114,16 @@ export default function PortfolioPage() {
   const lastMonth = months.length > 0 ? months[months.length - 1].month : null;
   const effectiveMonth = selectedMonth ?? lastMonth;
 
+  // `placeholderData: keepPreviousData` keeps the previous month's
+  // distribution rendered while the next one is fetching, so dragging the
+  // playhead updates the snapshot's content in place rather than flashing
+  // a skeleton on every step.
   const { data: distribution, isLoading: loadingDistribution } =
     useGetPortfolioDistribution(
       effectiveMonth
         ? { ...filterParams, month: effectiveMonth }
         : filterParams,
+      { query: { placeholderData: (prev) => prev } },
     );
 
   const { data: me } = useGetMe();
