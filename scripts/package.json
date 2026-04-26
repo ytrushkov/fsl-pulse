@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "seed:acme-narratives": "tsx ./src/seed-acme-narratives.ts",
+    "seed:portfolio-distribution": "tsx ./src/seed-portfolio-distribution.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

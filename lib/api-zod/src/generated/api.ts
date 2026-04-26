@@ -450,6 +450,100 @@ export const GetPortfolioHeatmapResponse = zod.object({
   generatedAt: zod.string(),
 });
 
+/**
+ * @summary Snapshot of how engagements are distributed across the five maturity
+stages for a given month. When `month` is omitted the current month
+is used. Engagements with no scoring at the requested month are
+excluded from the bins and surfaced under `notYetAssessed`.
+
+ */
+export const GetPortfolioDistributionQueryParams = zod.object({
+  month: zod.coerce
+    .string()
+    .optional()
+    .describe("Snapshot month as YYYY-MM. Defaults to the current month."),
+  industry: zod.coerce.string().optional(),
+  size: zod.enum(["small", "medium", "large"]).optional(),
+});
+
+export const getPortfolioDistributionResponseByStageItemStageMax = 5;
+
+export const GetPortfolioDistributionResponse = zod.object({
+  month: zod.string().describe("ISO month (YYYY-MM) the snapshot represents."),
+  total: zod
+    .number()
+    .describe("Number of engagements with a scoring snapshot for this month."),
+  byStage: zod.array(
+    zod.object({
+      stage: zod
+        .number()
+        .min(1)
+        .max(getPortfolioDistributionResponseByStageItemStageMax),
+      label: zod.string(),
+      count: zod.number(),
+      percent: zod.number(),
+      engagements: zod.array(
+        zod.object({
+          id: zod.string(),
+          clientName: zod.string(),
+        }),
+      ),
+    }),
+  ),
+  notYetAssessed: zod.array(
+    zod.object({
+      id: zod.string(),
+      clientName: zod.string(),
+    }),
+  ),
+  generatedAt: zod.string(),
+});
+
+/**
+ * @summary Per-month stage distribution for a date range, used to render the
+100% stacked area trend strip beneath the snapshot. Defaults to the
+last 12 months ending in the current month.
+
+ */
+export const GetPortfolioDistributionHistoryQueryParams = zod.object({
+  from: zod.coerce
+    .string()
+    .optional()
+    .describe("First month inclusive (YYYY-MM). Defaults to 11 months ago."),
+  to: zod.coerce
+    .string()
+    .optional()
+    .describe("Last month inclusive (YYYY-MM). Defaults to current month."),
+  industry: zod.coerce.string().optional(),
+  size: zod.enum(["small", "medium", "large"]).optional(),
+});
+
+export const getPortfolioDistributionHistoryResponseMonthsItemByStageItemStageMax = 5;
+
+export const GetPortfolioDistributionHistoryResponse = zod.object({
+  from: zod.string(),
+  to: zod.string(),
+  months: zod.array(
+    zod.object({
+      month: zod.string(),
+      total: zod.number(),
+      byStage: zod.array(
+        zod.object({
+          stage: zod
+            .number()
+            .min(1)
+            .max(
+              getPortfolioDistributionHistoryResponseMonthsItemByStageItemStageMax,
+            ),
+          count: zod.number(),
+          percent: zod.number(),
+        }),
+      ),
+    }),
+  ),
+  generatedAt: zod.string(),
+});
+
 export const ListConnectorsParams = zod.object({
   id: zod.coerce.string(),
 });

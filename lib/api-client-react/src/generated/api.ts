@@ -41,6 +41,8 @@ import type {
   ExportEngagementActivityCsvParams,
   ExportRecord,
   GetEngagementActivityParams,
+  GetPortfolioDistributionHistoryParams,
+  GetPortfolioDistributionParams,
   GetPortfolioHeatmapParams,
   GetPortfolioSummaryParams,
   HealthStatus,
@@ -50,6 +52,8 @@ import type {
   ListConnectorRunsParams,
   NpvInputs,
   NpvResult,
+  PortfolioDistribution,
+  PortfolioDistributionHistory,
   PortfolioHeatmap,
   PortfolioSummary,
   PreviewInvitesInput,
@@ -1512,6 +1516,233 @@ export function useGetPortfolioHeatmap<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetPortfolioHeatmapQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Snapshot of how engagements are distributed across the five maturity
+stages for a given month. When `month` is omitted the current month
+is used. Engagements with no scoring at the requested month are
+excluded from the bins and surfaced under `notYetAssessed`.
+
+ */
+export const getGetPortfolioDistributionUrl = (
+  params?: GetPortfolioDistributionParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/portfolio/distribution?${stringifiedParams}`
+    : `/api/portfolio/distribution`;
+};
+
+export const getPortfolioDistribution = async (
+  params?: GetPortfolioDistributionParams,
+  options?: RequestInit,
+): Promise<PortfolioDistribution> => {
+  return customFetch<PortfolioDistribution>(
+    getGetPortfolioDistributionUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPortfolioDistributionQueryKey = (
+  params?: GetPortfolioDistributionParams,
+) => {
+  return [`/api/portfolio/distribution`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetPortfolioDistributionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPortfolioDistribution>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioDistributionParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioDistribution>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPortfolioDistributionQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPortfolioDistribution>>
+  > = ({ signal }) =>
+    getPortfolioDistribution(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPortfolioDistribution>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPortfolioDistributionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPortfolioDistribution>>
+>;
+export type GetPortfolioDistributionQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Snapshot of how engagements are distributed across the five maturity
+stages for a given month. When `month` is omitted the current month
+is used. Engagements with no scoring at the requested month are
+excluded from the bins and surfaced under `notYetAssessed`.
+
+ */
+
+export function useGetPortfolioDistribution<
+  TData = Awaited<ReturnType<typeof getPortfolioDistribution>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioDistributionParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioDistribution>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPortfolioDistributionQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Per-month stage distribution for a date range, used to render the
+100% stacked area trend strip beneath the snapshot. Defaults to the
+last 12 months ending in the current month.
+
+ */
+export const getGetPortfolioDistributionHistoryUrl = (
+  params?: GetPortfolioDistributionHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/portfolio/distribution/history?${stringifiedParams}`
+    : `/api/portfolio/distribution/history`;
+};
+
+export const getPortfolioDistributionHistory = async (
+  params?: GetPortfolioDistributionHistoryParams,
+  options?: RequestInit,
+): Promise<PortfolioDistributionHistory> => {
+  return customFetch<PortfolioDistributionHistory>(
+    getGetPortfolioDistributionHistoryUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPortfolioDistributionHistoryQueryKey = (
+  params?: GetPortfolioDistributionHistoryParams,
+) => {
+  return [
+    `/api/portfolio/distribution/history`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPortfolioDistributionHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPortfolioDistributionHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioDistributionHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioDistributionHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetPortfolioDistributionHistoryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPortfolioDistributionHistory>>
+  > = ({ signal }) =>
+    getPortfolioDistributionHistory(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPortfolioDistributionHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPortfolioDistributionHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPortfolioDistributionHistory>>
+>;
+export type GetPortfolioDistributionHistoryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Per-month stage distribution for a date range, used to render the
+100% stacked area trend strip beneath the snapshot. Defaults to the
+last 12 months ending in the current month.
+
+ */
+
+export function useGetPortfolioDistributionHistory<
+  TData = Awaited<ReturnType<typeof getPortfolioDistributionHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPortfolioDistributionHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPortfolioDistributionHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPortfolioDistributionHistoryQueryOptions(
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

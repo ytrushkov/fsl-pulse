@@ -285,6 +285,56 @@ export interface PortfolioHeatmap {
   generatedAt: string;
 }
 
+export interface PortfolioDistributionEngagementRef {
+  id: string;
+  clientName: string;
+}
+
+export interface PortfolioDistributionStageBin {
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  stage: number;
+  label: string;
+  count: number;
+  percent: number;
+  engagements: PortfolioDistributionEngagementRef[];
+}
+
+export interface PortfolioDistribution {
+  /** ISO month (YYYY-MM) the snapshot represents. */
+  month: string;
+  /** Number of engagements with a scoring snapshot for this month. */
+  total: number;
+  byStage: PortfolioDistributionStageBin[];
+  notYetAssessed: PortfolioDistributionEngagementRef[];
+  generatedAt: string;
+}
+
+export type PortfolioDistributionHistoryPointByStageItem = {
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  stage: number;
+  count: number;
+  percent: number;
+};
+
+export interface PortfolioDistributionHistoryPoint {
+  month: string;
+  total: number;
+  byStage: PortfolioDistributionHistoryPointByStageItem[];
+}
+
+export interface PortfolioDistributionHistory {
+  from: string;
+  to: string;
+  months: PortfolioDistributionHistoryPoint[];
+  generatedAt: string;
+}
+
 export type EngagementDashboardDeliverableStatuses = {
   heatmap: DeliverableStatus;
   gapAnalysis: DeliverableStatus;
@@ -1178,6 +1228,28 @@ export type GetPortfolioHeatmapParams = {
   size?: PortfolioSizeBand;
   from?: string;
   to?: string;
+};
+
+export type GetPortfolioDistributionParams = {
+  /**
+   * Snapshot month as YYYY-MM. Defaults to the current month.
+   */
+  month?: string;
+  industry?: string;
+  size?: PortfolioSizeBand;
+};
+
+export type GetPortfolioDistributionHistoryParams = {
+  /**
+   * First month inclusive (YYYY-MM). Defaults to 11 months ago.
+   */
+  from?: string;
+  /**
+   * Last month inclusive (YYYY-MM). Defaults to current month.
+   */
+  to?: string;
+  industry?: string;
+  size?: PortfolioSizeBand;
 };
 
 export type ListConnectorRunsParams = {

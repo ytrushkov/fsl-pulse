@@ -1,8 +1,15 @@
 import { eq, and, isNotNull, not, like, sql } from "drizzle-orm";
-import { db, connectorsTable, artifactDocsTable } from "@workspace/db";
+import {
+  db,
+  connectorsTable,
+  artifactDocsTable,
+  scoringTable,
+  engagementScoringSnapshotsTable,
+} from "@workspace/db";
 import { decryptToken, encryptToken, TokenDecryptError } from "./util";
 import { ObjectStorageService } from "./objectStorage";
 import { randomUUID } from "crypto";
+import { monthBucket, upsertScoringSnapshot } from "./scoring";
 
 export interface TokenMigrationSummary {
   scanned: number;
@@ -172,3 +179,66 @@ export async function migrateLegacyArtifactBlobs(): Promise<ArtifactBlobMigratio
     legacyColumnDropped,
   };
 }
+
+export interface ScoringSnapshotBackfillSummary {
+  scoringRows: number;
+  inserted: number;
+  alreadyPresent: number;
+}
+
+/**
+ * One-shot backfill that writes a `engagement_scoring_snapshots` row for
+ * each existing scoring at its `computedAt` month. Without this, the
+ * Portfolio history strip would be empty until the next time someone
+ * recomputes scoring for each engagement.
+ *
+ * Idempotent: any engagement that already has snapshots is skipped, so
+ * re-running on every boot is cheap and safe. Only engagements with no
+ * snapshots at all get a single seed row from their current scoring.
+ */
+export async function backfillScoringSnapshots(): Promise<ScoringSnapshotBackfillSummary> {
+  const allScorings = await db.select().from(scoringTable);
+  if (allScorings.length === 0) {
+    return { scoringRows: 0, inserted: 0, alreadyPresent: 0 };
+  }
+  const existing = await db
+    .select({ engagementId: engagementScoringSnapshotsTable.engagementId })
+    .from(engagementScoringSnapshotsTable);
+  const haveSnapshot = new Set(existing.map((r) => r.engagementId));
+
+  let inserted = 0;
+  let alreadyPresent = 0;
+  for (const s of allScorings) {
+    if (haveSnapshot.has(s.engagementId)) {
+      alreadyPresent += 1;
+      continue;
+    }
+    const overall = (s.overall ?? {}) as { stage?: number; score?: number };
+    if (typeof overall.stage !== "number" || typeof overall.score !== "number") {
+      continue; // Scoring exists but is empty — skip; next compute will fill it.
+    }
+    const byDim = (s.byDimension ?? []) as Array<{
+      dimension: string;
+      stage: number;
+    }>;
+    const byDimensionStages = Object.fromEntries(
+      byDim
+        .filter((d) => typeof d.stage === "number" && typeof d.dimension === "string")
+        .map((d) => [d.dimension, d.stage]),
+    );
+    await upsertScoringSnapshot({
+      engagementId: s.engagementId,
+      snapshotMonth: monthBucket(s.computedAt),
+      overallStage: overall.stage,
+      overallScore: overall.score,
+      byDimensionStages,
+    });
+    inserted += 1;
+  }
+  return {
+    scoringRows: allScorings.length,
+    inserted,
+    alreadyPresent,
+  };
+}
+

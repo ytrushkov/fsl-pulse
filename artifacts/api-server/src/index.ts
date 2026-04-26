@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import {
   migrateLegacyArtifactBlobs,
   migrateLegacyConnectorTokens,
+  backfillScoringSnapshots,
 } from "./lib/migrations";
 import { startScheduler } from "./lib/scheduler";
 import { startSurveyScheduler } from "./lib/survey-scheduler";
@@ -64,6 +65,20 @@ app.listen(port, (err) => {
   ensureSeedRubric().catch((e) =>
     logger.error({ err: e }, "Rubric seed failed"),
   );
+
+  // Backfill monthly scoring snapshots so the Portfolio history strip is
+  // populated for engagements that were scored before the snapshot table
+  // existed. Idempotent: engagements that already have any snapshot are
+  // skipped.
+  backfillScoringSnapshots()
+    .then((summary) => {
+      if (summary.inserted > 0) {
+        logger.info(summary, "Scoring snapshot backfill completed");
+      }
+    })
+    .catch((e) =>
+      logger.error({ err: e }, "Scoring snapshot backfill failed"),
+    );
 
   // Background scheduler for connector runs. Polls every minute for due
   // connectors (`scheduleEnabled = true AND nextRunAt <= now()`) and

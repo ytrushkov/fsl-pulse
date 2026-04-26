@@ -302,6 +302,58 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PortfolioHeatmap" }
 
+  /portfolio/distribution:
+    get:
+      operationId: getPortfolioDistribution
+      tags: [portfolio]
+      summary: |
+        Snapshot of how engagements are distributed across the five maturity
+        stages for a given month. When `month` is omitted the current month
+        is used. Engagements with no scoring at the requested month are
+        excluded from the bins and surfaced under `notYetAssessed`.
+      parameters:
+        - name: month
+          in: query
+          required: false
+          description: Snapshot month as YYYY-MM. Defaults to the current month.
+          schema: { type: string }
+        - { name: industry, in: query, required: false, schema: { type: string } }
+        - { name: size, in: query, required: false, schema: { $ref: "#/components/schemas/PortfolioSizeBand" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortfolioDistribution" }
+
+  /portfolio/distribution/history:
+    get:
+      operationId: getPortfolioDistributionHistory
+      tags: [portfolio]
+      summary: |
+        Per-month stage distribution for a date range, used to render the
+        100% stacked area trend strip beneath the snapshot. Defaults to the
+        last 12 months ending in the current month.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: First month inclusive (YYYY-MM). Defaults to 11 months ago.
+          schema: { type: string }
+        - name: to
+          in: query
+          required: false
+          description: Last month inclusive (YYYY-MM). Defaults to current month.
+          schema: { type: string }
+        - { name: industry, in: query, required: false, schema: { type: string } }
+        - { name: size, in: query, required: false, schema: { $ref: "#/components/schemas/PortfolioSizeBand" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortfolioDistributionHistory" }
+
   /portfolio/benchmark.csv:
     get:
       operationId: exportPortfolioBenchmarkCsv
@@ -1430,6 +1482,70 @@ components:
         appliedFilters:
           type: object
           additionalProperties: true
+        generatedAt: { type: string }
+
+    PortfolioDistributionEngagementRef:
+      type: object
+      required: [id, clientName]
+      properties:
+        id: { type: string }
+        clientName: { type: string }
+
+    PortfolioDistributionStageBin:
+      type: object
+      required: [stage, label, count, percent, engagements]
+      properties:
+        stage: { type: integer, minimum: 1, maximum: 5 }
+        label: { type: string }
+        count: { type: integer }
+        percent: { type: number }
+        engagements:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioDistributionEngagementRef" }
+
+    PortfolioDistribution:
+      type: object
+      required: [month, total, byStage, notYetAssessed, generatedAt]
+      properties:
+        month:
+          type: string
+          description: ISO month (YYYY-MM) the snapshot represents.
+        total:
+          type: integer
+          description: Number of engagements with a scoring snapshot for this month.
+        byStage:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioDistributionStageBin" }
+        notYetAssessed:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioDistributionEngagementRef" }
+        generatedAt: { type: string }
+
+    PortfolioDistributionHistoryPoint:
+      type: object
+      required: [month, total, byStage]
+      properties:
+        month: { type: string }
+        total: { type: integer }
+        byStage:
+          type: array
+          items:
+            type: object
+            required: [stage, count, percent]
+            properties:
+              stage: { type: integer, minimum: 1, maximum: 5 }
+              count: { type: integer }
+              percent: { type: number }
+
+    PortfolioDistributionHistory:
+      type: object
+      required: [from, to, months, generatedAt]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        months:
+          type: array
+          items: { $ref: "#/components/schemas/PortfolioDistributionHistoryPoint" }
         generatedAt: { type: string }
 
     EngagementDashboard:

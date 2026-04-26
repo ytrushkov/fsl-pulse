@@ -5,6 +5,7 @@ import {
   engagementsTable,
   engagementMembersTable,
   scoringTable,
+  engagementScoringSnapshotsTable,
   surveyInvitesTable,
   connectorsTable,
   deliverableVersionsTable,
@@ -13,6 +14,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { recordActivity } from "../lib/audit";
+import { STAGE_LABELS } from "../lib/rubric";
 
 const router: IRouter = Router();
 
@@ -207,17 +209,30 @@ interface PortfolioFilters {
 }
 
 function parseFilters(q: Record<string, unknown>): PortfolioFilters {
-  const f: PortfolioFilters = {};
+  const f: PortfolioFilters = { ...parseDistributionFilters(q) };
+  const from = typeof q.from === "string" ? Date.parse(q.from) : NaN;
+  if (Number.isFinite(from)) f.from = new Date(from);
+  const to = typeof q.to === "string" ? Date.parse(q.to) : NaN;
+  if (Number.isFinite(to)) f.to = new Date(to);
+  return f;
+}
+
+/**
+ * Parse only the cohort filters (industry / size) used by the distribution
+ * endpoints. Critically this does NOT read `from`/`to` — those are reserved
+ * by the history endpoint to define the month range, and reusing them as
+ * createdAt filters would silently exclude engagements from the snapshot.
+ */
+function parseDistributionFilters(
+  q: Record<string, unknown>,
+): Pick<PortfolioFilters, "industry" | "size"> {
+  const f: Pick<PortfolioFilters, "industry" | "size"> = {};
   if (typeof q.industry === "string" && q.industry.trim()) {
     f.industry = q.industry.trim();
   }
   if (q.size === "small" || q.size === "medium" || q.size === "large") {
     f.size = q.size;
   }
-  const from = typeof q.from === "string" ? Date.parse(q.from) : NaN;
-  if (Number.isFinite(from)) f.from = new Date(from);
-  const to = typeof q.to === "string" ? Date.parse(q.to) : NaN;
-  if (Number.isFinite(to)) f.to = new Date(to);
   return f;
 }
 
@@ -594,6 +609,268 @@ router.get(
         `attachment; filename="pulse-benchmark.csv"`,
       )
       .send(csv);
+  },
+);
+
+/**
+ * Truncate a JS Date to the first day of its UTC month.
+ */
+function monthStart(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+}
+
+/**
+ * Format a Date as a YYYY-MM string (UTC).
+ */
+function formatMonth(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+/**
+ * Parse a YYYY-MM query string into the first day of that month (UTC).
+ * Returns null when the input is missing or malformed so callers can fall
+ * back to the default (current month / N months ago).
+ */
+function parseMonth(raw: unknown): Date | null {
+  if (typeof raw !== "string") return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(raw.trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  if (month < 1 || month > 12) return null;
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+/**
+ * Generate one Date per month from `from` to `to` inclusive.
+ */
+function monthsBetween(from: Date, to: Date): Date[] {
+  const out: Date[] = [];
+  let cursor = monthStart(from);
+  const end = monthStart(to);
+  // Cap range to a sensible upper bound to avoid pathological queries.
+  let safety = 60;
+  while (cursor <= end && safety-- > 0) {
+    out.push(cursor);
+    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
+  }
+  return out;
+}
+
+interface BinResult {
+  byStage: Map<number, { id: string; name: string }[]>;
+  notYetAssessed: { id: string; name: string }[];
+  total: number;
+}
+
+/**
+ * For a given month and the caller's filtered engagement set, find each
+ * engagement's most recent snapshot whose `snapshotMonth <= monthEnd` and
+ * bin them by overall stage. Engagements with no snapshot at or before
+ * the month land in `notYetAssessed`. The "carry-forward" semantic keeps
+ * the snapshot bar populated in months without recomputes.
+ */
+function binEngagementsAtMonth(
+  engagements: Array<{ id: string; clientName: string }>,
+  snapshots: Array<{
+    engagementId: string;
+    snapshotMonth: Date;
+    overallStage: number;
+  }>,
+  month: Date,
+): BinResult {
+  // Pick the latest snapshot per engagement at or before the requested
+  // month. Sorting once and walking is O(N log N + M) — fine for portfolio
+  // sizes (typically <100 engagements / <1k snapshots).
+  const sortedByEng = new Map<string, typeof snapshots>();
+  for (const s of snapshots) {
+    if (s.snapshotMonth > month) continue;
+    const arr = sortedByEng.get(s.engagementId) ?? [];
+    arr.push(s);
+    sortedByEng.set(s.engagementId, arr);
+  }
+  const byStage = new Map<number, { id: string; name: string }[]>();
+  for (let i = 1; i <= 5; i++) byStage.set(i, []);
+  const notYetAssessed: { id: string; name: string }[] = [];
+  let total = 0;
+  for (const eng of engagements) {
+    const list = sortedByEng.get(eng.id);
+    if (!list || list.length === 0) {
+      notYetAssessed.push({ id: eng.id, name: eng.clientName });
+      continue;
+    }
+    list.sort((a, b) => +b.snapshotMonth - +a.snapshotMonth);
+    const latest = list[0];
+    const stage = Math.max(1, Math.min(5, Math.round(latest.overallStage)));
+    byStage.get(stage)!.push({ id: eng.id, name: eng.clientName });
+    total += 1;
+  }
+  return { byStage, notYetAssessed, total };
+}
+
+router.get(
+  "/portfolio/distribution",
+  requireAuth,
+  async (req, res): Promise<void> => {
+    const user = req.authedUser!;
+    const ids = await membershipIds(user.id, user.email);
+    const month = parseMonth(req.query.month) ?? monthStart(new Date());
+    const generatedAt = new Date().toISOString();
+    if (ids.length === 0) {
+      res.json({
+        month: formatMonth(month),
+        total: 0,
+        byStage: emptyByStage(),
+        notYetAssessed: [],
+        generatedAt,
+      });
+      return;
+    }
+    const filters = parseDistributionFilters(req.query as Record<string, unknown>);
+    const allEng = await db
+      .select()
+      .from(engagementsTable)
+      .where(inArray(engagementsTable.id, ids));
+    const filtered = applyFilters(allEng, filters);
+    const filteredIds = filtered.map((e) => e.id);
+    const snapshots = filteredIds.length
+      ? await db
+          .select({
+            engagementId: engagementScoringSnapshotsTable.engagementId,
+            snapshotMonth: engagementScoringSnapshotsTable.snapshotMonth,
+            overallStage: engagementScoringSnapshotsTable.overallStage,
+          })
+          .from(engagementScoringSnapshotsTable)
+          .where(
+            inArray(
+              engagementScoringSnapshotsTable.engagementId,
+              filteredIds,
+            ),
+          )
+      : [];
+    const result = binEngagementsAtMonth(filtered, snapshots, month);
+    const byStage = [1, 2, 3, 4, 5].map((stage) => {
+      const list = result.byStage.get(stage)!;
+      return {
+        stage,
+        label: STAGE_LABELS[stage] ?? `Stage ${stage}`,
+        count: list.length,
+        percent: result.total > 0 ? list.length / result.total : 0,
+        engagements: list.map((e) => ({ id: e.id, clientName: e.name })),
+      };
+    });
+    res.json({
+      month: formatMonth(month),
+      total: result.total,
+      byStage,
+      notYetAssessed: result.notYetAssessed.map((e) => ({
+        id: e.id,
+        clientName: e.name,
+      })),
+      generatedAt,
+    });
+  },
+);
+
+function emptyByStage() {
+  return [1, 2, 3, 4, 5].map((stage) => ({
+    stage,
+    label: STAGE_LABELS[stage] ?? `Stage ${stage}`,
+    count: 0,
+    percent: 0,
+    engagements: [],
+  }));
+}
+
+router.get(
+  "/portfolio/distribution/history",
+  requireAuth,
+  async (req, res): Promise<void> => {
+    const user = req.authedUser!;
+    const ids = await membershipIds(user.id, user.email);
+    const generatedAt = new Date().toISOString();
+    const now = monthStart(new Date());
+    const defaultFrom = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1),
+    );
+    let from = parseMonth(req.query.from) ?? defaultFrom;
+    let to = parseMonth(req.query.to) ?? now;
+    if (from > to) {
+      // Swap rather than 400 — the UI's playhead can't get into this state
+      // through normal use, but a hand-typed URL could.
+      [from, to] = [to, from];
+    }
+    if (ids.length === 0) {
+      res.json({
+        from: formatMonth(from),
+        to: formatMonth(to),
+        months: monthsBetween(from, to).map((m) => ({
+          month: formatMonth(m),
+          total: 0,
+          byStage: [1, 2, 3, 4, 5].map((stage) => ({
+            stage,
+            count: 0,
+            percent: 0,
+          })),
+        })),
+        generatedAt,
+      });
+      return;
+    }
+    // Use the cohort-only parser so the history-window `from`/`to` query
+    // params are NOT also interpreted as engagement createdAt filters.
+    const filters = parseDistributionFilters(req.query as Record<string, unknown>);
+    const allEng = await db
+      .select()
+      .from(engagementsTable)
+      .where(inArray(engagementsTable.id, ids));
+    const filtered = applyFilters(allEng, filters);
+    const filteredIds = filtered.map((e) => e.id);
+    // Pull every snapshot up to `to` for in-scope engagements; we need
+    // earlier snapshots too so the carry-forward at the start of the
+    // window finds an anchor.
+    const snapshots = filteredIds.length
+      ? await db
+          .select({
+            engagementId: engagementScoringSnapshotsTable.engagementId,
+            snapshotMonth: engagementScoringSnapshotsTable.snapshotMonth,
+            overallStage: engagementScoringSnapshotsTable.overallStage,
+          })
+          .from(engagementScoringSnapshotsTable)
+          .where(
+            and(
+              inArray(
+                engagementScoringSnapshotsTable.engagementId,
+                filteredIds,
+              ),
+              lte(engagementScoringSnapshotsTable.snapshotMonth, to),
+            ),
+          )
+      : [];
+    const months = monthsBetween(from, to).map((m) => {
+      const r = binEngagementsAtMonth(filtered, snapshots, m);
+      return {
+        month: formatMonth(m),
+        total: r.total,
+        byStage: [1, 2, 3, 4, 5].map((stage) => {
+          const list = r.byStage.get(stage)!;
+          return {
+            stage,
+            count: list.length,
+            percent: r.total > 0 ? list.length / r.total : 0,
+          };
+        }),
+      };
+    });
+    res.json({
+      from: formatMonth(from),
+      to: formatMonth(to),
+      months,
+      generatedAt,
+    });
   },
 );
 

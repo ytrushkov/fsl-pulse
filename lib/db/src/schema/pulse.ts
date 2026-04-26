@@ -362,6 +362,35 @@ export const rubricVersionsTable = pgTable(
   }),
 );
 
+// Monthly snapshot of an engagement's overall scoring. Captured every time
+// `computeEngagementScoring` persists, keyed by `(engagementId, snapshotMonth)`
+// so each engagement contributes at most one row per month and the latest
+// recompute in a month overwrites the earlier one. Drives the Portfolio
+// "Where our clients are" stage-distribution history strip — the playhead
+// reads one month's row per engagement and bins them into stage columns.
+//
+// `snapshotMonth` is a YYYY-MM-01 date in UTC; we store it as a real date
+// (not a string) so range queries work with normal SQL operators.
+export const engagementScoringSnapshotsTable = pgTable(
+  "engagement_scoring_snapshots",
+  {
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagementsTable.id, { onDelete: "cascade" }),
+    snapshotMonth: timestamp("snapshot_month", { withTimezone: true }).notNull(),
+    overallStage: integer("overall_stage").notNull(),
+    overallScore: doublePrecision("overall_score").notNull(),
+    byDimensionStages: jsonb("by_dimension_stages").notNull().default({}),
+    capturedAt: timestamp("captured_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.engagementId, t.snapshotMonth] }),
+    monthIdx: index("engagement_scoring_snapshots_month_idx").on(t.snapshotMonth),
+  }),
+);
+
 export const scoringTable = pgTable("scoring", {
   engagementId: uuid("engagement_id")
     .primaryKey()

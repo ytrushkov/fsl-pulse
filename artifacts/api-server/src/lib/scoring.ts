@@ -8,6 +8,7 @@ import {
   surveyResponsesTable,
   connectorsTable,
   connectorRunsTable,
+  engagementScoringSnapshotsTable,
 } from "@workspace/db";
 import { DIMENSIONS, type Dimension } from "./rubric";
 import { DEFAULT_SURVEY_QUESTIONS } from "./survey-template";
@@ -398,5 +399,61 @@ async function computeWithRubric(
       .where(eq(scoringTable.engagementId, engagementId));
   }
 
+  // Capture a monthly snapshot for the Portfolio history strip. Keyed by
+  // (engagementId, snapshotMonth) so multiple recomputes inside the same
+  // month overwrite each other instead of stacking duplicate rows.
+  await upsertScoringSnapshot({
+    engagementId,
+    snapshotMonth: monthBucket(new Date()),
+    overallStage: result.overall.stage,
+    overallScore: result.overall.score,
+    byDimensionStages: Object.fromEntries(
+      result.byDimension.map((d) => [d.dimension, d.stage]),
+    ),
+  });
+
   return result;
+}
+
+/**
+ * Truncate a date down to the first day of its UTC month. Used as the
+ * primary-key bucket for `engagement_scoring_snapshots` so every recompute
+ * within a month upserts the same row instead of inserting a new one.
+ */
+export function monthBucket(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+}
+
+interface ScoringSnapshotInput {
+  engagementId: string;
+  snapshotMonth: Date;
+  overallStage: number;
+  overallScore: number;
+  byDimensionStages: Record<string, number>;
+}
+
+export async function upsertScoringSnapshot(
+  input: ScoringSnapshotInput,
+): Promise<void> {
+  await db
+    .insert(engagementScoringSnapshotsTable)
+    .values({
+      engagementId: input.engagementId,
+      snapshotMonth: input.snapshotMonth,
+      overallStage: input.overallStage,
+      overallScore: input.overallScore,
+      byDimensionStages: input.byDimensionStages,
+    })
+    .onConflictDoUpdate({
+      target: [
+        engagementScoringSnapshotsTable.engagementId,
+        engagementScoringSnapshotsTable.snapshotMonth,
+      ],
+      set: {
+        overallStage: input.overallStage,
+        overallScore: input.overallScore,
+        byDimensionStages: input.byDimensionStages,
+        capturedAt: new Date(),
+      },
+    });
 }
