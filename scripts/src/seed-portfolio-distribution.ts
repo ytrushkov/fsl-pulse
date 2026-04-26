@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import {
   db,
   engagementsTable,
@@ -21,6 +21,69 @@ const DEMO_EMAIL =
   process.argv.find((a) => a.startsWith("--email="))?.split("=")[1] ||
   "demo@pulse.local";
 
+// Industries / sponsor titles cycled to give the engagements table at the
+// bottom of the Portfolio page some variety. They have no effect on the
+// snapshot bar — only `overallStage` does.
+const INDUSTRIES = [
+  "fintech",
+  "healthcare",
+  "retail",
+  "logistics",
+  "software",
+  "energy",
+  "insurance",
+  "manufacturing",
+  "telecom",
+  "media",
+];
+
+const SPONSORS = [
+  "VP Engineering",
+  "CTO",
+  "Chief Digital Officer",
+  "Head of Platform",
+  "VP Product Engineering",
+  "SVP Technology",
+  "Head of Engineering",
+  "Director of Data",
+  "Chief Information Officer",
+  "Head of Architecture",
+];
+
+// Trajectory recipe — each row says "this many engagements move from
+// `startStage` at the oldest month in the trend strip to `endStage` at the
+// current month". Counts are tuned so the **current-month** distribution
+// across all 199 demo engagements (plus the 1 real Acme engagement at
+// stage 3) is exactly:
+//   Stage 1: 31%   (62/200)
+//   Stage 2: 52%   (104/200)
+//   Stage 3: 14%   (27 demo + 1 Acme = 28/200)
+//   Stage 4: 2.5%  (5/200)
+//   Stage 5: 0.5%  (1/200)
+// The earliest month is intentionally heavy on stages 1–2 so the trend
+// strip reads as "we're slowly moving the book up", not as if everyone is
+// already mature.
+const TRAJECTORIES: Array<{
+  count: number;
+  startStage: number;
+  endStage: number;
+}> = [
+  { count: 62, startStage: 1, endStage: 1 },
+  { count: 60, startStage: 1, endStage: 2 },
+  { count: 24, startStage: 1, endStage: 3 },
+  { count: 44, startStage: 2, endStage: 2 },
+  { count: 5, startStage: 2, endStage: 4 },
+  { count: 3, startStage: 3, endStage: 3 },
+  { count: 1, startStage: 3, endStage: 5 },
+];
+
+const HORIZON_MONTHS = 12;
+// Per-month deterministic noise amplitude. Kept below 0.5 so it never
+// pushes a snapshot across an integer stage boundary at the *endpoints*
+// (where idealScore == startStage / endStage), which would corrupt the
+// target current-month distribution.
+const JITTER = 0.18;
+
 interface SeedEngagement {
   id: string;
   clientName: string;
@@ -29,83 +92,41 @@ interface SeedEngagement {
   teamCount: number;
   startStage: number;
   endStage: number;
-  monthlyDrift: number;
 }
 
-const SEED_ENGAGEMENTS: SeedEngagement[] = [
-  {
-    id: "d1a00001-0000-4000-8000-000000000001",
-    clientName: "Demo · Northwind Bank",
-    sponsor: "VP Engineering",
-    industry: "fintech",
-    teamCount: 28,
-    startStage: 1,
-    endStage: 3,
-    monthlyDrift: 0.18,
-  },
-  {
-    id: "d1a00001-0000-4000-8000-000000000002",
-    clientName: "Demo · Helios Health",
-    sponsor: "Chief Digital Officer",
-    industry: "healthcare",
-    teamCount: 14,
-    startStage: 2,
-    endStage: 4,
-    monthlyDrift: 0.16,
-  },
-  {
-    id: "d1a00001-0000-4000-8000-000000000003",
-    clientName: "Demo · Coastline Retail",
-    sponsor: "Head of Platform",
-    industry: "retail",
-    teamCount: 6,
-    startStage: 1,
-    endStage: 2,
-    monthlyDrift: 0.08,
-  },
-  {
-    id: "d1a00001-0000-4000-8000-000000000004",
-    clientName: "Demo · Atlas Logistics",
-    sponsor: "CTO",
-    industry: "logistics",
-    teamCount: 22,
-    startStage: 2,
-    endStage: 3,
-    monthlyDrift: 0.1,
-  },
-  {
-    id: "d1a00001-0000-4000-8000-000000000005",
-    clientName: "Demo · Bluepeak SaaS",
-    sponsor: "VP Product Engineering",
-    industry: "software",
-    teamCount: 18,
-    startStage: 3,
-    endStage: 5,
-    monthlyDrift: 0.18,
-  },
-  {
-    id: "d1a00001-0000-4000-8000-000000000006",
-    clientName: "Demo · Meridian Energy",
-    sponsor: "SVP Technology",
-    industry: "energy",
-    teamCount: 35,
-    startStage: 1,
-    endStage: 2,
-    monthlyDrift: 0.07,
-  },
-  {
-    id: "d1a00001-0000-4000-8000-000000000007",
-    clientName: "Demo · Polaris Insurance",
-    sponsor: "Head of Engineering",
-    industry: "insurance",
-    teamCount: 4,
-    startStage: 2,
-    endStage: 3,
-    monthlyDrift: 0.1,
-  },
-];
+function pad(n: number, width: number): string {
+  return n.toString().padStart(width, "0");
+}
 
-const HORIZON_MONTHS = 12;
+function buildEngagement(
+  index: number,
+  startStage: number,
+  endStage: number,
+): SeedEngagement {
+  const industry = INDUSTRIES[index % INDUSTRIES.length];
+  const industryLabel = industry.charAt(0).toUpperCase() + industry.slice(1);
+  return {
+    id: `d1a00001-0000-4000-8000-${pad(index, 12)}`,
+    clientName: `Demo · ${industryLabel} Co ${pad(index, 3)}`,
+    sponsor: SPONSORS[index % SPONSORS.length],
+    industry,
+    teamCount: 4 + (index % 30),
+    startStage,
+    endStage,
+  };
+}
+
+function expandTrajectories(): SeedEngagement[] {
+  const engagements: SeedEngagement[] = [];
+  let idx = 1;
+  for (const t of TRAJECTORIES) {
+    for (let i = 0; i < t.count; i++) {
+      engagements.push(buildEngagement(idx, t.startStage, t.endStage));
+      idx++;
+    }
+  }
+  return engagements;
+}
 
 function monthBucket(year: number, monthIndex: number): Date {
   return new Date(Date.UTC(year, monthIndex, 1));
@@ -125,37 +146,31 @@ function clampScore(n: number): number {
   return Math.max(1, Math.min(5, Number(n.toFixed(2))));
 }
 
-async function upsertEngagement(eng: SeedEngagement) {
-  const existing = await db
-    .select({ id: engagementsTable.id })
-    .from(engagementsTable)
-    .where(eq(engagementsTable.id, eng.id))
-    .limit(1);
+async function wipePriorDemoSeed(): Promise<number> {
+  // Prior runs may have used a different TRAJECTORIES recipe; clearing all
+  // engagements with the demo id prefix guarantees the new distribution
+  // isn't polluted by leftover rows. FK cascades take care of members,
+  // snapshots, scoring, narratives, etc.
+  const result = await db.execute(
+    sql`DELETE FROM engagements WHERE id::text LIKE 'd1a00001-%'`,
+  );
+  // `db.execute` returns a result object; `rowCount` is on the underlying
+  // pg result.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const count = (result as any)?.rowCount ?? 0;
+  return count;
+}
 
-  if (existing.length === 0) {
-    await db.insert(engagementsTable).values({
-      id: eng.id,
-      clientName: eng.clientName,
-      sponsor: eng.sponsor,
-      industry: eng.industry,
-      teamCount: eng.teamCount,
-      scope: "Demo seed for Portfolio distribution snapshot",
-      status: "active",
-    });
-    console.log(`+ engagement ${eng.clientName}`);
-  } else {
-    await db
-      .update(engagementsTable)
-      .set({
-        clientName: eng.clientName,
-        sponsor: eng.sponsor,
-        industry: eng.industry,
-        teamCount: eng.teamCount,
-        status: "active",
-      })
-      .where(eq(engagementsTable.id, eng.id));
-    console.log(`= engagement ${eng.clientName}`);
-  }
+async function insertEngagement(eng: SeedEngagement) {
+  await db.insert(engagementsTable).values({
+    id: eng.id,
+    clientName: eng.clientName,
+    sponsor: eng.sponsor,
+    industry: eng.industry,
+    teamCount: eng.teamCount,
+    scope: "Demo seed for Portfolio distribution snapshot",
+    status: "active",
+  });
 }
 
 async function ensureMember(engagementId: string, email: string) {
@@ -186,9 +201,6 @@ interface LatestSnapshot {
 }
 
 async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
-  // Generate HORIZON_MONTHS rows ending at the current UTC month, with stages
-  // drifting from startStage → endStage along a noisy linear path so the
-  // 100% stacked-area trend reads as gradual rightward (more-mature) movement.
   const now = new Date();
   const baseYear = now.getUTCFullYear();
   const baseMonth = now.getUTCMonth();
@@ -201,7 +213,7 @@ async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
   };
 
   for (let i = 0; i < HORIZON_MONTHS; i++) {
-    const offsetFromOldest = i; // 0 = oldest, HORIZON_MONTHS-1 = current
+    const offsetFromOldest = i;
     const monthsBack = HORIZON_MONTHS - 1 - offsetFromOldest;
     const month = monthBucket(baseYear, baseMonth - monthsBack);
 
@@ -210,7 +222,6 @@ async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
     const idealScore =
       eng.startStage + (eng.endStage - eng.startStage) * t;
 
-    // Per-engagement, per-month deterministic seed.
     const seedBase =
       Math.floor(month.getTime() / 86_400_000) +
       eng.id
@@ -220,14 +231,21 @@ async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
         .split("")
         .reduce((a, c) => a + c.charCodeAt(0), 0);
 
-    const overallScore = clampScore(idealScore + jitter(seedBase, eng.monthlyDrift));
+    // At the endpoints (i=0 and i=HORIZON-1) we lock to startStage/endStage
+    // exactly — that's how we guarantee the current-month aggregate matches
+    // the headline percentages (31/52/14/2.5/0.5).
+    const isEndpoint = i === 0 || i === HORIZON_MONTHS - 1;
+    const overallScoreRaw = isEndpoint
+      ? idealScore
+      : idealScore + jitter(seedBase, JITTER);
+    const overallScore = clampScore(overallScoreRaw);
     const overallStage = clampStage(overallScore);
 
     const byDimensionStages: Record<string, number> = {};
     const byDimensionScores: Record<string, number> = {};
     DIMENSIONS.forEach((dim, dIdx) => {
       const dimSeed = seedBase * 31 + dIdx * 7;
-      const dimScore = clampScore(idealScore + jitter(dimSeed, eng.monthlyDrift * 1.6));
+      const dimScore = clampScore(idealScore + jitter(dimSeed, JITTER * 1.4));
       byDimensionStages[dim] = clampStage(dimScore);
       byDimensionScores[dim] = dimScore;
     });
@@ -255,7 +273,12 @@ async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
       });
 
     if (i === HORIZON_MONTHS - 1) {
-      latest = { overallScore, overallStage, byDimensionScores, byDimensionStages };
+      latest = {
+        overallScore,
+        overallStage,
+        byDimensionScores,
+        byDimensionStages,
+      };
     }
   }
 
@@ -263,9 +286,6 @@ async function seedSnapshots(eng: SeedEngagement): Promise<LatestSnapshot> {
 }
 
 async function upsertScoring(eng: SeedEngagement, latest: LatestSnapshot) {
-  // Mirror the latest snapshot into `scoring` so the engagements table at the
-  // bottom of the Portfolio page shows the current overall stage badge for
-  // each demo engagement (instead of "Not yet assessed").
   const byDimension = DIMENSIONS.map((dim) => ({
     dimension: dim,
     score: latest.byDimensionScores[dim] ?? latest.overallScore,
@@ -309,19 +329,27 @@ async function upsertScoring(eng: SeedEngagement, latest: LatestSnapshot) {
 }
 
 async function main() {
+  const engagements = expandTrajectories();
   console.log(`Seeding portfolio distribution demo data`);
   console.log(`  member email: ${DEMO_EMAIL}`);
-  console.log(`  engagements:  ${SEED_ENGAGEMENTS.length}`);
+  console.log(`  engagements:  ${engagements.length}`);
   console.log(`  months/each:  ${HORIZON_MONTHS}\n`);
 
-  for (const eng of SEED_ENGAGEMENTS) {
-    await upsertEngagement(eng);
+  const wiped = await wipePriorDemoSeed();
+  if (wiped > 0) {
+    console.log(`- removed ${wiped} prior demo engagement(s)\n`);
+  }
+
+  let count = 0;
+  for (const eng of engagements) {
+    await insertEngagement(eng);
     await ensureMember(eng.id, DEMO_EMAIL);
     const latest = await seedSnapshots(eng);
     await upsertScoring(eng, latest);
-    console.log(
-      `  ↳ ${HORIZON_MONTHS} monthly snapshots written; scoring set to stage ${latest.overallStage}`,
-    );
+    count++;
+    if (count % 25 === 0 || count === engagements.length) {
+      console.log(`  ${count}/${engagements.length} seeded`);
+    }
   }
 
   console.log(

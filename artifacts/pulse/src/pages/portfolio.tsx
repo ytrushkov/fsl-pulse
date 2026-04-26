@@ -348,7 +348,7 @@ function SnapshotBar({
                   className="text-2xl font-bold font-mono"
                   data-testid={`stage-percent-${bin.stage}`}
                 >
-                  {Math.round(bin.percent * 100)}%
+                  {formatStagePercent(bin.percent)}
                 </span>
                 <span
                   className="text-xs text-foreground/70"
@@ -800,6 +800,17 @@ function StageBadge({ stage }: { stage: number | null }) {
       Stage {stage}
     </Badge>
   );
+}
+
+// Display the stage % share with one decimal when it isn't a whole number
+// (so 2.5% and 0.5% from a 200-engagement book don't get rounded to "2%"
+// and "0%"). Whole numbers stay clean: 31% rather than 31.0%.
+function formatStagePercent(p: number): string {
+  const value = (p ?? 0) * 100;
+  const oneDecimal = Math.round(value * 10) / 10;
+  return Number.isInteger(oneDecimal)
+    ? `${oneDecimal}%`
+    : `${oneDecimal.toFixed(1)}%`;
 }
 
 function formatMonthLabel(month: string): string {
