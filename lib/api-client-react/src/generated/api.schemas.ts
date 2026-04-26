@@ -288,6 +288,8 @@ export interface PortfolioHeatmap {
 export interface PortfolioDistributionEngagementRef {
   id: string;
   clientName: string;
+  /** @minimum 0 */
+  teamCount: number;
 }
 
 export interface PortfolioDistributionStageBin {

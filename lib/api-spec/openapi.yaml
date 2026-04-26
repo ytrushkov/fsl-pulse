@@ -1486,10 +1486,14 @@ components:
 
     PortfolioDistributionEngagementRef:
       type: object
-      required: [id, clientName]
+      required: [id, clientName, teamCount]
       properties:
         id: { type: string }
         clientName: { type: string }
+        # Team size for the engagement, used by the snapshot bar to sort
+        # the per-stage engagement lists from largest to smallest so the
+        # top-N display is meaningful.
+        teamCount: { type: integer, minimum: 0 }
 
     PortfolioDistributionStageBin:
       type: object

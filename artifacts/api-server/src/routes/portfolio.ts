@@ -661,8 +661,8 @@ function monthsBetween(from: Date, to: Date): Date[] {
 }
 
 interface BinResult {
-  byStage: Map<number, { id: string; name: string }[]>;
-  notYetAssessed: { id: string; name: string }[];
+  byStage: Map<number, { id: string; name: string; teamCount: number }[]>;
+  notYetAssessed: { id: string; name: string; teamCount: number }[];
   total: number;
 }
 
@@ -674,7 +674,7 @@ interface BinResult {
  * the snapshot bar populated in months without recomputes.
  */
 function binEngagementsAtMonth(
-  engagements: Array<{ id: string; clientName: string }>,
+  engagements: Array<{ id: string; clientName: string; teamCount: number }>,
   snapshots: Array<{
     engagementId: string;
     snapshotMonth: Date;
@@ -692,21 +692,37 @@ function binEngagementsAtMonth(
     arr.push(s);
     sortedByEng.set(s.engagementId, arr);
   }
-  const byStage = new Map<number, { id: string; name: string }[]>();
+  const byStage = new Map<
+    number,
+    { id: string; name: string; teamCount: number }[]
+  >();
   for (let i = 1; i <= 5; i++) byStage.set(i, []);
-  const notYetAssessed: { id: string; name: string }[] = [];
+  const notYetAssessed: { id: string; name: string; teamCount: number }[] = [];
   let total = 0;
   for (const eng of engagements) {
     const list = sortedByEng.get(eng.id);
     if (!list || list.length === 0) {
-      notYetAssessed.push({ id: eng.id, name: eng.clientName });
+      notYetAssessed.push({
+        id: eng.id,
+        name: eng.clientName,
+        teamCount: eng.teamCount,
+      });
       continue;
     }
     list.sort((a, b) => +b.snapshotMonth - +a.snapshotMonth);
     const latest = list[0];
     const stage = Math.max(1, Math.min(5, Math.round(latest.overallStage)));
-    byStage.get(stage)!.push({ id: eng.id, name: eng.clientName });
+    byStage.get(stage)!.push({
+      id: eng.id,
+      name: eng.clientName,
+      teamCount: eng.teamCount,
+    });
     total += 1;
+  }
+  // Sort each stage column from largest team to smallest so the snapshot
+  // bar's top-N display surfaces the most consequential engagements first.
+  for (const list of byStage.values()) {
+    list.sort((a, b) => b.teamCount - a.teamCount || a.name.localeCompare(b.name));
   }
   return { byStage, notYetAssessed, total };
 }
@@ -759,7 +775,11 @@ router.get(
         label: STAGE_LABELS[stage] ?? `Stage ${stage}`,
         count: list.length,
         percent: result.total > 0 ? list.length / result.total : 0,
-        engagements: list.map((e) => ({ id: e.id, clientName: e.name })),
+        engagements: list.map((e) => ({
+          id: e.id,
+          clientName: e.name,
+          teamCount: e.teamCount,
+        })),
       };
     });
     res.json({
@@ -769,6 +789,7 @@ router.get(
       notYetAssessed: result.notYetAssessed.map((e) => ({
         id: e.id,
         clientName: e.name,
+        teamCount: e.teamCount,
       })),
       generatedAt,
     });

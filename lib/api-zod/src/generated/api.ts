@@ -468,6 +468,10 @@ export const GetPortfolioDistributionQueryParams = zod.object({
 
 export const getPortfolioDistributionResponseByStageItemStageMax = 5;
 
+export const getPortfolioDistributionResponseByStageItemEngagementsItemTeamCountMin = 0;
+
+export const getPortfolioDistributionResponseNotYetAssessedItemTeamCountMin = 0;
+
 export const GetPortfolioDistributionResponse = zod.object({
   month: zod.string().describe("ISO month (YYYY-MM) the snapshot represents."),
   total: zod
@@ -486,6 +490,11 @@ export const GetPortfolioDistributionResponse = zod.object({
         zod.object({
           id: zod.string(),
           clientName: zod.string(),
+          teamCount: zod
+            .number()
+            .min(
+              getPortfolioDistributionResponseByStageItemEngagementsItemTeamCountMin,
+            ),
         }),
       ),
     }),
@@ -494,6 +503,9 @@ export const GetPortfolioDistributionResponse = zod.object({
     zod.object({
       id: zod.string(),
       clientName: zod.string(),
+      teamCount: zod
+        .number()
+        .min(getPortfolioDistributionResponseNotYetAssessedItemTeamCountMin),
     }),
   ),
   generatedAt: zod.string(),

@@ -43,6 +43,10 @@ import {
 
 const ALL = "__all__";
 
+// How many engagements to list inside each Stage column on the snapshot
+// bar before collapsing the rest into a single "and N more" footer.
+const STAGE_COLUMN_TOP_N = 10;
+
 const STALL_LABEL: Record<PortfolioStallReason, string> = {
   low_survey_response: "Low survey response",
   stale_connectors: "Stale connectors",
@@ -364,18 +368,28 @@ function SnapshotBar({
             </div>
             <div className="flex-1 px-3 pb-3 pt-1 relative z-10 overflow-y-auto">
               <ul className="space-y-1">
-                {bin.engagements.map((e) => (
-                  <li key={e.id}>
-                    <Link
-                      href={`/engagements/${e.id}`}
-                      className="block text-xs leading-tight font-medium text-foreground hover:underline truncate"
-                      data-testid={`stage-engagement-${e.id}`}
-                      title={e.clientName}
-                    >
-                      {e.clientName}
-                    </Link>
+                {bin.engagements
+                  .slice(0, STAGE_COLUMN_TOP_N)
+                  .map((e) => (
+                    <li key={e.id}>
+                      <Link
+                        href={`/engagements/${e.id}`}
+                        className="block text-xs leading-tight font-medium text-foreground hover:underline truncate"
+                        data-testid={`stage-engagement-${e.id}`}
+                        title={`${e.clientName} · ${e.teamCount} on team`}
+                      >
+                        {e.clientName}
+                      </Link>
+                    </li>
+                  ))}
+                {bin.engagements.length > STAGE_COLUMN_TOP_N && (
+                  <li
+                    className="text-[11px] text-foreground/60 italic pt-0.5"
+                    data-testid={`stage-more-${bin.stage}`}
+                  >
+                    and {bin.engagements.length - STAGE_COLUMN_TOP_N} more
                   </li>
-                ))}
+                )}
                 {bin.engagements.length === 0 && (
                   <li className="text-[11px] text-foreground/50 italic">
                     None
