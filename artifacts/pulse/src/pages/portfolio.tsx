@@ -184,7 +184,7 @@ export default function PortfolioPage() {
           </div>
           <div className="min-w-[200px] flex-1">
             <label className="block text-xs font-medium mb-1 text-muted-foreground">
-              Engagement size
+              Engineering Org size
             </label>
             <Select value={size} onValueChange={setSize}>
               <SelectTrigger data-testid="select-size">
