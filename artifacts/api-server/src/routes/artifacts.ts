@@ -361,18 +361,9 @@ router.get(
     );
 
     if (!a.objectKey) {
-      // Two cases land here:
-      //   1. Legacy paste-only upload (no binary): stream the extracted text.
-      //   2. Pre-migration row whose binary still lives in `data_base64`
-      //      because the runtime backfill hasn't run yet (or failed for this
-      //      row). Decode and stream the inline base64 so users aren't
-      //      locked out of their own files mid-rollout.
-      if (a.dataBase64 && a.dataBase64.length > 0) {
-        const buffer = Buffer.from(a.dataBase64, "base64");
-        res.setHeader("Content-Length", String(buffer.length));
-        res.end(buffer);
-        return;
-      }
+      // Legacy paste-only upload (no binary): stream the extracted text.
+      // (The pre-migration `data_base64` fallback was removed once
+      // `migrateLegacyArtifactBlobs` finished and dropped the column.)
       const buffer = Buffer.from(a.content, "utf8");
       res.setHeader("Content-Length", String(buffer.length));
       res.end(buffer);

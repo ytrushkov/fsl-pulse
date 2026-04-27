@@ -61,9 +61,9 @@ export default function EngagementOverview() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Workspace Overview</h1>
-          <p className="text-muted-foreground mt-1">
+          <div className="text-muted-foreground mt-1 text-sm">
             {isLoading ? <Skeleton className="h-4 w-48" /> : `Status and progress for ${engagement?.clientName}`}
-          </p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" className="gap-2">

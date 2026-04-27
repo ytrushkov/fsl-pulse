@@ -1,0 +1,46 @@
+chunk-XYLSH4ZV.js?v=10c00d2e:2160 In HTML, <div> cannot be a descendant of <p>.
+This will cause a hydration error.
+
+  ...
+    <TooltipProviderProvider scope={undefined} isOpenDelayedRef={{current:true}} delayDuration={700} onOpen={function} ...>
+      <AppRouter data-replit-metadata="artifacts/..." data-component-name="AppRouter">
+        <Switch data-replit-metadata="artifacts/..." data-component-name="Switch">
+          <Route data-replit-metadata="artifacts/..." data-component-name="Route" path="/engagemen..." match={[...]}>
+            <ProtectedRoute data-replit-metadata="artifacts/..." data-component-name="ProtectedR...">
+              <Show data-replit-metadata="artifacts/..." data-component-name="Show" when="signed-in">
+                <EngagementOverview data-replit-metadata="artifacts/..." data-component-name="Engagement...">
+                  <AppLayout data-replit-metadata="artifacts/..." data-component-name="AppLayout" ...>
+                    <div data-replit-metadata="artifacts/..." data-component-name="div" className="flex h-scr...">
+                      <Sidebar>
+                      <div data-replit-metadata="artifacts/..." data-component-name="div" className="flex flex-...">
+                        <Topbar>
+                        <main data-replit-metadata="artifacts/..." data-component-name="main" className="flex-1 ove...">
+                          <div data-replit-metadata="artifacts/..." data-component-name="div" className="flex items...">
+                            <div data-replit-metadata="artifacts/..." data-component-name="div">
+                              <h1>
+>                             <p
+>                               data-replit-metadata="artifacts/pulse/src/pages/engagements/overview.tsx:64:10"
+>                               data-component-name="p"
+>                               className="text-muted-foreground mt-1"
+>                             >
+                                <Skeleton data-replit-metadata="artifacts/..." data-component-name="Skeleton" ...>
+>                                 <div
+>                                   data-replit-metadata="artifacts/pulse/src/pages/engagements/overview.tsx:65:25"
+>                                   data-component-name="Skeleton"
+>                                   className="animate-pulse rounded-md bg-primary/10 h-4 w-48"
+>                                 >
+                            ...
+                          ...
+              ...
+      ...
+
+chunk-XYLSH4ZV.js?v=10c00d2e:2167 <p> cannot contain a nested <div>.
+See this log for the ancestor stack trace.
+/api/engagements/07e…5659a82/dashboard:1 
+ Failed to load resource: the server responded with a status of 500 (Internal Server Error)
+/api/engagements/07e…5659a82/dashboard:1 
+ Failed to load resource: the server responded with a status of 500 (Internal Server Error)
+/api/engagements/07e…5659a82/dashboard:1 
+ Failed to load resource: the server responded with a status of 500 (Internal Server Error)
+/api/engagements/07e…5659a82/dashboard:1 
+ Failed to load resource: the server responded with a status of 500 (Internal Server Error)

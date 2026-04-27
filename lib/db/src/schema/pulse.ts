@@ -284,13 +284,13 @@ export const artifactDocsTable = pgTable(
     // binary (paste-only uploads, where the download endpoint falls back
     // to streaming `content` as text/plain).
     objectKey: text("object_key").notNull().default(""),
-    // DEPRECATED — kept in the schema only so that `drizzle-kit push` on
-    // upgrade does not auto-drop the column before the runtime backfill
-    // (`migrateLegacyArtifactBlobs`) has had a chance to copy any
-    // remaining bytes into object storage. The backfill drops this
-    // column itself once every row is migrated. Once production has
-    // been confirmed clean, remove this field in a follow-up.
-    dataBase64: text("data_base64"),
+    // The legacy `data_base64` column was dropped at runtime by
+    // `migrateLegacyArtifactBlobs` after every row was copied into object
+    // storage. It is intentionally NOT declared here — keeping it in the
+    // typed schema would cause every `select().from(artifactDocsTable)`
+    // to reference a column that no longer exists in the database, which
+    // breaks /dashboard, /exports, /artifacts, etc. The migration itself
+    // uses raw SQL and does not depend on this field.
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({ engIdx: index("artifact_docs_engagement_idx").on(t.engagementId) }),
