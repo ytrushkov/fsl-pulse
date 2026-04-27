@@ -1,0 +1,344 @@
+[17:18:46.390] ERROR (355): Unhandled error
+    requestId: "8f46add0-4592-41a2-b3f1-21c4416933cc"
+    url: "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    err: {
+      "type": "_DrizzleQueryError",
+      "message": "Failed query: select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1\nparams: 07eafd3f-4706-494c-bfe7-b024e5659a82: column \"data_base64\" does not exist",
+      "stack":
+          Error: Failed query: select "id", "engagement_id", "filename", "kind", "size_bytes", "content", "extracted_summary", "mime_type", "object_key", "data_base64", "created_at" from "artifact_docs" where "artifact_docs"."engagement_id" = $1
+          params: 07eafd3f-4706-494c-bfe7-b024e5659a82
+              at NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:73:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+          caused by: error: column "data_base64" does not exist
+              at <anonymous> (/home/runner/workspace/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+              at async NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+      "query": "select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1",
+      "params": [
+        "07eafd3f-4706-494c-bfe7-b024e5659a82"
+      ]
+    }
+[17:18:46.390] INFO (355): request errored
+    req: {
+      "id": "8f46add0-4592-41a2-b3f1-21c4416933cc",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    }
+    res: {
+      "statusCode": 500
+    }
+    responseTime: 141
+    err: {
+      "type": "Error",
+      "message": "failed with status code 500",
+      "stack":
+          Error: failed with status code 500
+              at onResFinished (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:115:39)
+              at ServerResponse.onResponseComplete (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:178:14)
+              at ServerResponse.emit (node:events:520:35)
+              at onFinish (node:_http_outgoing:1026:10)
+              at callback (node:internal/streams/writable:764:21)
+              at afterWrite (node:internal/streams/writable:708:5)
+              at afterWriteTick (node:internal/streams/writable:694:10)
+              at process.processTicksAndRejections (node:internal/process/task_queues:88:21)
+    }
+[17:18:50.701] ERROR (355): Unhandled error
+    requestId: "602b689c-827a-4f7b-b5d2-64e4a1a8a387"
+    url: "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    err: {
+      "type": "_DrizzleQueryError",
+      "message": "Failed query: select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1\nparams: 07eafd3f-4706-494c-bfe7-b024e5659a82: column \"data_base64\" does not exist",
+      "stack":
+          Error: Failed query: select "id", "engagement_id", "filename", "kind", "size_bytes", "content", "extracted_summary", "mime_type", "object_key", "data_base64", "created_at" from "artifact_docs" where "artifact_docs"."engagement_id" = $1
+          params: 07eafd3f-4706-494c-bfe7-b024e5659a82
+              at NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:73:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+          caused by: error: column "data_base64" does not exist
+              at <anonymous> (/home/runner/workspace/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+              at async NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+      "query": "select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1",
+      "params": [
+        "07eafd3f-4706-494c-bfe7-b024e5659a82"
+      ]
+    }
+[17:18:50.701] INFO (355): request errored
+    req: {
+      "id": "602b689c-827a-4f7b-b5d2-64e4a1a8a387",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    }
+    res: {
+      "statusCode": 500
+    }
+    responseTime: 211
+    err: {
+      "type": "Error",
+      "message": "failed with status code 500",
+      "stack":
+          Error: failed with status code 500
+              at onResFinished (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:115:39)
+              at ServerResponse.onResponseComplete (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:178:14)
+              at ServerResponse.emit (node:events:520:35)
+              at onFinish (node:_http_outgoing:1026:10)
+              at callback (node:internal/streams/writable:764:21)
+              at afterWrite (node:internal/streams/writable:708:5)
+              at afterWriteTick (node:internal/streams/writable:694:10)
+              at process.processTicksAndRejections (node:internal/process/task_queues:88:21)
+    }
+[17:19:59.081] INFO (355): request completed
+    req: {
+      "id": "57ed3fb0-3bff-4513-be63-5d83481b4f37",
+      "method": "GET",
+      "url": "/api/me"
+    }
+    res: {
+      "statusCode": 304
+    }
+    responseTime: 270
+[17:19:59.101] ERROR (355): Unhandled error
+    requestId: "eb8dd1cb-d0ad-40f5-ab35-26dd51e3258d"
+    url: "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    err: {
+      "type": "_DrizzleQueryError",
+      "message": "Failed query: select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1\nparams: 07eafd3f-4706-494c-bfe7-b024e5659a82: column \"data_base64\" does not exist",
+      "stack":
+          Error: Failed query: select "id", "engagement_id", "filename", "kind", "size_bytes", "content", "extracted_summary", "mime_type", "object_key", "data_base64", "created_at" from "artifact_docs" where "artifact_docs"."engagement_id" = $1
+          params: 07eafd3f-4706-494c-bfe7-b024e5659a82
+              at NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:73:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+          caused by: error: column "data_base64" does not exist
+              at <anonymous> (/home/runner/workspace/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+              at async NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+      "query": "select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1",
+      "params": [
+        "07eafd3f-4706-494c-bfe7-b024e5659a82"
+      ]
+    }
+[17:19:59.101] INFO (355): request errored
+    req: {
+      "id": "eb8dd1cb-d0ad-40f5-ab35-26dd51e3258d",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    }
+    res: {
+      "statusCode": 500
+    }
+    responseTime: 297
+    err: {
+      "type": "Error",
+      "message": "failed with status code 500",
+      "stack":
+          Error: failed with status code 500
+              at onResFinished (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:115:39)
+              at ServerResponse.onResponseComplete (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:178:14)
+              at ServerResponse.emit (node:events:520:35)
+              at onFinish (node:_http_outgoing:1026:10)
+              at callback (node:internal/streams/writable:764:21)
+              at afterWrite (node:internal/streams/writable:708:5)
+              at afterWriteTick (node:internal/streams/writable:694:10)
+              at process.processTicksAndRejections (node:internal/process/task_queues:88:21)
+    }
+[17:19:59.115] INFO (355): request completed
+    req: {
+      "id": "335238bd-b1e7-46db-a041-220c3d80918b",
+      "method": "GET",
+      "url": "/api/engagements"
+    }
+    res: {
+      "statusCode": 304
+    }
+    responseTime: 312
+[17:19:59.119] INFO (355): request completed
+    req: {
+      "id": "c709e075-9c7e-46df-94ec-fa0f0c3bbcc8",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/activity"
+    }
+    res: {
+      "statusCode": 304
+    }
+    responseTime: 310
+[17:19:59.130] INFO (355): request completed
+    req: {
+      "id": "c19e1a94-0e16-42dd-a516-387d7c0218db",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82"
+    }
+    res: {
+      "statusCode": 304
+    }
+    responseTime: 322
+[17:19:59.177] INFO (355): request completed
+    req: {
+      "id": "f003b208-07d5-45a7-9414-0640fd7f15df",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/members"
+    }
+    res: {
+      "statusCode": 304
+    }
+    responseTime: 376
+[17:20:00.370] ERROR (355): Unhandled error
+    requestId: "d5e88ac1-d99b-47c6-8420-60bd0011ba65"
+    url: "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    err: {
+      "type": "_DrizzleQueryError",
+      "message": "Failed query: select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1\nparams: 07eafd3f-4706-494c-bfe7-b024e5659a82: column \"data_base64\" does not exist",
+      "stack":
+          Error: Failed query: select "id", "engagement_id", "filename", "kind", "size_bytes", "content", "extracted_summary", "mime_type", "object_key", "data_base64", "created_at" from "artifact_docs" where "artifact_docs"."engagement_id" = $1
+          params: 07eafd3f-4706-494c-bfe7-b024e5659a82
+              at NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:73:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+          caused by: error: column "data_base64" does not exist
+              at <anonymous> (/home/runner/workspace/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+              at async NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+      "query": "select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1",
+      "params": [
+        "07eafd3f-4706-494c-bfe7-b024e5659a82"
+      ]
+    }
+[17:20:00.371] INFO (355): request errored
+    req: {
+      "id": "d5e88ac1-d99b-47c6-8420-60bd0011ba65",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    }
+    res: {
+      "statusCode": 500
+    }
+    responseTime: 153
+    err: {
+      "type": "Error",
+      "message": "failed with status code 500",
+      "stack":
+          Error: failed with status code 500
+              at onResFinished (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:115:39)
+              at ServerResponse.onResponseComplete (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:178:14)
+              at ServerResponse.emit (node:events:520:35)
+              at onFinish (node:_http_outgoing:1026:10)
+              at callback (node:internal/streams/writable:764:21)
+              at afterWrite (node:internal/streams/writable:708:5)
+              at afterWriteTick (node:internal/streams/writable:694:10)
+              at process.processTicksAndRejections (node:internal/process/task_queues:88:21)
+    }
+[17:20:02.726] ERROR (355): Unhandled error
+    requestId: "e9288a45-f5f1-4aa4-a90d-cab8dc59ccae"
+    url: "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    err: {
+      "type": "_DrizzleQueryError",
+      "message": "Failed query: select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1\nparams: 07eafd3f-4706-494c-bfe7-b024e5659a82: column \"data_base64\" does not exist",
+      "stack":
+          Error: Failed query: select "id", "engagement_id", "filename", "kind", "size_bytes", "content", "extracted_summary", "mime_type", "object_key", "data_base64", "created_at" from "artifact_docs" where "artifact_docs"."engagement_id" = $1
+          params: 07eafd3f-4706-494c-bfe7-b024e5659a82
+              at NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:73:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+          caused by: error: column "data_base64" does not exist
+              at <anonymous> (/home/runner/workspace/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+              at async NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+      "query": "select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1",
+      "params": [
+        "07eafd3f-4706-494c-bfe7-b024e5659a82"
+      ]
+    }
+[17:20:02.727] INFO (355): request errored
+    req: {
+      "id": "e9288a45-f5f1-4aa4-a90d-cab8dc59ccae",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    }
+    res: {
+      "statusCode": 500
+    }
+    responseTime: 173
+    err: {
+      "type": "Error",
+      "message": "failed with status code 500",
+      "stack":
+          Error: failed with status code 500
+              at onResFinished (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:115:39)
+              at ServerResponse.onResponseComplete (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:178:14)
+              at ServerResponse.emit (node:events:520:35)
+              at onFinish (node:_http_outgoing:1026:10)
+              at callback (node:internal/streams/writable:764:21)
+              at afterWrite (node:internal/streams/writable:708:5)
+              at afterWriteTick (node:internal/streams/writable:694:10)
+              at process.processTicksAndRejections (node:internal/process/task_queues:88:21)
+    }
+[17:20:10.966] ERROR (355): Unhandled error
+    requestId: "c8d8b863-cc91-4828-aa74-434eb340a1e0"
+    url: "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    err: {
+      "type": "_DrizzleQueryError",
+      "message": "Failed query: select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1\nparams: 07eafd3f-4706-494c-bfe7-b024e5659a82: column \"data_base64\" does not exist",
+      "stack":
+          Error: Failed query: select "id", "engagement_id", "filename", "kind", "size_bytes", "content", "extracted_summary", "mime_type", "object_key", "data_base64", "created_at" from "artifact_docs" where "artifact_docs"."engagement_id" = $1
+          params: 07eafd3f-4706-494c-bfe7-b024e5659a82
+              at NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:73:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+          caused by: error: column "data_base64" does not exist
+              at <anonymous> (/home/runner/workspace/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+              at async NodePgPreparedQuery.queryWithCache (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+              at async <anonymous> (/home/runner/workspace/node_modules/.pnpm/drizzle-orm@0.45.1_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+              at async <anonymous> (/home/runner/workspace/artifacts/api-server/src/routes/engagements.ts:256:23)
+      "query": "select \"id\", \"engagement_id\", \"filename\", \"kind\", \"size_bytes\", \"content\", \"extracted_summary\", \"mime_type\", \"object_key\", \"data_base64\", \"created_at\" from \"artifact_docs\" where \"artifact_docs\".\"engagement_id\" = $1",
+      "params": [
+        "07eafd3f-4706-494c-bfe7-b024e5659a82"
+      ]
+    }
+[17:20:10.967] INFO (355): request errored
+    req: {
+      "id": "c8d8b863-cc91-4828-aa74-434eb340a1e0",
+      "method": "GET",
+      "url": "/api/engagements/07eafd3f-4706-494c-bfe7-b024e5659a82/dashboard"
+    }
+    res: {
+      "statusCode": 500
+    }
+    responseTime: 204
+    err: {
+      "type": "Error",
+      "message": "failed with status code 500",
+      "stack":
+          Error: failed with status code 500
+              at onResFinished (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:115:39)
+              at ServerResponse.onResponseComplete (/home/runner/workspace/node_modules/.pnpm/pino-http@10.5.0/node_modules/pino-http/logger.js:178:14)
+              at ServerResponse.emit (node:events:520:35)
+              at onFinish (node:_http_outgoing:1026:10)
+              at callback (node:internal/streams/writable:764:21)
+              at afterWrite (node:internal/streams/writable:708:5)
+              at afterWriteTick (node:internal/streams/writable:694:10)
+              at process.processTicksAndRejections (node:internal/process/task_queues:88:21)
+    }
