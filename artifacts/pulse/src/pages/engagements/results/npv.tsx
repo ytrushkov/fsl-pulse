@@ -220,17 +220,35 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
         <div>
           <h3 className="text-lg font-bold mb-4 border-b pb-2">Value Levers</h3>
           <div className="space-y-4 pt-2">
-            {data.leverBreakdown.map((lever) => (
-              <div key={lever.lever}>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="font-medium text-foreground">{lever.lever}</span>
-                  <span className="font-mono text-muted-foreground">{formatCurrency(lever.savings)}</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                  <div className="bg-primary h-full" style={{ width: `${Math.min(100, Math.max(10, (lever.savings / 2000000) * 100))}%` }}></div>
-                </div>
-              </div>
-            ))}
+            {(() => {
+              // Normalize against the largest lever so the biggest bar is
+              // always 100% and the others are proportional to it. A small
+              // floor keeps a near-zero bar visible without making every
+              // bar cluster at the same width.
+              const maxSavings = Math.max(
+                1,
+                ...data.leverBreakdown.map((l) => l.savings),
+              );
+              return data.leverBreakdown.map((lever) => {
+                const pct = (lever.savings / maxSavings) * 100;
+                const width = Math.max(2, Math.min(100, pct));
+                return (
+                  <div key={lever.lever}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="font-medium text-foreground">{lever.lever}</span>
+                      <span className="font-mono text-muted-foreground">{formatCurrency(lever.savings)}</span>
+                    </div>
+                    <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-primary h-full"
+                        style={{ width: `${width}%` }}
+                        data-testid={`lever-bar-${lever.lever}`}
+                      />
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
       </div>

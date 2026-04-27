@@ -65,11 +65,20 @@ export function computeNpv(rawInputs: Partial<NpvInputs> | null | undefined): Np
   const { fullyLoadedCost: fl, teamCount: tc, aiAcceptanceRate: accept, reworkRate: rework, discountRate: r } = inputs;
   const horizon = inputs.horizonYears ?? 3;
 
+  // The three driver-specific savings buckets. Pulled out of `scenario()`
+  // so the lever breakdown can reuse the *same* numbers the base scenario
+  // uses, instead of re-splitting the total with hard-coded weights
+  // (which made the bars insensitive to the assumption sliders).
+  function leverSavings(multiplier: number) {
+    const cycle = fl * tc * accept * 0.15 * multiplier;
+    const rework_ = fl * tc * rework * 0.5 * multiplier;
+    const review = fl * tc * 0.05 * multiplier;
+    return { cycle, rework: rework_, review };
+  }
+
   function scenario(multiplier: number): NpvScenario {
-    const cycleSavings = fl * tc * accept * 0.15 * multiplier;
-    const reworkSavings = fl * tc * rework * 0.5 * multiplier;
-    const reviewSavings = fl * tc * 0.05 * multiplier;
-    const annualBase = cycleSavings + reworkSavings + reviewSavings;
+    const { cycle, rework: reworkSavings, review } = leverSavings(multiplier);
+    const annualBase = cycle + reworkSavings + review;
     const annualSavings = Array.from(
       { length: horizon },
       (_, y) => annualBase * (1 + 0.1 * y),
@@ -92,16 +101,16 @@ export function computeNpv(rawInputs: Partial<NpvInputs> | null | undefined): Np
   }
 
   const base = scenario(1);
-  const baseAnnual = base.annualSavings[0] ?? 0;
+  const baseLevers = leverSavings(1);
 
   return {
     modelVersion: "1.0.0",
     inputs,
     scenarios: { low: scenario(0.6), base, high: scenario(1.4) },
     leverBreakdown: [
-      { lever: "Cycle time reduction", savings: Math.round(baseAnnual * 0.45) },
-      { lever: "Rework reduction", savings: Math.round(baseAnnual * 0.4) },
-      { lever: "Code review acceleration", savings: Math.round(baseAnnual * 0.15) },
+      { lever: "Cycle time reduction", savings: Math.round(baseLevers.cycle) },
+      { lever: "Rework reduction", savings: Math.round(baseLevers.rework) },
+      { lever: "Code review acceleration", savings: Math.round(baseLevers.review) },
     ],
   };
 }
