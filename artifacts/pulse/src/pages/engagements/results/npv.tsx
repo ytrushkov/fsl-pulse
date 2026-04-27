@@ -43,15 +43,58 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
   // Track which inputs the assessor edited so we only auto-recompute
   // when the assumptions change, not on every parent refetch.
   const [pendingInputs, setPendingInputs] = useState<Partial<NpvInputs> | null>(null);
+
   useEffect(() => {
     if (deliverables?.npv) setWorking(deliverables.npv);
   }, [deliverables?.npv]);
+
+  // Derived view-state. Computed *before* the early return so that the
+  // debounce effect below sees stable values. We accept that `data`/`base`
+  // can be undefined here and gate the render on `working` further down.
+  const isLocked = deliverables?.statuses?.npv === "locked";
+
+  // Live recompute: 400ms after the last keystroke, push the inputs at the
+  // pure server helper and splice the result back into the working copy.
+  // Save stays a separate explicit action so the assessor can iterate
+  // without persisting every intermediate state.
+  //
+  // IMPORTANT: This hook MUST run on every render (including the
+  // "no NPV yet" early-return path below) so the rules-of-hooks invariant
+  // holds. The internal guard short-circuits when there's nothing pending
+  // or when the deliverable is locked.
+  useEffect(() => {
+    if (!pendingInputs || isLocked || !working) return;
+    const handle = setTimeout(() => {
+      const inputs: NpvInputs = {
+        fullyLoadedCost: Math.max(0, Number(working.inputs.fullyLoadedCost ?? 200000)),
+        teamCount: Math.max(1, Math.round(Number(working.inputs.teamCount ?? 8))),
+        baselineCycleTimeDays: Math.max(1, Number(working.inputs.baselineCycleTimeDays ?? 14)),
+        aiAcceptanceRate: Math.min(1, Math.max(0, Number(working.inputs.aiAcceptanceRate ?? 0.35))),
+        reworkRate: Math.min(1, Math.max(0, Number(working.inputs.reworkRate ?? 0.18))),
+        discountRate: Math.min(1, Math.max(0, Number(working.inputs.discountRate ?? 0.1))),
+      };
+      recompute.mutate(
+        { id: engagementId, data: inputs },
+        {
+          onSuccess: (res) => {
+            setWorking(res);
+            setPendingInputs(null);
+          },
+          onError: () => setPendingInputs(null),
+        },
+      );
+    }, 400);
+    return () => clearTimeout(handle);
+    // We deliberately depend only on the pendingInputs token so the
+    // debounce restarts on each new edit without re-firing for unrelated
+    // re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingInputs]);
 
   if (!deliverables?.npv || !working) {
     return <div className="p-8 text-center text-muted-foreground">No NPV analysis available.</div>;
   }
 
-  const isLocked = deliverables.statuses.npv === "locked";
   const data = working;
   const base = data.scenarios.base;
   const dirty = JSON.stringify(working) !== JSON.stringify(deliverables.npv);
@@ -72,31 +115,6 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
     setWorking((w) => (w ? { ...w, inputs: { ...w.inputs, [key]: value } } : w));
     setPendingInputs((p) => ({ ...(p ?? {}), [key]: value }));
   };
-
-  // Live recompute: 400ms after the last keystroke, push the inputs at the
-  // pure server helper and splice the result back into the working copy.
-  // Save stays a separate explicit action so the assessor can iterate
-  // without persisting every intermediate state.
-  useEffect(() => {
-    if (!pendingInputs || isLocked) return;
-    const handle = setTimeout(() => {
-      recompute.mutate(
-        { id: engagementId, data: buildInputsBody() },
-        {
-          onSuccess: (res) => {
-            setWorking(res);
-            setPendingInputs(null);
-          },
-          onError: () => setPendingInputs(null),
-        },
-      );
-    }, 400);
-    return () => clearTimeout(handle);
-    // We deliberately depend only on the pendingInputs token so the
-    // debounce restarts on each new edit without re-firing for unrelated
-    // re-renders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingInputs]);
 
   const handleRecompute = () => {
     recompute.mutate(
