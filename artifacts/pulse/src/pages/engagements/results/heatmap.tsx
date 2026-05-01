@@ -91,21 +91,30 @@ export default function HeatmapView({ engagementId, deliverables }: ViewProps) {
       )}
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
+        <table className="w-full min-w-[1280px] border-collapse table-fixed">
+          <colgroup>
+            <col className="w-48" />
+            <col className="w-40" />
+            <col className="w-40" />
+            <col className="w-40" />
+            <col className="w-40" />
+            <col className="w-40" />
+            <col />
+          </colgroup>
           <thead>
             <tr>
-              <th className="w-48 p-4 text-left border-b-2 text-lg font-medium text-muted-foreground">
+              <th className="p-4 text-left border-b-2 text-lg font-medium text-muted-foreground">
                 Dimension
               </th>
               {stageLabels.map((label, i) => (
                 <th
                   key={i}
-                  className="p-4 text-center border-b-2 font-medium text-sm tracking-wider uppercase text-muted-foreground w-1/6"
+                  className="p-4 text-center border-b-2 font-medium text-sm tracking-wider uppercase text-muted-foreground"
                 >
                   {label}
                 </th>
               ))}
-              <th className="w-72 p-4 text-left border-b-2 font-medium text-sm tracking-wider uppercase text-muted-foreground">
+              <th className="p-4 text-left border-b-2 font-medium text-sm tracking-wider uppercase text-muted-foreground">
                 Notes
               </th>
             </tr>
