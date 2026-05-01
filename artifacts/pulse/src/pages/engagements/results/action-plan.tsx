@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dimension,
   useUpdateDeliverables,
@@ -18,10 +19,205 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 import { LockBadge } from "@/components/deliverables/lock-badge";
+import { identityColor } from "@/lib/dimension-palette";
 import { Trash2, Plus } from "lucide-react";
 
 const PRIORITIES = ["P0", "P1", "P2"] as const;
 const SIZES = ["S", "M", "L", "XL"] as const;
+
+// Effort buckets translate t-shirt sizes into approximate calendar weeks.
+// These are rough rollout estimates, not contractual durations.
+const EFFORT_WEEKS: Record<ActionItemEffort, number> = {
+  S: 2,
+  M: 6,
+  L: 12,
+  XL: 16,
+};
+
+const PRIORITY_RANK: Record<ActionItemPriority, number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+};
+
+// Each step down in priority order shifts the bar one week to the right so
+// higher-priority items visibly start sooner while still allowing overlap.
+const STAGGER_WEEKS = 1;
+const PIXELS_PER_WEEK = 22;
+
+interface DerivedBar {
+  item: ActionItem;
+  startWeek: number;
+  widthWeeks: number;
+  color: string;
+}
+
+function deriveTimeline(items: ActionItem[]): DerivedBar[] {
+  const sorted = items
+    .map((item, originalIndex) => ({ item, originalIndex }))
+    .sort((a, b) => {
+      const pri = PRIORITY_RANK[a.item.priority] - PRIORITY_RANK[b.item.priority];
+      if (pri !== 0) return pri;
+      return a.originalIndex - b.originalIndex;
+    });
+  return sorted.map((entry, sortedIndex) => ({
+    item: entry.item,
+    startWeek: sortedIndex * STAGGER_WEEKS,
+    widthWeeks: EFFORT_WEEKS[entry.item.effort] ?? 4,
+    color: identityColor(entry.item.dimension),
+  }));
+}
+
+interface MonthSegment {
+  label: string;
+  weeks: number;
+}
+
+function buildMonthSegments(totalWeeks: number, today: Date): MonthSegment[] {
+  const segments: MonthSegment[] = [];
+  let currentMonth = -1;
+  let currentYear = -1;
+  for (let w = 0; w < totalWeeks; w++) {
+    const date = new Date(today);
+    date.setDate(date.getDate() + w * 7);
+    const m = date.getMonth();
+    const y = date.getFullYear();
+    if (m !== currentMonth || y !== currentYear) {
+      segments.push({
+        label: date.toLocaleString("en-US", { month: "short", year: "2-digit" }),
+        weeks: 1,
+      });
+      currentMonth = m;
+      currentYear = y;
+    } else {
+      segments[segments.length - 1]!.weeks += 1;
+    }
+  }
+  return segments;
+}
+
+function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
+  const today = useMemo(() => new Date(), []);
+  const derived = useMemo(() => deriveTimeline(items), [items]);
+  const totalWeeks = useMemo(() => {
+    const max = derived.reduce((acc, d) => Math.max(acc, d.startWeek + d.widthWeeks), 0);
+    // Always show at least 8 weeks of runway so the axis is never lonely.
+    return Math.max(max, 8);
+  }, [derived]);
+  const months = useMemo(() => buildMonthSegments(totalWeeks, today), [totalWeeks, today]);
+
+  if (derived.length === 0) return null;
+
+  const handleBarClick = (id: string) => {
+    const row =
+      typeof document !== "undefined"
+        ? document.querySelector<HTMLElement>(`[data-action-row="${CSS.escape(id)}"]`)
+        : null;
+    if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    // Optional integration with a future per-row expand handler. Guarded so
+    // the timeline keeps working whether or not the accordion-rows task has
+    // shipped.
+    const expander = (
+      window as unknown as {
+        __pulseExpandActionRow?: (rowId: string) => void;
+      }
+    ).__pulseExpandActionRow;
+    if (typeof expander === "function") {
+      try {
+        expander(id);
+      } catch {
+        /* ignore — expander is best-effort */
+      }
+    }
+  };
+
+  const widthPx = totalWeeks * PIXELS_PER_WEEK;
+
+  return (
+    <div className="mb-6 border rounded-md shadow-sm bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
+        <h3 className="text-sm font-semibold text-foreground">Approximate timeline</h3>
+        <span className="text-xs text-muted-foreground">
+          {derived.length} {derived.length === 1 ? "initiative" : "initiatives"} · ~{totalWeeks} weeks
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <div style={{ minWidth: `${widthPx}px` }}>
+          <div className="flex border-b">
+            {months.map((m, i) => (
+              <div
+                key={`${m.label}-${i}`}
+                style={{ width: `${m.weeks * PIXELS_PER_WEEK}px` }}
+                className="px-2 py-1 text-xs font-medium text-muted-foreground border-r last:border-r-0 bg-muted/20"
+              >
+                {m.label}
+              </div>
+            ))}
+          </div>
+          <div className="flex border-b">
+            {Array.from({ length: totalWeeks }).map((_, w) => (
+              <div
+                key={w}
+                style={{ width: `${PIXELS_PER_WEEK}px` }}
+                className="py-0.5 text-center text-[10px] text-muted-foreground/60 border-r border-border/40 last:border-r-0"
+              >
+                {w + 1}
+              </div>
+            ))}
+          </div>
+          <div className="py-2 relative">
+            {derived.map(({ item, startWeek, widthWeeks, color }) => (
+              <div key={item.id} className="relative h-7 my-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => handleBarClick(item.id)}
+                      aria-label={`${item.initiative} — ${item.dimension}, effort ${item.effort}, impact ${item.impact}`}
+                      className="absolute h-6 top-0.5 rounded-sm border border-white/40 hover:ring-2 hover:ring-foreground/40 focus-visible:ring-2 focus-visible:ring-foreground/60 outline-none transition flex items-center px-2 text-xs text-white overflow-hidden"
+                      style={{
+                        left: `${startWeek * PIXELS_PER_WEEK}px`,
+                        width: `${Math.max(widthWeeks * PIXELS_PER_WEEK, 16)}px`,
+                        backgroundColor: color,
+                      }}
+                    >
+                      <span className="truncate font-medium">{item.initiative}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs bg-popover text-popover-foreground border">
+                    <div className="space-y-1 text-xs">
+                      <div className="font-semibold text-sm">{item.initiative}</div>
+                      <div className="capitalize">
+                        <span className="text-muted-foreground">Dimension: </span>
+                        {item.dimension}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Effort: </span>
+                        {item.effort}
+                        <span className="text-muted-foreground"> · Impact: </span>
+                        {item.impact}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Owner: </span>
+                        {item.ownerRole || "Unassigned"}
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <p className="px-4 py-2 text-xs text-muted-foreground border-t bg-muted/10">
+        Approximate timeline derived from priority and effort. The Action Plan does not yet include
+        real start or end dates.
+      </p>
+    </div>
+  );
+}
 
 interface ViewProps {
   engagementId: string;
@@ -108,6 +304,8 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
         </div>
       )}
 
+      <ActionPlanTimeline items={items} />
+
       <div className="border rounded-md shadow-sm overflow-hidden">
         <Table>
           <TableHeader className="bg-muted/50">
@@ -124,7 +322,7 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
           </TableHeader>
           <TableBody>
             {items.map((item) => (
-              <TableRow key={item.id} className="bg-card align-top">
+              <TableRow key={item.id} className="bg-card align-top" data-action-row={item.id}>
                 <TableCell>
                   {isLocked ? (
                     <Badge
