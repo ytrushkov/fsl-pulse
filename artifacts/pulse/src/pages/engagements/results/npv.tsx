@@ -237,6 +237,16 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                 color: segmentColors[i % segmentColors.length],
               };
             });
+            // Build a concise text summary so assistive tech announces the
+            // breakdown the same way a sighted user reads the bar. The
+            // segments themselves are aria-hidden so they don't produce a
+            // separate stream of announcements alongside the legend list
+            // below.
+            const barAriaLabel = hasSavings
+              ? `Annual savings split: ${segments
+                  .map((s) => `${s.lever} ${s.pct.toFixed(0)}%`)
+                  .join(", ")}`
+              : "Annual savings split: no savings yet";
             return (
               <div className="pt-2">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
@@ -245,6 +255,8 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                 <div
                   className="w-full bg-muted rounded-full h-3 overflow-hidden flex"
                   data-testid="lever-stacked-bar"
+                  role="img"
+                  aria-label={barAriaLabel}
                 >
                   {hasSavings ? (
                     segments.map((s) => (
@@ -254,6 +266,7 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                         style={{ width: `${s.pct}%` }}
                         title={`${s.lever}: ${formatCurrency(s.savings)} (${s.pct.toFixed(0)}%)`}
                         data-testid={`lever-segment-${s.lever}`}
+                        aria-hidden="true"
                       />
                     ))
                   ) : null}
