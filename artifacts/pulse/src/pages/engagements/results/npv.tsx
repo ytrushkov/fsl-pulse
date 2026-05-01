@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolbar";
 import { LockBadge } from "@/components/deliverables/lock-badge";
-import { Calculator, Save } from "lucide-react";
+import { Calculator, Info, Save } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
  * NPV view: shows the headline scenarios + lever breakdown plus an
@@ -203,17 +204,46 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
           </div>
           <div className="bg-muted/20 rounded-md border p-4 grid grid-cols-1 gap-3">
             <NpvField label="Fully Loaded Cost / FTE" value={data.inputs.fullyLoadedCost ?? 200000} step={5000}
-              disabled={isLocked} onChange={(v) => setInput("fullyLoadedCost", v)} />
-            <NpvField label="Team Count" value={data.inputs.teamCount ?? 8} step={1}
-              disabled={isLocked} onChange={(v) => setInput("teamCount", v)} />
+              disabled={isLocked} onChange={(v) => setInput("fullyLoadedCost", v)}
+              hint="Average all-in annual cost per engineer (salary, benefits, overhead) in USD. Typical range: $150,000–$300,000." />
+            <NpvField label="Engineer Count (FTEs)" value={data.inputs.teamCount ?? 8} step={1}
+              disabled={isLocked} onChange={(v) => setInput("teamCount", v)}
+              hint="Number of engineers (FTEs) in scope for the rollout. Each engineer is costed at the Fully Loaded Cost above. Whole number, e.g. 1–500." />
             <NpvField label="Baseline Cycle Time (days)" value={data.inputs.baselineCycleTimeDays ?? 14} step={1}
-              disabled={isLocked} onChange={(v) => setInput("baselineCycleTimeDays", v)} />
+              disabled={isLocked} onChange={(v) => setInput("baselineCycleTimeDays", v)}
+              hint="Current average days from work started to delivered, before AI assistance. Typical range: 5–30 days." />
             <NpvField label="AI Acceptance Rate (0-1)" value={data.inputs.aiAcceptanceRate ?? 0.35} step={0.05}
-              disabled={isLocked} onChange={(v) => setInput("aiAcceptanceRate", v)} />
+              disabled={isLocked} onChange={(v) => setInput("aiAcceptanceRate", v)}
+              hint="Expected share of AI suggestions developers will keep once AI tooling is rolled out — the assumed steady-state, not a baseline (there's no acceptance to measure before AI). Higher acceptance → more cycle-time savings. 0–1 means 0%–100%; 0.30–0.50 is common, based on tools like Copilot." />
             <NpvField label="Rework Rate (0-1)" value={data.inputs.reworkRate ?? 0.18} step={0.01}
-              disabled={isLocked} onChange={(v) => setInput("reworkRate", v)} />
+              disabled={isLocked} onChange={(v) => setInput("reworkRate", v)}
+              hint="Your team's current baseline — fraction of delivered work that has to be redone (defects, churn) today, before AI. The model assumes AI eliminates about half of this rework. 0–1 means 0%–100%; 0.10–0.25 is typical." />
             <NpvField label="Discount Rate (0-1)" value={data.inputs.discountRate ?? 0.1} step={0.01}
-              disabled={isLocked} onChange={(v) => setInput("discountRate", v)} />
+              disabled={isLocked} onChange={(v) => setInput("discountRate", v)}
+              hint={
+                <div className="space-y-2">
+                  <p>
+                    Annual rate used to convert future savings into today's dollars (the
+                    time-value of money). <span className="font-mono">0–1</span> means
+                    0%–100%; <span className="font-mono">0.10</span> is 10% per year.
+                  </p>
+                  <p>
+                    Year-1 savings are divided by <span className="font-mono">(1 + rate)</span>,
+                    year-2 by <span className="font-mono">(1 + rate)²</span>, year-3 by
+                    {" "}<span className="font-mono">(1 + rate)³</span>, then summed for the
+                    3-Year NPV.
+                  </p>
+                  <div>
+                    <p className="font-medium text-primary-foreground">What changing it does</p>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      <li>Higher rate → future savings count for less → NPV goes down. Use for risky rollouts or a high hurdle rate.</li>
+                      <li>Lower rate → future savings count nearly as much as year 1 → NPV goes up. Use when capital is cheap and savings are low-risk.</li>
+                      <li>0 means no time-value adjustment.</li>
+                    </ul>
+                  </div>
+                  <p>Typical: 0.08–0.12 (your company's WACC or hurdle rate).</p>
+                </div>
+              } />
           </div>
         </div>
 
@@ -315,16 +345,36 @@ function NpvField({
   step,
   onChange,
   disabled,
+  hint,
 }: {
   label: string;
   value: number;
   step: number;
   onChange: (v: number) => void;
   disabled?: boolean;
+  hint?: ReactNode;
 }) {
   return (
     <div className="grid grid-cols-2 gap-3 items-center">
-      <Label className="text-sm text-muted-foreground">{label}</Label>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <Label className="text-sm text-muted-foreground">{label}</Label>
+        {hint && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`What is ${label}?`}
+                className="inline-flex shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+              >
+                <Info className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-sm text-xs leading-snug">
+              {hint}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
       <Input
         type="number"
         step={step}
