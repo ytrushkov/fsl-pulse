@@ -219,37 +219,77 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
 
         <div>
           <h3 className="text-lg font-bold mb-4 border-b pb-2">Value Levers</h3>
-          <div className="space-y-4 pt-2">
-            {(() => {
-              // Normalize against the largest lever so the biggest bar is
-              // always 100% and the others are proportional to it. A small
-              // floor keeps a near-zero bar visible without making every
-              // bar cluster at the same width.
-              const maxSavings = Math.max(
-                1,
-                ...data.leverBreakdown.map((l) => l.savings),
-              );
-              return data.leverBreakdown.map((lever) => {
-                const pct = (lever.savings / maxSavings) * 100;
-                const width = Math.max(2, Math.min(100, pct));
-                return (
-                  <div key={lever.lever}>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="font-medium text-foreground">{lever.lever}</span>
-                      <span className="font-mono text-muted-foreground">{formatCurrency(lever.savings)}</span>
-                    </div>
-                    <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+          {(() => {
+            const segmentColors = ["bg-chart-1", "bg-chart-2", "bg-chart-3"];
+            const total = data.leverBreakdown.reduce(
+              (sum, l) => sum + Math.max(0, l.savings),
+              0,
+            );
+            const hasSavings = total > 0;
+            const segments = data.leverBreakdown.map((lever, i) => {
+              const value = Math.max(0, lever.savings);
+              const share = hasSavings ? value / total : 0;
+              return {
+                lever: lever.lever,
+                savings: value,
+                share,
+                pct: share * 100,
+                color: segmentColors[i % segmentColors.length],
+              };
+            });
+            return (
+              <div className="pt-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                  Share of annual savings
+                </p>
+                <div
+                  className="w-full bg-muted rounded-full h-3 overflow-hidden flex"
+                  data-testid="lever-stacked-bar"
+                >
+                  {hasSavings ? (
+                    segments.map((s) => (
                       <div
-                        className="bg-primary h-full"
-                        style={{ width: `${width}%` }}
-                        data-testid={`lever-bar-${lever.lever}`}
+                        key={s.lever}
+                        className={`${s.color} h-full`}
+                        style={{ width: `${s.pct}%` }}
+                        title={`${s.lever}: ${formatCurrency(s.savings)} (${s.pct.toFixed(0)}%)`}
+                        data-testid={`lever-segment-${s.lever}`}
                       />
-                    </div>
-                  </div>
-                );
-              });
-            })()}
-          </div>
+                    ))
+                  ) : null}
+                </div>
+                {!hasSavings ? (
+                  <p className="text-xs text-muted-foreground mt-2 italic">
+                    No savings yet — adjust the inputs to see lever
+                    contributions.
+                  </p>
+                ) : null}
+                <ul className="mt-4 space-y-2">
+                  {segments.map((s) => (
+                    <li
+                      key={s.lever}
+                      className="flex items-center gap-3 text-sm"
+                      data-testid={`lever-legend-${s.lever}`}
+                    >
+                      <span
+                        className={`${s.color} inline-block h-3 w-3 rounded-sm shrink-0`}
+                        aria-hidden="true"
+                      />
+                      <span className="font-medium text-foreground flex-1 min-w-0 truncate">
+                        {s.lever}
+                      </span>
+                      <span className="font-mono text-muted-foreground tabular-nums">
+                        {formatCurrency(s.savings)}
+                      </span>
+                      <span className="font-mono text-muted-foreground tabular-nums w-12 text-right">
+                        {hasSavings ? `${s.pct.toFixed(0)}%` : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
