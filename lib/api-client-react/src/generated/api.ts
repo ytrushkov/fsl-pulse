@@ -21,6 +21,7 @@ import type {
   AddEngagementMemberInput,
   ArtifactDoc,
   AuthedUser,
+  BulkConnectorRunResult,
   Connector,
   ConnectorRun,
   ConnectorSignals,
@@ -2399,6 +2400,92 @@ export const useRunConnector = <
   TContext
 > => {
   return useMutation(getRunConnectorMutationOptions(options));
+};
+
+/**
+ * Trigger every configured connector for an engagement in parallel.
+Connectors without a stored token are skipped (not run, not failed).
+Each per-connector run is audited individually by the shared executor;
+a single parent `connectors_bulk_run` event is also recorded with the
+aggregate outcome so the activity timeline stays scannable.
+
+ */
+export const getRunAllConnectorsUrl = (id: string) => {
+  return `/api/engagements/${id}/connectors/run-all`;
+};
+
+export const runAllConnectors = async (
+  id: string,
+  options?: RequestInit,
+): Promise<BulkConnectorRunResult> => {
+  return customFetch<BulkConnectorRunResult>(getRunAllConnectorsUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRunAllConnectorsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runAllConnectors>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runAllConnectors>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["runAllConnectors"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runAllConnectors>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return runAllConnectors(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunAllConnectorsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runAllConnectors>>
+>;
+
+export type RunAllConnectorsMutationError = ErrorType<unknown>;
+
+export const useRunAllConnectors = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runAllConnectors>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runAllConnectors>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRunAllConnectorsMutationOptions(options));
 };
 
 export const getListConnectorRunsUrl = (

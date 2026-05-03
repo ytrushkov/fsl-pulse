@@ -504,6 +504,32 @@ export interface ConnectorVerifyResult {
   details?: ConnectorVerifyResultDetails;
 }
 
+export type BulkConnectorRunItemStatus =
+  (typeof BulkConnectorRunItemStatus)[keyof typeof BulkConnectorRunItemStatus];
+
+export const BulkConnectorRunItemStatus = {
+  success: "success",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface BulkConnectorRunItem {
+  connectorId: string;
+  label: string;
+  status: BulkConnectorRunItemStatus;
+  recordsCollected: number;
+  error?: string | null;
+}
+
+export interface BulkConnectorRunResult {
+  totalConnectors: number;
+  triggered: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  results: BulkConnectorRunItem[];
+}
+
 export type SurveyQuestionType =
   (typeof SurveyQuestionType)[keyof typeof SurveyQuestionType];
 

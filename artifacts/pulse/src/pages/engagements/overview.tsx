@@ -3,9 +3,14 @@ import {
   useGetEngagementDashboard,
   useGetEngagementActivity,
   useGetMe,
+  useListConnectors,
+  useRunAllConnectors,
   getGetEngagementQueryKey,
   getGetEngagementDashboardQueryKey,
   getGetEngagementActivityQueryKey,
+  getGetEngagementDashboardUrl,
+  getListConnectorsQueryKey,
+  getGetEngagementActivityUrl,
 } from "@workspace/api-client-react";
 import type {
   ActivityEvent,
@@ -41,11 +46,22 @@ import {
 import { Link } from "wouter";
 import { Progress } from "@/components/ui/progress";
 import { MembersPanel } from "@/components/engagements/members-panel";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 
 export default function EngagementOverview() {
   const params = useParams();
   const id = params.id as string;
-  
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
   const { data: engagement, isLoading: isLoadingEngagement } = useGetEngagement(id, {
     query: { enabled: !!id, queryKey: getGetEngagementQueryKey(id) },
   });
@@ -54,7 +70,93 @@ export default function EngagementOverview() {
     query: { enabled: !!id, queryKey: getGetEngagementDashboardQueryKey(id) },
   });
 
+  const { data: connectors } = useListConnectors(id, {
+    query: { enabled: !!id, queryKey: getListConnectorsQueryKey(id) },
+  });
+
+  const runAll = useRunAllConnectors();
+
+  // Only the configured connectors will actually be run by the backend; we
+  // mirror that filter here so the button accurately reflects what will
+  // happen when clicked (and disables when there's nothing to run).
+  const runnableCount = (connectors ?? []).filter(
+    (c) => c.status !== "not_configured",
+  ).length;
+  const totalCount = (connectors ?? []).length;
+  const noRunnable = totalCount === 0 || runnableCount === 0;
+
+  const handleRunAll = () => {
+    runAll.mutate(
+      { id },
+      {
+        onSuccess: (result) => {
+          // The dashboard tile, connector list, and activity feed all
+          // change as a result of the run — invalidate them so the UI
+          // catches up without requiring a manual refresh.
+          queryClient.invalidateQueries({
+            queryKey: [getGetEngagementDashboardUrl(id)],
+          });
+          queryClient.invalidateQueries({ queryKey: getListConnectorsQueryKey(id) });
+          queryClient.invalidateQueries({
+            predicate: (q) => {
+              const k = q.queryKey?.[0];
+              return typeof k === "string" && k.startsWith(getGetEngagementActivityUrl(id));
+            },
+          });
+          const { succeeded, failed, skipped, triggered } = result;
+          if (failed === 0 && triggered > 0) {
+            toast({
+              title: `Ran ${succeeded} connector${succeeded === 1 ? "" : "s"}`,
+              description: skipped
+                ? `${skipped} skipped (no token configured).`
+                : "All configured connectors collected fresh evidence.",
+            });
+          } else if (triggered === 0) {
+            toast({
+              variant: "destructive",
+              title: "Nothing to run",
+              description: "No connectors are configured for this engagement.",
+            });
+          } else {
+            toast({
+              variant: failed > 0 ? "destructive" : "default",
+              title: `Done: ${succeeded} succeeded, ${failed} failed${skipped ? `, ${skipped} skipped` : ""}`,
+              description: "See the activity timeline for per-connector details.",
+            });
+          }
+        },
+        onError: (err) => {
+          toast({
+            variant: "destructive",
+            title: "Run all failed",
+            description: err instanceof Error ? err.message : "Unknown error",
+          });
+        },
+      },
+    );
+  };
+
   const isLoading = isLoadingEngagement || isLoadingDashboard;
+  const isRunning = runAll.isPending;
+
+  const runButton = (
+    <Button
+      variant="outline"
+      className="gap-2"
+      onClick={handleRunAll}
+      disabled={isRunning || noRunnable}
+      data-testid="button-run-all-connectors"
+    >
+      {isRunning ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Play className="h-4 w-4" />
+      )}
+      {isRunning
+        ? `Running ${runnableCount}…`
+        : `Run all connectors${runnableCount ? ` (${runnableCount})` : ""}`}
+    </Button>
+  );
 
   return (
     <AppLayout engagementId={id}>
@@ -66,10 +168,22 @@ export default function EngagementOverview() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" className="gap-2">
-            <Play className="h-4 w-4" />
-            Run all connectors
-          </Button>
+          {noRunnable ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0}>{runButton}</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {totalCount === 0
+                    ? "Add a connector to enable bulk run."
+                    : "No configured connectors to run (all are missing tokens)."}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            runButton
+          )}
           <Link href={`/engagements/${id}/exports`}>
             <Button className="gap-2">
               <FileText className="h-4 w-4" />

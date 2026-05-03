@@ -476,6 +476,25 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ConnectorRun" }
 
+  /engagements/{id}/connectors/run-all:
+    post:
+      operationId: runAllConnectors
+      tags: [connectors]
+      description: |
+        Trigger every configured connector for an engagement in parallel.
+        Connectors without a stored token are skipped (not run, not failed).
+        Each per-connector run is audited individually by the shared executor;
+        a single parent `connectors_bulk_run` event is also recorded with the
+        aggregate outcome so the activity timeline stays scannable.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BulkConnectorRunResult" }
+
   /connectors/{connectorId}/runs:
     get:
       operationId: listConnectorRuns
@@ -1714,6 +1733,31 @@ components:
         details:
           type: object
           additionalProperties: true
+
+    BulkConnectorRunResult:
+      type: object
+      required: [totalConnectors, triggered, succeeded, failed, skipped, results]
+      properties:
+        totalConnectors: { type: integer }
+        triggered: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        skipped: { type: integer }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/BulkConnectorRunItem" }
+
+    BulkConnectorRunItem:
+      type: object
+      required: [connectorId, label, status, recordsCollected]
+      properties:
+        connectorId: { type: string }
+        label: { type: string }
+        status:
+          type: string
+          enum: [success, failed, skipped]
+        recordsCollected: { type: integer }
+        error: { type: string, nullable: true }
 
     ConnectorRun:
       type: object

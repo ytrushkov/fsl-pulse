@@ -323,6 +323,102 @@ router.post("/connectors/:connectorId/verify", requireConnectorMember, async (re
   res.json(result);
 });
 
+// Bulk-run every configured connector for an engagement. Skips connectors
+// without a stored token (status === "not_configured") so we don't spam the
+// run history with guaranteed-failed runs. Per-connector audit events are
+// emitted by the shared executor; we additionally record a single parent
+// `connectors_bulk_run` event so the activity timeline shows who fired the
+// bulk and the aggregate outcome.
+router.post(
+  "/engagements/:id/connectors/run-all",
+  requireEngagementMember,
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const rows = await db
+      .select()
+      .from(connectorsTable)
+      .where(eq(connectorsTable.engagementId, id));
+
+    const skipped = rows.filter((c) => c.status === "not_configured");
+    const runnable = rows.filter((c) => c.status !== "not_configured");
+
+    type Result = {
+      connectorId: string;
+      label: string;
+      status: "success" | "failed" | "skipped";
+      recordsCollected: number;
+      error: string | null;
+    };
+
+    const skippedResults: Result[] = skipped.map((c) => ({
+      connectorId: c.id,
+      label: c.label,
+      status: "skipped",
+      recordsCollected: 0,
+      error: "Connector not configured (no token)",
+    }));
+
+    // Run connectors in parallel — each targets a different external API and
+    // executeConnectorRun never throws, so a slow/failed one cannot block the
+    // others. The shared executor handles per-connector audit + status writes.
+    const ranResults: Result[] = await Promise.all(
+      runnable.map(async (c) => {
+        const updated = await executeConnectorRun(c.id, {
+          trigger: "manual",
+          req,
+          requestId: (req as typeof req & { id?: string }).id,
+        });
+        if (!updated) {
+          return {
+            connectorId: c.id,
+            label: c.label,
+            status: "failed" as const,
+            recordsCollected: 0,
+            error: "Connector disappeared mid-run",
+          };
+        }
+        return {
+          connectorId: c.id,
+          label: c.label,
+          status: updated.status === "success" ? "success" : "failed",
+          recordsCollected: updated.recordsCollected ?? 0,
+          error: updated.error ?? null,
+        };
+      }),
+    );
+
+    const results = [...ranResults, ...skippedResults];
+    const succeeded = ranResults.filter((r) => r.status === "success").length;
+    const failed = ranResults.filter((r) => r.status === "failed").length;
+
+    await recordActivity(req, {
+      engagementId: id,
+      kind: "connectors_bulk_run",
+      message: `Bulk-ran connectors: ${succeeded} succeeded, ${failed} failed, ${skipped.length} skipped`,
+      payload: {
+        totalConnectors: rows.length,
+        triggered: runnable.length,
+        succeeded,
+        failed,
+        skipped: skipped.length,
+      },
+    });
+
+    res.status(202).json({
+      totalConnectors: rows.length,
+      triggered: runnable.length,
+      succeeded,
+      failed,
+      skipped: skipped.length,
+      results,
+    });
+  },
+);
+
 router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, res): Promise<void> => {
   const id = paramId(req.params.connectorId);
   if (!id) {

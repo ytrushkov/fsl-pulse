@@ -707,6 +707,18 @@ export const RunConnectorParams = zod.object({
   connectorId: zod.coerce.string(),
 });
 
+/**
+ * Trigger every configured connector for an engagement in parallel.
+Connectors without a stored token are skipped (not run, not failed).
+Each per-connector run is audited individually by the shared executor;
+a single parent `connectors_bulk_run` event is also recorded with the
+aggregate outcome so the activity timeline stays scannable.
+
+ */
+export const RunAllConnectorsParams = zod.object({
+  id: zod.coerce.string(),
+});
+
 export const ListConnectorRunsParams = zod.object({
   connectorId: zod.coerce.string(),
 });
