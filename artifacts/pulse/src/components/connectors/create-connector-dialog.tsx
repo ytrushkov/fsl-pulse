@@ -33,7 +33,47 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+
+// Per-connector feature flag registry. MUST stay in sync with
+// `artifacts/api-server/src/lib/connector-flags.ts` — the server sanitizes
+// against its registry, so unknown keys submitted from here are dropped.
+interface FeatureFlagDef {
+  key: string;
+  label: string;
+  description: string;
+  default: boolean;
+}
+const FEATURE_FLAG_REGISTRY: Record<ConnectorKind, FeatureFlagDef[]> = {
+  [ConnectorKind.github]: [
+    { key: "pullWorkflows", label: "Pull workflow runs", description: "Sample recent GitHub Actions runs per repo. Disable on orgs without Actions.", default: true },
+    { key: "pullPRs", label: "Pull PR review + lead-time signals", description: "Reads recent merged pull requests. Heavy on very large monorepos.", default: true },
+    { key: "pullIncidents", label: "Pull incident issues", description: "Searches for issues labelled `incident`/`outage` to estimate MTTR.", default: true },
+  ],
+  [ConnectorKind.gitlab]: [
+    { key: "pullPipelines", label: "Pull pipeline runs", description: "Samples recent CI pipelines per project for build health signals.", default: true },
+    { key: "pullMRs", label: "Pull merge request signals", description: "Reads recent merged MRs to score lead time and review depth.", default: true },
+    { key: "pullIncidents", label: "Pull incident issues", description: "Searches projects for issues labelled `incident`/`outage`.", default: true },
+  ],
+  [ConnectorKind.jira]: [
+    { key: "pullIncidents", label: "Pull incident tickets", description: "Reads recently resolved incident tickets for MTTR signal.", default: true },
+  ],
+  [ConnectorKind.linear]: [
+    { key: "pullIncidents", label: "Pull incident issues", description: "Reads issues labelled incident/outage for MTTR signal.", default: true },
+  ],
+  [ConnectorKind.cicd]: [
+    { key: "pullWorkflows", label: "Pull workflow / pipeline runs", description: "Per-pipeline workflow lookup. Disable on heavy installations.", default: true },
+  ],
+  [ConnectorKind.ai_tooling]: [
+    { key: "pullUsers", label: "Pull org user / seat counts", description: "Calls the provider's user/seat API. Requires admin scope.", default: true },
+  ],
+  [ConnectorKind.azure_devops]: [
+    { key: "pullPipelines", label: "Pull pipeline runs", description: "Samples recent Azure Pipelines runs per project for deployment frequency / change failure rate signals.", default: true },
+    { key: "pullPRs", label: "Pull pull-request lead-time signals", description: "Reads recently completed PRs to score lead time. Disable on very large projects.", default: true },
+    { key: "pullIncidents", label: "Pull incident work items", description: "Reads work items tagged `incident`/`outage`/`p0`/`p1` for MTTR signal.", default: true },
+  ],
+};
 
 // Per-kind config catalog. Keeping this declarative (instead of one giant
 // switch in JSX) makes it easy to add/edit a kind without touching layout.
@@ -394,6 +434,11 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [verifyResult, setVerifyResult] = useState<ConnectorVerifyResult | null>(null);
+  // Feature flag state lives outside react-hook-form because it's a free-form
+  // record of booleans whose keys depend on the selected kind. The schema is
+  // open by design — the server is the source of truth for which flags are
+  // valid for which kind.
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -437,7 +482,16 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
     }
     form.setValue("provider", next.defaultProvider, { shouldValidate: true });
     form.setValue("config", defaults, { shouldValidate: true });
+    // Re-seed feature flags from the registry defaults for the new kind so
+    // we never carry e.g. github's `pullPRs` over to a Jira connector.
+    const nextFlags: Record<string, boolean> = {};
+    for (const def of FEATURE_FLAG_REGISTRY[kind as ConnectorKind] ?? []) {
+      nextFlags[def.key] = def.default;
+    }
+    setFeatureFlags(nextFlags);
   }, [kind, form]);
+
+  const flagDefs = FEATURE_FLAG_REGISTRY[kind as ConnectorKind] ?? [];
 
   // Visible fields for the current (kind, provider) combo.
   const visibleFields = useMemo(
@@ -462,6 +516,13 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
       } else {
         out[f.key] = raw;
       }
+    }
+    if (flagDefs.length > 0) {
+      const flags: Record<string, boolean> = {};
+      for (const def of flagDefs) {
+        flags[def.key] = featureFlags[def.key] ?? def.default;
+      }
+      out.featureFlags = flags;
     }
     return out;
   }
@@ -702,6 +763,37 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
                 </FormItem>
               )}
             />
+
+            {flagDefs.length > 0 ? (
+              <div className="space-y-2 rounded border p-3">
+                <div className="text-sm font-medium">Data sources</div>
+                <p className="text-xs text-muted-foreground">
+                  Disable any source the upstream API can&apos;t serve (rate
+                  limits, missing scopes, unused labels). The runner records
+                  the active set with every run.
+                </p>
+                {flagDefs.map((def) => (
+                  <div
+                    key={def.key}
+                    className="flex items-start justify-between gap-3 pt-2"
+                    data-testid={`feature-flag-${def.key}`}
+                  >
+                    <div className="space-y-0.5">
+                      <div className="text-sm">{def.label}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {def.description}
+                      </div>
+                    </div>
+                    <Switch
+                      checked={featureFlags[def.key] ?? def.default}
+                      onCheckedChange={(v) =>
+                        setFeatureFlags((prev) => ({ ...prev, [def.key]: v }))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             {verifyResult ? (
               <div

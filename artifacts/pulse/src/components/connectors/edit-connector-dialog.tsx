@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -70,6 +70,7 @@ export function EditConnectorDialog({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const updateConnector = useUpdateConnector();
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -80,6 +81,17 @@ export function EditConnectorDialog({
       scheduleCadenceMinutes: "1440",
     },
   });
+
+  // The server sends `featureFlagDefs` alongside `featureFlags` so the UI
+  // can render the right toggle list for the connector's kind without
+  // hard-coding it here. Definitions live in connector-flags.ts on the
+  // server.
+  type FlagDef = { key: string; label: string; description: string; default: boolean };
+  const flagDefs: FlagDef[] = useMemo(() => {
+    const cfg = (connector?.config as Record<string, unknown> | null) ?? {};
+    const raw = (cfg.featureFlagDefs as FlagDef[]) ?? [];
+    return Array.isArray(raw) ? raw : [];
+  }, [connector]);
 
   // Re-seed the form whenever the dialog is opened against a different
   // connector. Using `reset` instead of `defaultValues` lets the same dialog
@@ -92,8 +104,16 @@ export function EditConnectorDialog({
         scheduleEnabled: Boolean(connector.scheduleEnabled),
         scheduleCadenceMinutes: String(connector.scheduleCadenceMinutes ?? 1440),
       });
+      const cfg = (connector.config as Record<string, unknown> | null) ?? {};
+      const stored = (cfg.featureFlags as Record<string, boolean>) ?? {};
+      const seeded: Record<string, boolean> = {};
+      for (const def of flagDefs) {
+        const v = stored[def.key];
+        seeded[def.key] = typeof v === "boolean" ? v : def.default;
+      }
+      setFeatureFlags(seeded);
     }
-  }, [connector, open, form]);
+  }, [connector, open, form, flagDefs]);
 
   if (!connector) return null;
 
@@ -109,6 +129,22 @@ export function EditConnectorDialog({
     // critical audit event.
     if (values.token && values.token.length > 0) {
       data.token = values.token;
+    }
+    // Preserve every other config field — PATCH treats `config` as a full
+    // replacement — and write back the (possibly toggled) feature flags.
+    if (flagDefs.length > 0) {
+      const existingCfg =
+        (connector.config as Record<string, unknown> | null) ?? {};
+      const flags: Record<string, boolean> = {};
+      for (const def of flagDefs) {
+        flags[def.key] = featureFlags[def.key] ?? def.default;
+      }
+      const { tokenMask: _tm, featureFlagDefs: _ffd, ...persistable } =
+        existingCfg as Record<string, unknown> & {
+          tokenMask?: unknown;
+          featureFlagDefs?: unknown;
+        };
+      data.config = { ...persistable, featureFlags: flags };
     }
     updateConnector.mutate(
       { connectorId: connector.id, data },
@@ -204,6 +240,35 @@ export function EditConnectorDialog({
                 </FormItem>
               )}
             />
+            {flagDefs.length > 0 ? (
+              <div className="space-y-2 rounded border p-3">
+                <div className="text-sm font-medium">Data sources</div>
+                <p className="text-xs text-muted-foreground">
+                  Disable any source the upstream API can&apos;t serve. The
+                  runner records the active set with every run.
+                </p>
+                {flagDefs.map((def) => (
+                  <div
+                    key={def.key}
+                    className="flex items-start justify-between gap-3 pt-2"
+                    data-testid={`feature-flag-${def.key}`}
+                  >
+                    <div className="space-y-0.5">
+                      <div className="text-sm">{def.label}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {def.description}
+                      </div>
+                    </div>
+                    <Switch
+                      checked={featureFlags[def.key] ?? def.default}
+                      onCheckedChange={(v) =>
+                        setFeatureFlags((prev) => ({ ...prev, [def.key]: v }))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <FormField
               control={form.control}
               name="scheduleCadenceMinutes"

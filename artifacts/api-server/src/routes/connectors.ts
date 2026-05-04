@@ -17,6 +17,11 @@ import {
 import { verifyConnector as verifyConnectorImpl } from "../lib/connectors";
 import { executeConnectorRun } from "../lib/connector-runner";
 import { requireResourceMember, requireEngagementMember } from "../middlewares/auth";
+import {
+  sanitizeFeatureFlags,
+  getFeatureFlagDefs,
+  type ConnectorKind,
+} from "../lib/connector-flags";
 
 // Sane bounds for the per-engagement scheduler. 5 minutes is the floor so we
 // can't accidentally hammer a third-party API; 30 days is the ceiling so a
@@ -40,6 +45,17 @@ const requireConnectorMember = requireResourceMember({
 
 function shape(c: typeof connectorsTable.$inferSelect) {
   const cfg = (c.config as Record<string, unknown>) ?? {};
+  // Surface the full feature-flag set (with defaults filled in) so the UI
+  // can render Switch toggles even for connectors created before the flags
+  // existed. The defs are used by the cockpit edit dialog so the labels
+  // match server-side semantics exactly.
+  const flagDefs = getFeatureFlagDefs(c.kind as ConnectorKind);
+  const flagsRaw = (cfg.featureFlags as Record<string, unknown>) ?? {};
+  const featureFlags: Record<string, boolean> = {};
+  for (const def of flagDefs) {
+    const v = flagsRaw[def.key];
+    featureFlags[def.key] = typeof v === "boolean" ? v : def.default;
+  }
   return {
     id: c.id,
     engagementId: c.engagementId,
@@ -47,7 +63,12 @@ function shape(c: typeof connectorsTable.$inferSelect) {
     provider: c.provider,
     label: c.label,
     status: c.status,
-    config: { ...cfg, tokenMask: maskToken(c.encryptedToken) },
+    config: {
+      ...cfg,
+      featureFlags,
+      featureFlagDefs: flagDefs,
+      tokenMask: maskToken(c.encryptedToken),
+    },
     lastRunAt: c.lastRunAt?.toISOString() ?? null,
     lastSuccessAt: c.lastSuccessAt?.toISOString() ?? null,
     lastError: c.lastError,
@@ -92,6 +113,15 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
       return;
     }
   }
+  // Normalize feature flags against the registry so the runner has a
+  // predictable shape (unknown keys dropped, missing keys defaulted). We
+  // strip the read-only def list the GET shape adds so it doesn't get
+  // round-tripped back into storage.
+  delete (cfg as Record<string, unknown>).featureFlagDefs;
+  cfg.featureFlags = sanitizeFeatureFlags(
+    b.kind as ConnectorKind,
+    (cfg.featureFlags as Record<string, unknown>) ?? {},
+  );
   // Schedule defaults are ON (daily) per task requirement. We must also
   // populate `nextRunAt = now()` at insert time, otherwise the scheduler's
   // `nextRunAt <= now()` filter will never select this row and the connector
@@ -143,6 +173,20 @@ router.patch("/connectors/:connectorId", requireConnectorMember, async (req, res
         res.status(400).json({ error: `Invalid base URL: ${ssrf.reason}` });
         return;
       }
+    }
+    // Normalize feature flags against the registry; we need the connector's
+    // kind to do this, which is not in the request body, so look it up.
+    const [existing] = await db
+      .select({ kind: connectorsTable.kind })
+      .from(connectorsTable)
+      .where(eq(connectorsTable.id, id))
+      .limit(1);
+    if (existing) {
+      delete (cfg as Record<string, unknown>).featureFlagDefs;
+      cfg.featureFlags = sanitizeFeatureFlags(
+        existing.kind as ConnectorKind,
+        (cfg.featureFlags as Record<string, unknown>) ?? {},
+      );
     }
     set.config = cfg;
   }

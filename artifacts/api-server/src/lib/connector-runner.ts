@@ -6,7 +6,7 @@ import {
   engagementsTable,
   evidenceTable,
 } from "@workspace/db";
-import { decryptToken } from "./util";
+import { decryptToken, encryptToken, isCurrentTokenFormat } from "./util";
 import {
   runConnector as runConnectorImpl,
   DEFAULT_CONNECTOR_LOOKBACK_DAYS,
@@ -122,6 +122,8 @@ export async function executeConnectorRun(
       }
       // Critical: every server-side use of a decrypted PAT (manual or
       // scheduled) is logged so compliance reviewers have a complete record.
+      // Tagged with run id + connector id per PRD §6.2 so a token-misuse
+      // investigation can pivot directly from audit row → run → evidence.
       await audit({
         engagementId: c.engagementId,
         kind: "connector_token_used",
@@ -129,11 +131,43 @@ export async function executeConnectorRun(
         message: `Token used to run ${c.label} (${opts.trigger})`,
         payload: {
           connectorId,
+          runId: run.id,
           op: "run",
           provider: c.provider,
           trigger: opts.trigger,
         },
       });
+      // Lazy migration: any legacy token format that decrypted successfully
+      // is rewritten in the new KMS-backed envelope right now, then audited
+      // separately so a compliance scan can confirm migration coverage. We
+      // ignore failures here — the run itself already succeeded; a failed
+      // re-encrypt just leaves the row in its older format for next time.
+      if (!isCurrentTokenFormat(c.encryptedToken)) {
+        try {
+          const upgraded = encryptToken(token);
+          await db
+            .update(connectorsTable)
+            .set({ encryptedToken: upgraded })
+            .where(eq(connectorsTable.id, connectorId));
+          await audit({
+            engagementId: c.engagementId,
+            kind: "connector_token_migrated",
+            severity: "info",
+            message: `Connector token re-encrypted into KMS envelope: ${c.label}`,
+            payload: {
+              connectorId,
+              runId: run.id,
+              trigger: opts.trigger,
+              path: "lazy-on-read",
+            },
+          });
+        } catch (err) {
+          logger.warn(
+            { err, connectorId },
+            "lazy KMS re-encrypt failed; will retry next run",
+          );
+        }
+      }
     }
 
     // Debounced incremental-checkpoint writer. Runners call this on every
@@ -185,6 +219,7 @@ export async function executeConnectorRun(
       {
         requestId: opts.requestId,
         engagementId: c.engagementId,
+        connectorLabel: c.label,
         lookbackDays,
         wallClockBudgetMs,
         priorCursors,

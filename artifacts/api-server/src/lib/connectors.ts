@@ -23,7 +23,13 @@ import {
   reworkRate,
   type PrSizeDistribution,
 } from "./connector-metrics";
-
+import {
+  connectorFetch,
+  connectorFetchJson,
+  ConnectorFetchError,
+  type ConnectorFetchOptions,
+} from "./connector-fetch";
+import { resolveFeatureFlags } from "./connector-flags";
 
 // Aging WIP threshold: any in-progress issue older than this counts as "aging".
 // Two weeks matches the typical sprint length so anything spilling past one
@@ -659,11 +665,11 @@ export const DEFAULT_WALL_CLOCK_BUDGET_MS = 5 * 60_000; // 5 minutes
  * Per-request context passed into connector calls so subcall-level logging
  * can be correlated with the originating API call. Routes pass `req.id`
  * here; the connector emits start/end log lines tagged with that id.
- *
- * `lookbackDays`, `wallClockBudgetMs`, and `priorCursors` are populated by
- * the connector runner from the engagement's setting and the previous run
- * row, respectively. When called from `verifyConnector` they are absent
- * (verify is a one-shot capability check, not a collection).
+ * `requestId`, `engagementId`, `lookbackDays`, `wallClockBudgetMs`, `priorCursors`,
+ * and `connectorLabel` are populated by the connector runner. `lookbackDays`
+ * and `wallClockBudgetMs` come from engagement settings, while `priorCursors`
+ * enables resumable collection. `connectorLabel` is forwarded to
+ * `connectorFetch` so retry log lines name the connector.
  */
 export type ConnectorCtx = {
   requestId?: string;
@@ -671,6 +677,7 @@ export type ConnectorCtx = {
   lookbackDays?: number;
   wallClockBudgetMs?: number;
   priorCursors?: Record<string, unknown>;
+  connectorLabel?: string;
   /**
    * Optional incremental-checkpoint callback. Runners call this after each
    * iteration of a long walk so the runner can flush cursors+coverage+
@@ -697,6 +704,22 @@ export type ConnectorCtx = {
 // rejected before fetch().
 async function assertSafeUrl(url: string): Promise<void> {
   await assertSafeUrlResolved(url);
+}
+
+/**
+ * Bind connector context onto a `connectorFetch` options object. Centralises
+ * the propagation of requestId/connectorLabel so individual runners stay
+ * focused on the upstream API shape.
+ */
+function withCtx(
+  ctx: ConnectorCtx | undefined,
+  init: ConnectorFetchOptions = {},
+): ConnectorFetchOptions {
+  return {
+    ...init,
+    requestId: ctx?.requestId,
+    connectorLabel: ctx?.connectorLabel,
+  };
 }
 
 export interface ConnectorVerifyResult {
@@ -854,17 +877,22 @@ function deployFailureMttrMs(
   return durations;
 }
 
-async function ghFetch<T>(token: string, url: string): Promise<T> {
-  const r = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "pulse-assessor",
-    },
-  });
-  if (!r.ok) throw new Error(`GitHub ${r.status}: ${await r.text()}`);
-  return (await r.json()) as T;
+async function ghFetch<T>(
+  token: string,
+  url: string,
+  ctx?: ConnectorCtx,
+): Promise<T> {
+  return connectorFetchJson<T>(
+    url,
+    withCtx(ctx, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "pulse-assessor",
+      },
+    }),
+  );
 }
 
 /**
@@ -933,14 +961,15 @@ async function fetchGithubPrDetail(
 async function verifyGithub(
   token: string,
   config: Record<string, unknown>,
+  ctx?: ConnectorCtx,
 ): Promise<ConnectorVerifyResult> {
   if (!token) return { ok: false, message: "Token required" };
   try {
-    const me = await ghFetch<{ login: string }>(token, "https://api.github.com/user");
+    const me = await ghFetch<{ login: string }>(token, "https://api.github.com/user", ctx);
     const org = String(config.org ?? "");
     if (org) {
       try {
-        await ghFetch<unknown>(token, `https://api.github.com/orgs/${org}`);
+        await ghFetch<unknown>(token, `https://api.github.com/orgs/${org}`, ctx);
       } catch {
         return {
           ok: false,
@@ -966,6 +995,7 @@ async function runGithub(
   const startMs = Date.now();
   const lookbackDays = resolveLookbackDays(ctx);
   const budgetMs = resolveBudgetMs(ctx);
+  const flags = resolveFeatureFlags("github", config);
   // Two independent walks (workflows + DORA) over the same repo list. We
   // resume each from its own index so the run before us can have completed
   // workflows fully but stopped mid-DORA — re-running picks up correctly.
@@ -1029,16 +1059,18 @@ async function runGithub(
     // Cursor wraps once we've walked the whole list — start fresh.
     nextWorkflowsIndex = 0;
   }
-  for (let i = nextWorkflowsIndex; i < repos.length; i += 1) {
-    if (!withinBudget(startMs, budgetMs)) {
-      nextWorkflowsIndex = i;
-      break;
-    }
-    const r = repos[i]!;
+  if (flags.pullWorkflows) {
+    for (let i = nextWorkflowsIndex; i < repos.length; i += 1) {
+      if (!withinBudget(startMs, budgetMs)) {
+        nextWorkflowsIndex = i;
+        break;
+      }
+      const r = repos[i]!;
     try {
       const wf = await ghFetch<{ workflows: Array<{ name: string; path: string }> }>(
         token,
         `https://api.github.com/repos/${org}/${r.name}/actions/workflows`,
+        ctx,
       );
       if (wf.workflows.length > 0) totalWorkflowRepos += 1;
       if (
@@ -1076,6 +1108,7 @@ async function runGithub(
       },
       recordsCollected,
     });
+    }
   }
   // Wrap when we cleanly walked the entire list this run.
   if (nextWorkflowsIndex >= repos.length) nextWorkflowsIndex = 0;
@@ -1169,7 +1202,7 @@ async function runGithub(
       break;
     }
     const r = repos[i]!;
-    try {
+    if (flags.pullWorkflows) try {
       // Workflow runs in the lookback window → deployment frequency proxy +
       // change-failure-rate proxy. We use `created` as an upper bound on
       // both so the same call serves both metrics.
@@ -1190,6 +1223,7 @@ async function runGithub(
       }>(
         token,
         `https://api.github.com/repos/${org}/${r.name}/actions/runs?per_page=100&created=>=${since}`,
+        ctx,
       );
       workflowRunsTotal += wfr.workflow_runs.length;
       workflowRunsSucceeded += wfr.workflow_runs.filter(
@@ -1298,7 +1332,7 @@ async function runGithub(
     } catch {
       // ignore — repo may not have Actions enabled
     }
-    try {
+    if (flags.pullPRs) try {
       const prs = await ghFetch<
         Array<{
           number: number;
@@ -1309,6 +1343,7 @@ async function runGithub(
       >(
         token,
         `https://api.github.com/repos/${org}/${r.name}/pulls?state=closed&per_page=30`,
+        ctx,
       );
       prsSampled += prs.length;
       for (const p of prs) {
@@ -1650,7 +1685,7 @@ async function runGithub(
   // recorded but not used as the canonical MTTR.
   let mttrSumMs = 0;
   let mttrCount = 0;
-  try {
+  if (flags.pullIncidents) try {
     // GitHub search treats space-separated `label:` qualifiers as AND. To get
     // "any of these incident labels" we issue one search per label and
     // deduplicate by issue id. This keeps MTTR meaningful when an org tags
@@ -1669,7 +1704,7 @@ async function runGithub(
         );
         const sr = await ghFetch<{
           items: Array<{ id: number; created_at: string; closed_at: string | null }>;
-        }>(token, `https://api.github.com/search/issues?q=${q}&per_page=50`);
+        }>(token, `https://api.github.com/search/issues?q=${q}&per_page=50`, ctx);
         for (const it of sr.items) {
           if (seen.has(it.id)) continue;
           seen.add(it.id);
@@ -1693,12 +1728,22 @@ async function runGithub(
     // search may fail on tokens without read:org or due to rate limiting;
     // we degrade gracefully to "n/a" below.
   }
-  summary.incidentIssuesInWindow = mttrCount;
+  if (!flags.pullIncidents) {
+    // Flag intentionally disabled by the assessor (e.g. an org without a
+    // labeled-incident workflow). Mark the incident-issue side as
+    // disabled so the scoring engine knows it's a deliberate skip rather
+    // than a missing signal. Deploy-failure MTTR (below) is independent
+    // of this flag and still emits when available.
+    summary.incidentIssuesInWindow = null;
+    summary.incidentIssueMttrStatus = "disabled";
+  } else {
+    summary.incidentIssuesInWindow = mttrCount;
+  }
   if (deployMttrSeries.length === 0) {
     // No deployment-failure pairs in the window — fall back to the
     // incident-issue proxy so MTTR isn't silently null whenever a window
-    // has only successful deploys.
-    if (mttrCount > 0) {
+    // has only successful deploys. Skipped when pullIncidents is off.
+    if (flags.pullIncidents && mttrCount > 0) {
       const mttrHours = mttrSumMs / mttrCount / 3_600_000;
       summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
       summary.mttrSource = "incident_issue_fallback";
@@ -1708,6 +1753,11 @@ async function runGithub(
         stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
         text: `MTTR (incident-issue fallback): avg ${mttrHours.toFixed(1)}h to close incident-labeled issues (n=${mttrCount}, ${lookbackDays}d). No deploy failure→success pairs available, so this is a proxy.`,
       });
+    } else if (!flags.pullIncidents) {
+      // Deliberately disabled — emit a disabled marker rather than a gap.
+      summary.mttrHoursAvg = null;
+      summary.mttrSource = "disabled";
+      summary.mttrStatus = "disabled";
     } else {
       summary.mttrHoursAvg = null;
       summary.mttrSource = "unavailable";
@@ -1718,7 +1768,7 @@ async function runGithub(
         text: `MTTR n/a — no deploy failure→success pairs and no incident-labeled issues found in the last ${lookbackDays} days. Tag incidents with 'incident', 'outage', 'p0', or 'p1', or ensure failed CI runs are followed by successful reruns to enable MTTR measurement.`,
       });
     }
-  } else if (mttrCount > 0) {
+  } else if (flags.pullIncidents && mttrCount > 0) {
     // Keep the incident-issue average alongside the canonical MTTR for
     // comparison without overwriting it.
     summary.incidentIssueMttrHoursAvg = Number(
@@ -1746,6 +1796,7 @@ async function runGithub(
     },
   };
 
+  summary.activeFlags = flags;
   return { recordsCollected, summary, evidence, cursors, coverage };
 }
 
@@ -1771,14 +1822,15 @@ async function fetchGitlabMrDetail(
     createdAtMs: number;
     mergedAtMs: number;
   },
+  ctx?: ConnectorCtx,
 ): Promise<ScPrDetail | null> {
   try {
     const headers = { "PRIVATE-TOKEN": token };
     const base = `${baseUrl}/api/v4/projects/${mr.projectId}/merge_requests/${mr.iid}`;
     const [notesRes, commitsRes, changesRes] = await Promise.all([
-      fetch(`${base}/notes?per_page=100&sort=asc`, { headers }),
-      fetch(`${base}/commits?per_page=100`, { headers }),
-      fetch(`${base}/changes`, { headers }),
+      connectorFetch(`${base}/notes?per_page=100&sort=asc`, withCtx(ctx, { headers })),
+      connectorFetch(`${base}/commits?per_page=100`, withCtx(ctx, { headers })),
+      connectorFetch(`${base}/changes`, withCtx(ctx, { headers })),
     ]);
     if (!notesRes.ok || !commitsRes.ok || !changesRes.ok) return null;
 
@@ -1878,13 +1930,17 @@ async function fetchGitlabMrDetail(
 async function verifyGitlab(
   token: string,
   config: Record<string, unknown>,
+  ctx?: ConnectorCtx,
 ): Promise<ConnectorVerifyResult> {
   if (!token) return { ok: false, message: "Token required" };
   const baseUrl = String(config.baseUrl ?? "https://gitlab.com").replace(/\/$/, "");
   try {
     await assertSafeUrl(baseUrl);
     // 1. baseUrl reachable + credentials valid (GET /user).
-    const r = await fetch(`${baseUrl}/api/v4/user`, { headers: { "PRIVATE-TOKEN": token } });
+    const r = await connectorFetch(
+      `${baseUrl}/api/v4/user`,
+      withCtx(ctx, { headers: { "PRIVATE-TOKEN": token } }),
+    );
     if (!r.ok) throw new Error(`GitLab auth ${r.status}`);
     const me = (await r.json()) as { username: string };
     // 2. If a group is configured, confirm the credential can actually see it
@@ -1892,9 +1948,9 @@ async function verifyGitlab(
     //    access to the data we need to collect.
     const group = String(config.group ?? "");
     if (group) {
-      const gr = await fetch(
+      const gr = await connectorFetch(
         `${baseUrl}/api/v4/groups/${encodeURIComponent(group)}`,
-        { headers: { "PRIVATE-TOKEN": token } },
+        withCtx(ctx, { headers: { "PRIVATE-TOKEN": token } }),
       );
       if (!gr.ok) {
         return {
@@ -1924,6 +1980,7 @@ async function runGitlab(
   const cursorStart = readCursorIndex(ctx.priorCursors, "projects", "index");
   if (!group)
     return { recordsCollected: 0, summary: { error: "No group configured" }, evidence };
+  const flags = resolveFeatureFlags("gitlab", config);
   const headers = { "PRIVATE-TOKEN": token };
   // Paginate the group's project list. Replaces the old single-page
   // `per_page=30` call which silently capped discovery to the first 30
@@ -1934,9 +1991,9 @@ async function runGitlab(
   let projectsPage = 1;
   let projectsDiscoveryComplete = false;
   while (withinBudget(startMs, budgetMs)) {
-    const pr = await fetch(
+    const pr = await connectorFetch(
       `${baseUrl}/api/v4/groups/${encodeURIComponent(group)}/projects?per_page=${PROJECTS_PAGE_SIZE}&page=${projectsPage}`,
-      { headers },
+      withCtx(ctx, { headers }),
     );
     if (!pr.ok) throw new Error(`GitLab ${pr.status}`);
     const batch = (await pr.json()) as Array<{ name: string; id: number }>;
@@ -2027,10 +2084,10 @@ async function runGitlab(
       created_at: string;
       updated_at: string;
     }> = [];
-    try {
-      const pl = await fetch(
+    if (flags.pullPipelines) try {
+      const pl = await connectorFetch(
         `${baseUrl}/api/v4/projects/${p.id}/pipelines?updated_after=${since}&per_page=100`,
-        { headers },
+        withCtx(ctx, { headers }),
       );
       if (pl.ok) {
         pipelineRows = (await pl.json()) as typeof pipelineRows;
@@ -2056,11 +2113,13 @@ async function runGitlab(
     }
     // Pipeline detail — gives accurate `duration` (build time only) and
     // `queued_duration` (seconds the pipeline waited before starting).
+    // Inherits the `pullPipelines` gate via `pipelineRows`: if pipelines
+    // weren't pulled, this loop is a no-op.
     for (const pr of pipelineRows.slice(0, PIPELINE_DETAIL_LIMIT)) {
       try {
-        const dr = await fetch(
+        const dr = await connectorFetch(
           `${baseUrl}/api/v4/projects/${p.id}/pipelines/${pr.id}`,
-          { headers },
+          withCtx(ctx, { headers }),
         );
         if (dr.ok) {
           const detail = (await dr.json()) as {
@@ -2084,9 +2143,9 @@ async function runGitlab(
       // marks the *original* job's `retried: true` when a retry exists;
       // the retry job itself is the one that may have succeeded.
       try {
-        const jr = await fetch(
+        const jr = await connectorFetch(
           `${baseUrl}/api/v4/projects/${p.id}/pipelines/${pr.id}/jobs?per_page=${JOBS_PER_PAGE}`,
-          { headers },
+          withCtx(ctx, { headers }),
         );
         if (jr.ok) {
           const jobs = (await jr.json()) as Array<{
@@ -2126,10 +2185,10 @@ async function runGitlab(
         // ignore — jobs endpoint may be restricted or empty
       }
     }
-    try {
-      const mr = await fetch(
+    if (flags.pullMRs) try {
+      const mr = await connectorFetch(
         `${baseUrl}/api/v4/projects/${p.id}/merge_requests?state=merged&updated_after=${since}&per_page=30`,
-        { headers },
+        withCtx(ctx, { headers }),
       );
       if (mr.ok) {
         const rows = (await mr.json()) as Array<{
@@ -2172,9 +2231,9 @@ async function runGitlab(
     // history is intentionally not paginated. Author identity prefers
     // author_email so renames in commit names don't double-count people.
     try {
-      const cr = await fetch(
+      const cr = await connectorFetch(
         `${baseUrl}/api/v4/projects/${p.id}/repository/commits?since=${since}&per_page=100`,
-        { headers },
+        withCtx(ctx, { headers }),
       );
       if (cr.ok) {
         const rows = (await cr.json()) as Array<{
@@ -2199,10 +2258,10 @@ async function runGitlab(
     // post-filter on closed_at to match the strict 30-day window
     // (updated_after can include issues touched but not closed within it).
     const sinceMs = Date.parse(since);
-    try {
-      const ir = await fetch(
+    if (flags.pullIncidents) try {
+      const ir = await connectorFetch(
         `${baseUrl}/api/v4/projects/${p.id}/issues?state=closed&labels=${encodeURIComponent("incident,outage,p0,p1")}&updated_after=${since}&per_page=50`,
-        { headers },
+        withCtx(ctx, { headers }),
       );
       if (ir.ok) {
         const rows = (await ir.json()) as Array<{
@@ -2253,7 +2312,7 @@ async function runGitlab(
   const sampledMrs = mergedMrCandidates.slice(0, sampleN);
   const prDetails: ScPrDetail[] = [];
   for (const m of sampledMrs) {
-    const detail = await fetchGitlabMrDetail(token, baseUrl, m);
+    const detail = await fetchGitlabMrDetail(token, baseUrl, m, ctx);
     if (detail) prDetails.push(detail);
   }
   recordsCollected += prDetails.length;
@@ -2406,9 +2465,16 @@ async function runGitlab(
       text: `MTTR (deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (${lookbackDays}d).`,
     });
   }
-  summary.incidentIssuesInWindow = mttrCount;
+  if (!flags.pullIncidents) {
+    // Incident-issue side disabled — record as such, but deploy-failure
+    // MTTR (above) is independent of this flag and may still be set.
+    summary.incidentIssuesInWindow = null;
+    summary.incidentIssueMttrStatus = "disabled";
+  } else {
+    summary.incidentIssuesInWindow = mttrCount;
+  }
   if (deployMttrSeries.length === 0) {
-    if (mttrCount > 0) {
+    if (flags.pullIncidents && mttrCount > 0) {
       const mttrHours = mttrSumMs / mttrCount / 3_600_000;
       summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
       summary.mttrSource = "incident_issue_fallback";
@@ -2418,6 +2484,11 @@ async function runGitlab(
         stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
         text: `MTTR (incident-issue fallback): avg ${mttrHours.toFixed(1)}h to close incident-labeled GitLab issues (n=${mttrCount}, 30d). No deploy failure→success pipeline pairs available, so this is a proxy.`,
       });
+    } else if (!flags.pullIncidents) {
+      // Deliberately disabled — emit a disabled marker rather than a gap.
+      summary.mttrHoursAvg = null;
+      summary.mttrSource = "disabled";
+      summary.mttrStatus = "disabled";
     } else {
       summary.mttrHoursAvg = null;
       summary.mttrSource = "unavailable";
@@ -2428,7 +2499,7 @@ async function runGitlab(
         text: "MTTR n/a — no deploy failure→success pipeline pairs and no incident-labeled GitLab issues in the last 30 days.",
       });
     }
-  } else if (mttrCount > 0) {
+  } else if (flags.pullIncidents && mttrCount > 0) {
     summary.incidentIssueMttrHoursAvg = Number(
       (mttrSumMs / mttrCount / 3_600_000).toFixed(1),
     );
@@ -2445,12 +2516,14 @@ async function runGitlab(
     projects: { index: nextProjectIndex, total: projects.length },
   };
 
+  summary.activeFlags = flags;
   return { recordsCollected, summary, evidence, cursors, coverage };
 }
 
 async function verifyJira(
   token: string,
   config: Record<string, unknown>,
+  ctx?: ConnectorCtx,
 ): Promise<ConnectorVerifyResult> {
   if (!token) return { ok: false, message: "Token required" };
   const baseUrl = String(config.baseUrl ?? "").replace(/\/$/, "");
@@ -2462,15 +2535,18 @@ async function verifyJira(
     const auth = Buffer.from(`${email}:${token}`).toString("base64");
     const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
     // 1. baseUrl reachable + credentials valid (GET /myself).
-    const r = await fetch(`${baseUrl}/rest/api/3/myself`, { headers });
+    const r = await connectorFetch(
+      `${baseUrl}/rest/api/3/myself`,
+      withCtx(ctx, { headers }),
+    );
     if (!r.ok) throw new Error(`Jira auth ${r.status}`);
     const me = (await r.json()) as { displayName: string };
     // 2. If a project key is configured, confirm the credential can read it.
     const project = String(config.project ?? "");
     if (project) {
-      const pr = await fetch(
+      const pr = await connectorFetch(
         `${baseUrl}/rest/api/3/project/${encodeURIComponent(project)}`,
-        { headers },
+        withCtx(ctx, { headers }),
       );
       if (!pr.ok) {
         return {
@@ -2618,6 +2694,7 @@ async function runJira(
     return { recordsCollected: 0, summary: {}, evidence: [] };
   await assertSafeUrl(baseUrl);
   const lookbackDays = resolveLookbackDays(ctx);
+  const flags = resolveFeatureFlags("jira", config);
   const auth = Buffer.from(`${email}:${token}`).toString("base64");
   const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
   const projClause = project ? `project=${project} AND ` : "";
@@ -2633,9 +2710,9 @@ async function runJira(
   // configured lookback so a long window picks up older incidents too.
   const resolvedJql = `${projClause}resolved >= -${lookbackDays}d ORDER BY resolved DESC`;
   const fields = `created,resolutiondate,labels,issuetype,status,${sprintField}`;
-  const r = await fetch(
+  const r = await connectorFetch(
     `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(resolvedJql)}&fields=${encodeURIComponent(fields)}&expand=changelog&maxResults=100`,
-    { headers },
+    withCtx(ctx, { headers }),
   );
   if (!r.ok) throw new Error(`Jira ${r.status}`);
   const data = (await r.json()) as JiraSearchResponse;
@@ -2942,7 +3019,11 @@ async function runJira(
   );
 
   // ---- MTTR proxy (kept under the existing `measurement` dimension) ------
-  if (mttrCount > 0) {
+  // Gated by the `pullIncidents` connector feature flag so an assessor who
+  // disables incident pulls doesn't get penalised by an unavoidable MTTR
+  // gap; in that case we report `mttrStatus: "disabled"` so the UI can
+  // explain the omission instead of treating it as missing data.
+  if (flags.pullIncidents && mttrCount > 0) {
     const mttrHours = mttrSumMs / mttrCount / 3_600_000;
     summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
     summary.incidentTickets = mttrCount;
@@ -2952,7 +3033,7 @@ async function runJira(
       stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
       text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to resolve incident/bug tickets (n=${mttrCount}, ${lookbackDays}d).`,
     });
-  } else {
+  } else if (flags.pullIncidents) {
     summary.mttrHoursAvg = null;
     evidence.push({
       dimension: "measurement",
@@ -2960,6 +3041,8 @@ async function runJira(
       stageHint: 1,
       text: `No incident-labeled tickets found in the last ${lookbackDays} days — MTTR cannot be measured. Tag incidents with 'incident', 'outage', 'p0', or 'p1' to enable measurement.`,
     });
+  } else {
+    summary.mttrStatus = "disabled";
   }
 
   // Jira's search call returns a single windowed result set, so there is no
@@ -2973,6 +3056,7 @@ async function runJira(
     },
   };
 
+  summary.activeFlags = flags;
   return {
     recordsCollected,
     summary,
@@ -2984,20 +3068,24 @@ async function runJira(
 async function verifyLinear(
   token: string,
   config: Record<string, unknown> = {},
+  ctx?: ConnectorCtx,
 ): Promise<ConnectorVerifyResult> {
   if (!token) return { ok: false, message: "Token required" };
   try {
     // Combined query: viewer (auth check) + teams (workspace membership +
     // optional team-key access check). Linear has no separate base URL; the
     // GraphQL endpoint is fixed.
-    const r = await fetch("https://api.linear.app/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: token },
-      body: JSON.stringify({
-        query:
-          "{ viewer { name email } teams(first: 50) { nodes { id key name } } }",
+    const r = await connectorFetch(
+      "https://api.linear.app/graphql",
+      withCtx(ctx, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: token },
+        body: JSON.stringify({
+          query:
+            "{ viewer { name email } teams(first: 50) { nodes { id key name } } }",
+        }),
       }),
-    });
+    );
     if (!r.ok) throw new Error(`Linear ${r.status}`);
     const data = (await r.json()) as {
       data?: {
@@ -3182,7 +3270,7 @@ async function countLinearIssues(
 
 async function runLinear(
   token: string,
-  config: Record<string, unknown>,
+  config: Record<string, unknown> = {},
   ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   // Batched GraphQL query for the metrics that benefit from co-location
@@ -3194,12 +3282,13 @@ async function runLinear(
   // always have at least a couple of recent cycles to derive completion
   // rate from regardless of the lookback setting.
   const lookbackDays = resolveLookbackDays(ctx);
+  const flags = resolveFeatureFlags("linear", config);
   const since = new Date(Date.now() - lookbackDays * 86_400_000).toISOString();
   const cycleSince = new Date(
     Date.now() - Math.max(60, lookbackDays) * 86_400_000,
   ).toISOString();
   const statusMapping = readStatusMappingFromConfig(config);
-  const r = await fetch("https://api.linear.app/graphql", {
+  const r = await connectorFetch("https://api.linear.app/graphql", withCtx(ctx, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: token },
     body: JSON.stringify({
@@ -3245,7 +3334,7 @@ async function runLinear(
       }`,
       variables: { since, cycleSince },
     }),
-  });
+  }));
   if (!r.ok) throw new Error(`Linear ${r.status}`);
   const data = (await r.json()) as {
     data?: {
@@ -3461,7 +3550,10 @@ async function runLinear(
     "No Linear cycles detected in the last 60 days — enable cycles on a team to measure cycle completion + throughput.",
   );
 
-  if (mttrCount > 0) {
+  // MTTR proxy gated by `pullIncidents` (matches Jira behavior so
+  // disabling the flag doesn't penalise the score; instead we report
+  // `mttrStatus: "disabled"`).
+  if (flags.pullIncidents && mttrCount > 0) {
     const mttrHours = mttrSumMs / mttrCount / 3_600_000;
     summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
     evidence.push({
@@ -3470,6 +3562,8 @@ async function runLinear(
       stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
       text: `MTTR proxy (Linear): avg ${mttrHours.toFixed(1)} hours to resolve incident-tagged issues (n=${mttrCount}, ${lookbackDays}d).`,
     });
+  } else if (!flags.pullIncidents) {
+    summary.mttrStatus = "disabled";
   }
 
   // Single GraphQL call with `first: 100` — like Jira there is no multi-
@@ -3478,6 +3572,7 @@ async function runLinear(
     issues: { sampled: issues.length },
   };
 
+  summary.activeFlags = flags;
   return {
     recordsCollected:
       teams + issues.length + wipNodes.length + backlogResult.count,
@@ -3490,14 +3585,16 @@ async function runLinear(
 async function verifyCicd(
   token: string,
   config: Record<string, unknown>,
+  ctx?: ConnectorCtx,
 ): Promise<ConnectorVerifyResult> {
   const provider = String(config.provider ?? "github_actions");
-  if (provider === "github_actions") return verifyGithub(token, config);
+  if (provider === "github_actions") return verifyGithub(token, config, ctx);
   if (provider === "circleci") {
     if (!token) return { ok: false, message: "Token required" };
-    const r = await fetch("https://circleci.com/api/v2/me", {
-      headers: { "Circle-Token": token },
-    });
+    const r = await connectorFetch(
+      "https://circleci.com/api/v2/me",
+      withCtx(ctx, { headers: { "Circle-Token": token } }),
+    );
     return r.ok ? { ok: true, message: "CircleCI authenticated" } : { ok: false, message: `CircleCI ${r.status}` };
   }
   if (provider === "gitlab_ci") {
@@ -3505,10 +3602,10 @@ async function verifyCicd(
     // (token + baseUrl + group). Reuse verifyGitlab so verify and run stay
     // consistent — without this delegation a connector configured for
     // gitlab_ci would Run successfully but Verify would always fail.
-    return verifyGitlab(token, config);
+    return verifyGitlab(token, config, ctx);
   }
   if (provider === "jenkins") {
-    return verifyJenkins(token, config);
+    return verifyJenkins(token, config, ctx);
   }
   return { ok: false, message: `Unknown CI/CD provider: ${provider}` };
 }
@@ -3594,6 +3691,7 @@ async function runCircleCi(
       ],
     };
   }
+  const flags = resolveFeatureFlags("cicd", config);
   const slug = `${vcs}/${org}/${project}`;
   // CircleCI v2 pipelines API uses opaque `next_page_token` cursor pagination
   // (no page size param — fixed ~25 per page). Walk pages until either we
@@ -3616,7 +3714,7 @@ async function runCircleCi(
     const url = pageToken
       ? `https://circleci.com/api/v2/project/${encodeURIComponent(slug)}/pipeline?page-token=${encodeURIComponent(pageToken)}`
       : `https://circleci.com/api/v2/project/${encodeURIComponent(slug)}/pipeline`;
-    const r = await fetch(url, { headers });
+    const r = await connectorFetch(url, withCtx(ctx, { headers }));
     if (!r.ok) throw new Error(`CircleCI ${r.status}`);
     const data = (await r.json()) as {
       items: Array<{
@@ -3690,15 +3788,16 @@ async function runCircleCi(
       break;
     }
     const p = recent[i]!;
+    if (flags.pullWorkflows) {
     const sha =
       ((p as { vcs?: { revision?: string | null } }).vcs?.revision ??
         "").toString();
     if (sha) pipelineSha.set(p.id, sha);
     const branch = p.vcs?.branch ?? "unknown";
     try {
-      const wr = await fetch(
+      const wr = await connectorFetch(
         `https://circleci.com/api/v2/pipeline/${p.id}/workflow`,
-        { headers },
+        withCtx(ctx, { headers }),
       );
       if (!wr.ok) continue;
       const w = (await wr.json()) as {
@@ -3744,6 +3843,7 @@ async function runCircleCi(
     } catch {
       // ignore individual pipeline errors
     }
+    }
   }
 
   // Job-level pull for the first N workflows we just observed.
@@ -3760,9 +3860,9 @@ async function runCircleCi(
     }
     const sha = pipelineSha.get(p.id) ?? `pipeline:${p.id}`;
     try {
-      const wr = await fetch(
+      const wr = await connectorFetch(
         `https://circleci.com/api/v2/pipeline/${p.id}/workflow`,
-        { headers },
+        withCtx(ctx, { headers }),
       );
       if (!wr.ok) continue;
       const w = (await wr.json()) as {
@@ -3776,9 +3876,9 @@ async function runCircleCi(
         jobCallsRemaining -= 1;
         workflowsInspectedForJobs += 1;
         try {
-          const jr = await fetch(
+          const jr = await connectorFetch(
             `https://circleci.com/api/v2/workflow/${wf.id}/job`,
-            { headers },
+            withCtx(ctx, { headers }),
           );
           if (!jr.ok) continue;
           const jdata = (await jr.json()) as {
@@ -3813,7 +3913,7 @@ async function runCircleCi(
       // ignore individual pipeline errors
     }
     pipelinesSampled += 1;
-    nextPipelineIndex = i + 1;
+    nextPipelineIndex = pipelinesSampled;
     await ctx.checkpoint?.({
       cursors: {
         pipelines: { index: nextPipelineIndex, total: recent.length },
@@ -3854,6 +3954,7 @@ async function runCircleCi(
     // CircleCI has no incident-issue concept of its own, so MTTR is n/a from
     // this connector. Pair with a Jira/Linear/GitHub connector to fill it.
     mttrHoursAvg: null,
+    activeFlags: flags,
   };
   if (workflowsSucceeded > 0) {
     const deploysPerDay = workflowsSucceeded / lookbackDays;
@@ -4056,6 +4157,7 @@ function isJenkinsFolder(klass: string | undefined): boolean {
 async function verifyJenkins(
   token: string,
   config: Record<string, unknown>,
+  ctx?: ConnectorCtx,
 ): Promise<ConnectorVerifyResult> {
   const baseUrl = String(config.baseUrl ?? "").replace(/\/$/, "");
   const username = String(config.username ?? "");
@@ -4065,12 +4167,17 @@ async function verifyJenkins(
   try {
     // SSRF guard: same defense-in-depth pattern as GitLab/Jira — block
     // private hosts before issuing the request even though create/patch
-    // already validates baseUrl syntactically.
+    // already validates baseUrl syntactically. connectorFetch repeats this
+    // check, but doing it here keeps the error message consistent with
+    // sibling connectors.
     await assertSafeUrl(baseUrl);
     const auth = Buffer.from(`${username}:${token}`).toString("base64");
-    const r = await fetch(`${baseUrl}/api/json`, {
-      headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-    });
+    const r = await connectorFetch(
+      `${baseUrl}/api/json`,
+      withCtx(ctx, {
+        headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+      }),
+    );
     if (r.status === 401 || r.status === 403) {
       return {
         ok: false,
@@ -4168,9 +4275,9 @@ async function runJenkins(
   while (queue.length > 0 && withinBudget(startMs, budgetMs)) {
     const task = queue.shift()!;
     if (task.depth > MAX_DEPTH) continue;
-    const r = await fetch(
+    const r = await connectorFetch(
       `${task.url}/api/json?tree=jobs[name,_class,builds[number,result,timestamp,duration]]`,
-      { headers },
+      withCtx(ctx, { headers }),
     );
     if (!r.ok) {
       // Surface auth/permission failures (and any other non-OK) as a real
@@ -4596,17 +4703,21 @@ async function verifyAiTooling(
   if (!token) return { ok: false, message: "Token required" };
 
   if (provider === "openai") {
-    const r = await fetch("https://api.openai.com/v1/models", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const r = await connectorFetch(
+      "https://api.openai.com/v1/models",
+      withCtx(ctx, { headers: { Authorization: `Bearer ${token}` } }),
+    );
     return r.ok
       ? { ok: true, message: "OpenAI authenticated" }
       : { ok: false, message: `OpenAI ${r.status}` };
   }
   if (provider === "anthropic") {
-    const r = await fetch("https://api.anthropic.com/v1/models", {
-      headers: { "x-api-key": token, "anthropic-version": "2023-06-01" },
-    });
+    const r = await connectorFetch(
+      "https://api.anthropic.com/v1/models",
+      withCtx(ctx, {
+        headers: { "x-api-key": token, "anthropic-version": "2023-06-01" },
+      }),
+    );
     return r.ok
       ? { ok: true, message: "Anthropic authenticated" }
       : { ok: false, message: `Anthropic ${r.status}` };
@@ -4668,7 +4779,10 @@ interface ProviderRunOutcome {
   mode: "api" | "csv" | "none";
 }
 
-async function runAiToolingOpenAI(token: string): Promise<ProviderRunOutcome> {
+async function runAiToolingOpenAI(
+  token: string,
+  opts: { pullUsers?: boolean } = {},
+): Promise<ProviderRunOutcome> {
   let modelCount = 0;
   let users: number | null = null;
   let records = 0;
@@ -4680,7 +4794,10 @@ async function runAiToolingOpenAI(token: string): Promise<ProviderRunOutcome> {
     modelCount = data.data.length;
     records += modelCount;
   }
-  try {
+  // Org-members lookup uses an admin-scope endpoint; suppressed when the
+  // `pullUsers` feature flag is explicitly false so an assessor can opt
+  // out of admin reads without losing the model-availability signal.
+  if (opts.pullUsers !== false) try {
     const ur = await fetch(
       "https://api.openai.com/v1/organization/users?limit=100",
       { headers: { Authorization: `Bearer ${token}` } },
@@ -5308,6 +5425,7 @@ async function runAiTooling(
     return runCopilot(token, config);
   }
   const label = aiToolingLabel(provider);
+  const flags = resolveFeatureFlags("ai_tooling", config);
   // engineerCount is the denominator for adoption rate. Assessors enter
   // this as part of connector config (or it can come from the People
   // module); when absent, we emit raw counts and an explicit gap.
@@ -5377,7 +5495,10 @@ async function runAiTooling(
         ],
       };
     }
-    if (provider === "openai") outcome = await runAiToolingOpenAI(token);
+    // Per-provider API runners. The `pullUsers` feature flag (when false)
+    // suppresses the OpenAI org-members lookup so an assessor can opt out
+    // of admin-scope reads without losing the model-availability signal.
+    if (provider === "openai") outcome = await runAiToolingOpenAI(token, { pullUsers: flags.pullUsers !== false });
     else if (provider === "anthropic") outcome = await runAiToolingAnthropic(token);
     else if (provider === "cursor") outcome = await runAiToolingCursor(token);
     else outcome = await runAiToolingClaudeCode(token);
@@ -5447,6 +5568,7 @@ async function runAiTooling(
         acceptance.acceptanceRatePct === null
           ? null
           : Number(acceptance.acceptanceRatePct.toFixed(1)),
+      activeFlags: flags,
       ...outcome.details,
     },
     evidence,
@@ -5552,6 +5674,7 @@ async function verifyAzureDevops(
 async function runAzureDevops(
   token: string,
   config: Record<string, unknown>,
+  _ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const baseUrl = String(config.baseUrl ?? "https://dev.azure.com").replace(/\/$/, "");
   const org = String(config.organization ?? "").trim();
@@ -5802,28 +5925,32 @@ export async function verifyConnector(
   ctx: ConnectorCtx = {},
 ): Promise<ConnectorVerifyResult> {
   const cfg = { ...config, provider };
+  const subCtx: ConnectorCtx = {
+    requestId: ctx.requestId,
+    connectorLabel: ctx.connectorLabel ?? `${kind}:${provider}`,
+  };
   const child = logger.child({ requestId: ctx.requestId, op: "verifyConnector", kind, provider });
   child.info("connector verify start");
   try {
     let result: ConnectorVerifyResult;
     switch (kind) {
       case "github":
-        result = await verifyGithub(token, cfg);
+        result = await verifyGithub(token, cfg, subCtx);
         break;
       case "gitlab":
-        result = await verifyGitlab(token, cfg);
+        result = await verifyGitlab(token, cfg, subCtx);
         break;
       case "jira":
-        result = await verifyJira(token, cfg);
+        result = await verifyJira(token, cfg, subCtx);
         break;
       case "linear":
-        result = await verifyLinear(token, cfg);
+        result = await verifyLinear(token, cfg, subCtx);
         break;
       case "cicd":
-        result = await verifyCicd(token, cfg);
+        result = await verifyCicd(token, cfg, subCtx);
         break;
       case "ai_tooling":
-        result = await verifyAiTooling(token, cfg, ctx);
+        result = await verifyAiTooling(token, cfg, subCtx);
         break;
       case "azure_devops":
         result = await verifyAzureDevops(token, cfg);
@@ -5834,6 +5961,13 @@ export async function verifyConnector(
     child.info({ ok: result.ok }, "connector verify end");
     return result;
   } catch (err) {
+    // ConnectorFetchError is the structured failure we want surfaced as
+    // verify "false" rather than as an unhandled exception that 500s the
+    // route. Other errors propagate so runtime bugs aren't swallowed.
+    if (err instanceof ConnectorFetchError) {
+      child.warn({ err, status: err.status }, "connector verify fetch failed");
+      return { ok: false, message: err.message };
+    }
     child.error({ err }, "connector verify error");
     throw err;
   }
@@ -5847,31 +5981,35 @@ export async function runConnector(
   ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const cfg = { ...config, provider };
+  const subCtx: ConnectorCtx = {
+    ...ctx,
+    connectorLabel: ctx.connectorLabel ?? `${kind}:${provider}`,
+  };
   const child = logger.child({ requestId: ctx.requestId, op: "runConnector", kind, provider });
   child.info("connector run start");
   try {
     let result: ConnectorRunResult;
     switch (kind) {
       case "github":
-        result = await runGithub(token, cfg, ctx);
+        result = await runGithub(token, cfg, subCtx);
         break;
       case "gitlab":
-        result = await runGitlab(token, cfg, ctx);
+        result = await runGitlab(token, cfg, subCtx);
         break;
       case "jira":
-        result = await runJira(token, cfg, ctx);
+        result = await runJira(token, cfg, subCtx);
         break;
       case "linear":
-        result = await runLinear(token, cfg, ctx);
+        result = await runLinear(token, cfg, subCtx);
         break;
       case "cicd":
-        result = await runCicd(token, cfg, ctx);
+        result = await runCicd(token, cfg, subCtx);
         break;
       case "ai_tooling":
-        result = await runAiTooling(token, cfg, ctx);
+        result = await runAiTooling(token, cfg, subCtx);
         break;
       case "azure_devops":
-        result = await runAzureDevops(token, cfg);
+        result = await runAzureDevops(token, cfg, subCtx);
         break;
       default:
         throw new Error(`Unknown connector kind: ${kind}`);

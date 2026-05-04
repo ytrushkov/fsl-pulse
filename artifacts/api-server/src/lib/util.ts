@@ -84,20 +84,76 @@ const EXPORT_KEY: Buffer = process.env.PULSE_EXPORT_KEY
   : deriveKey("pulse-export-v1");
 
 // ---------------------------------------------------------------------------
-// Connector token envelope encryption (AES-256-GCM)
+// Connector token envelope encryption
 // ---------------------------------------------------------------------------
-// Stored format: `v1:<iv_b64url>:<tag_b64url>:<ct_b64url>`
-// Legacy rows (plain base64 of the original token) are still readable so
-// existing engagements survive the upgrade.
+// New rows use KMS-backed envelope encryption (`kms:v1:` prefix). The DEK is
+// generated per-token, the token is sealed with AES-256-GCM under the DEK,
+// and the DEK itself is wrapped by the KMS under a named keyRef. See
+// `kms.ts` for the rationale.
+//
+// Legacy formats are still readable so engagements created on prior builds
+// survive the upgrade — tokens get lazily re-encrypted into the KMS envelope
+// the next time they are read by the runner / route layer (see
+// `migrateLegacyConnectorTokens` for the eager bulk path):
+//   * `v1:<iv>:<tag>:<ct>`        → AES-256-GCM under the static TOKEN_KEY
+//   * `<base64-of-plaintext>`     → pre-v1 obfuscation
+import {
+  generateAndWrapDek,
+  unwrapDek,
+  KMS_ACTIVE_KEY_REF,
+  KmsError,
+  type WrappedDek,
+} from "./kms";
 
+const KMS_PREFIX = "kms:v1:";
 const ENC_PREFIX = "v1:";
 
 export function encryptToken(plain: string): string {
+  // Default path for newly stored tokens: KMS-backed envelope encryption.
+  const { dek, wrapped } = generateAndWrapDek();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", dek, iv);
+  const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Drop the cleartext DEK from memory ASAP. JS doesn't let us truly zero
+  // a Buffer that may still be referenced by the cipher object, but we at
+  // least avoid keeping a separate strong reference.
+  dek.fill(0);
+  return [
+    KMS_PREFIX + wrapped.keyRef,
+    wrapped.wDek.toString("base64url"),
+    wrapped.wIv.toString("base64url"),
+    wrapped.wTag.toString("base64url"),
+    iv.toString("base64url"),
+    tag.toString("base64url"),
+    ct.toString("base64url"),
+  ].join(":");
+}
+
+/**
+ * Encrypt using the legacy `v1:` static-key envelope. Used only by the
+ * migration path that needs to round-trip an existing v1 row through the
+ * KMS-backed format without changing semantics. Production callers should
+ * use `encryptToken` (which now writes `kms:v1:` envelopes).
+ */
+export function encryptTokenLegacyV1(plain: string): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", TOKEN_KEY, iv);
   const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `${ENC_PREFIX}${iv.toString("base64url")}:${tag.toString("base64url")}:${ct.toString("base64url")}`;
+}
+
+/**
+ * True when the stored value is already in the current (KMS-backed) format.
+ * Callers use this to decide whether to lazily re-encrypt on read.
+ */
+export function isCurrentTokenFormat(stored: string | null | undefined): boolean {
+  if (!stored) return false;
+  if (!stored.startsWith(KMS_PREFIX)) return false;
+  // Optionally enforce that the keyRef matches the active rotation target.
+  const ref = stored.slice(KMS_PREFIX.length).split(":", 1)[0] ?? "";
+  return ref === KMS_ACTIVE_KEY_REF;
 }
 
 export class TokenDecryptError extends Error {
@@ -114,8 +170,43 @@ const STRICT_BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
  * so callers (route handlers) can surface a clear "connector misconfigured"
  * message to the assessor instead of silently calling the upstream API with
  * an empty bearer token.
+ *
+ * Handles three on-disk formats so a running deployment can carry rows from
+ * any prior shape: KMS-backed envelope (`kms:v1:`), static-key AES-GCM
+ * envelope (`v1:`), and pre-v1 plain base64.
  */
 export function decryptToken(stored: string): string {
+  if (stored.startsWith(KMS_PREFIX)) {
+    const parts = stored.slice(KMS_PREFIX.length).split(":");
+    if (parts.length !== 7) {
+      throw new TokenDecryptError("malformed kms:v1 envelope");
+    }
+    const [keyRef, wDekB64, wIvB64, wTagB64, ivB64, tagB64, ctB64] = parts;
+    let dek: Buffer | null = null;
+    try {
+      const wrapped: WrappedDek = {
+        keyRef: keyRef!,
+        wDek: Buffer.from(wDekB64!, "base64url"),
+        wIv: Buffer.from(wIvB64!, "base64url"),
+        wTag: Buffer.from(wTagB64!, "base64url"),
+      };
+      dek = unwrapDek(wrapped);
+      const iv = Buffer.from(ivB64!, "base64url");
+      const tag = Buffer.from(tagB64!, "base64url");
+      const ct = Buffer.from(ctB64!, "base64url");
+      const decipher = createDecipheriv("aes-256-gcm", dek, iv);
+      decipher.setAuthTag(tag);
+      const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
+      return pt.toString("utf8");
+    } catch (e) {
+      if (e instanceof KmsError) throw new TokenDecryptError(e.message);
+      throw new TokenDecryptError(
+        e instanceof Error ? e.message : "unknown cipher error",
+      );
+    } finally {
+      if (dek) dek.fill(0);
+    }
+  }
   if (!stored.startsWith(ENC_PREFIX)) {
     // Legacy obfuscated value (pre-v1 ciphertext format). Validate strictly
     // before decoding so corrupted rows fail loudly instead of yielding empty
