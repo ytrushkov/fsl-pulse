@@ -53,6 +53,17 @@ interface ConfigField {
   whenProvider?: string[];
 }
 
+interface ProviderTokenSpec {
+  tokenLabel?: string;
+  tokenPlaceholder?: string;
+  tokenHelp?: string;
+  tokenDocsUrl?: string;
+  // Optional banner to render above the token input when this provider is
+  // selected — used to call out scope/permission prerequisites that aren't
+  // obvious from the token field alone.
+  banner?: string;
+}
+
 interface KindSpec {
   kind: ConnectorKind;
   label: string;
@@ -63,6 +74,9 @@ interface KindSpec {
   tokenPlaceholder: string;
   tokenHelp: string;
   tokenDocsUrl: string;
+  // Per-provider overrides for the token field + an optional banner. Only
+  // listed providers override the kind-level defaults.
+  providerTokenSpecs?: Record<string, ProviderTokenSpec>;
   fields: ConfigField[];
 }
 
@@ -248,6 +262,7 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
     providerOptions: [
       { value: "openai", label: "OpenAI" },
       { value: "anthropic", label: "Anthropic" },
+      { value: "copilot", label: "GitHub Copilot" },
       { value: "cursor", label: "Cursor (admin API)" },
       { value: "claude_code", label: "Claude Code (Anthropic admin API)" },
       { value: "windsurf", label: "Windsurf (CSV upload)" },
@@ -258,7 +273,28 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
     tokenHelp:
       "Use an admin/org-scoped key when available so usage data can be queried. Read-only inference keys work but adoption metrics will be unavailable. CSV-only providers (Windsurf, Amazon Q) ignore the token — leave it blank.",
     tokenDocsUrl: "https://platform.openai.com/api-keys",
+    providerTokenSpecs: {
+      copilot: {
+        tokenLabel: "GitHub Copilot admin token",
+        tokenPlaceholder: "ghp_… or github_pat_…",
+        tokenHelp:
+          "Classic PAT needs the manage_billing:copilot scope. Fine-grained tokens need 'Copilot Business' admin permission on the org. The token's owner must be a Copilot admin on the configured organization.",
+        tokenDocsUrl: "https://github.com/settings/tokens",
+        banner:
+          "Copilot admin scope required: this provider calls the org-scoped Copilot billing and metrics APIs. A regular GitHub PAT will return 403. Verify will tell you exactly what to fix if the scope is missing.",
+      },
+    },
     fields: [
+      {
+        key: "org",
+        label: "GitHub organization",
+        type: "text",
+        placeholder: "acme-corp",
+        description:
+          "Org slug whose Copilot seats and metrics this connector should pull.",
+        required: true,
+        whenProvider: ["copilot"],
+      },
       {
         key: "engineerCount",
         label: "Engineer count (denominator)",
@@ -373,6 +409,20 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
   const kind = useWatch({ control: form.control, name: "kind" });
   const provider = useWatch({ control: form.control, name: "provider" });
   const spec = KIND_SPECS[kind as ConnectorKind] ?? KIND_SPECS[ConnectorKind.github];
+
+  // Resolve the effective token field shape, layering any provider-level
+  // overrides on top of the kind-level defaults. This is what powers the
+  // copilot-specific scope banner and label without bloating the form JSX.
+  const tokenSpec = useMemo(() => {
+    const override = spec.providerTokenSpecs?.[String(provider)] ?? {};
+    return {
+      tokenLabel: override.tokenLabel ?? spec.tokenLabel,
+      tokenPlaceholder: override.tokenPlaceholder ?? spec.tokenPlaceholder,
+      tokenHelp: override.tokenHelp ?? spec.tokenHelp,
+      tokenDocsUrl: override.tokenDocsUrl ?? spec.tokenDocsUrl,
+      banner: override.banner,
+    };
+  }, [spec, provider]);
 
   // When kind changes, reset the provider + config so we never leave a
   // stale "org" value sitting on a Jira connector. We *don't* clear the
@@ -612,24 +662,35 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
               />
             ))}
 
+            {tokenSpec.banner ? (
+              <div
+                className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400"
+                role="note"
+                data-testid="provider-token-banner"
+              >
+                <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <div>{tokenSpec.banner}</div>
+              </div>
+            ) : null}
+
             <FormField
               control={form.control}
               name="token"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{spec.tokenLabel} (optional)</FormLabel>
+                  <FormLabel>{tokenSpec.tokenLabel} (optional)</FormLabel>
                   <FormControl>
                     <Input
                       type="password"
-                      placeholder={spec.tokenPlaceholder}
+                      placeholder={tokenSpec.tokenPlaceholder}
                       autoComplete="off"
                       {...field}
                     />
                   </FormControl>
                   <FormDescription>
-                    {spec.tokenHelp}{" "}
+                    {tokenSpec.tokenHelp}{" "}
                     <a
-                      href={spec.tokenDocsUrl}
+                      href={tokenSpec.tokenDocsUrl}
                       target="_blank"
                       rel="noreferrer noopener"
                       className="inline-flex items-center gap-0.5 text-primary underline-offset-2 hover:underline"

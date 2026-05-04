@@ -3417,6 +3417,9 @@ async function verifyAiTooling(
     }
     return { ok: false, message: `Claude Code ${r.status}` };
   }
+  if (provider === "copilot") {
+    return verifyCopilot(token, config);
+  }
   return { ok: true, message: `Token recorded for ${provider} (no live verify available)` };
 }
 
@@ -3707,12 +3710,377 @@ function runAiToolingFromCsv(
   };
 }
 
+// ---- GitHub Copilot admin / billing --------------------------------------
+// Copilot exposes two org-scoped endpoints we care about:
+//   GET /orgs/{org}/copilot/billing   — seat breakdown (assigned/active)
+//   GET /orgs/{org}/copilot/metrics   — GA replacement for /copilot/usage,
+//     daily aggregates for active users, completions, acceptance, languages.
+// Both require a token whose scopes include `manage_billing:copilot`
+// (classic PAT) or the equivalent fine-grained "Copilot Business" admin
+// permission. We surface scope failures as actionable messages instead of
+// silently degrading, since the whole point of this provider per PRD is
+// to give the People + Tooling rubrics a real adoption signal.
+interface CopilotBilling {
+  seat_breakdown: {
+    total: number;
+    added_this_cycle?: number;
+    pending_invitation?: number;
+    pending_cancellation?: number;
+    active_this_cycle?: number;
+    inactive_this_cycle?: number;
+  };
+  seat_management_setting?: string;
+  public_code_suggestions?: string;
+}
+
+interface CopilotMetricsLanguage {
+  name: string;
+  total_engaged_users?: number;
+  total_code_suggestions?: number;
+  total_code_acceptances?: number;
+  total_code_lines_suggested?: number;
+  total_code_lines_accepted?: number;
+}
+
+interface CopilotMetricsEditorModel {
+  name: string;
+  is_custom_model?: boolean;
+  total_engaged_users?: number;
+  languages?: CopilotMetricsLanguage[];
+}
+
+interface CopilotMetricsEditor {
+  name: string;
+  total_engaged_users?: number;
+  models?: CopilotMetricsEditorModel[];
+}
+
+interface CopilotMetricsDay {
+  date: string;
+  total_active_users?: number;
+  total_engaged_users?: number;
+  copilot_ide_code_completions?: {
+    total_engaged_users?: number;
+    languages?: CopilotMetricsLanguage[];
+    editors?: CopilotMetricsEditor[];
+  };
+}
+
+async function copilotFetch<T>(token: string, url: string): Promise<Response | T> {
+  const r = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "pulse-assessor",
+    },
+  });
+  if (!r.ok) return r;
+  return (await r.json()) as T;
+}
+
+function copilotScopeMessage(status: number, action: string): string {
+  if (status === 401) {
+    return `Copilot ${action}: 401 Unauthorized. The token is invalid or expired — issue a new one with the "manage_billing:copilot" scope (classic PAT) or "Copilot Business" admin permission (fine-grained).`;
+  }
+  if (status === 403) {
+    return `Copilot ${action}: 403 Forbidden. The token authenticated but lacks the Copilot admin scope. Re-issue it with "manage_billing:copilot" (classic PAT) or grant "Copilot Business" admin on the fine-grained token, then re-verify.`;
+  }
+  if (status === 404) {
+    return `Copilot ${action}: 404 Not Found. Either the org has no Copilot Business/Enterprise subscription, or the token cannot see it — make sure the org slug is correct and the token's owner is a Copilot admin on that org.`;
+  }
+  return `Copilot ${action}: ${status}`;
+}
+
+async function verifyCopilot(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorVerifyResult> {
+  const org = String(config.org ?? "").trim();
+  if (!org) {
+    return { ok: false, message: "GitHub organization is required for the Copilot provider." };
+  }
+  const result = await copilotFetch<CopilotBilling>(
+    token,
+    `https://api.github.com/orgs/${encodeURIComponent(org)}/copilot/billing`,
+  );
+  if (result instanceof Response) {
+    return { ok: false, message: copilotScopeMessage(result.status, "verify") };
+  }
+  const total = result.seat_breakdown?.total ?? 0;
+  const active = result.seat_breakdown?.active_this_cycle ?? 0;
+  return {
+    ok: true,
+    message: `Copilot admin scope confirmed for ${org}: ${active}/${total} seats active this cycle.`,
+    details: {
+      org,
+      seatsTotal: total,
+      seatsActive: active,
+      seatsInactive: result.seat_breakdown?.inactive_this_cycle ?? null,
+      pendingInvitation: result.seat_breakdown?.pending_invitation ?? null,
+    },
+  };
+}
+
+async function runCopilot(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorRunResult> {
+  const org = String(config.org ?? "").trim();
+  const engineerCount = Number(config.engineerCount ?? 0);
+  const evidence: CollectedEvidence[] = [];
+  const summary: Record<string, unknown> = {
+    provider: "copilot",
+    org: org || null,
+    engineerCount: engineerCount || null,
+  };
+  if (!org) {
+    return {
+      recordsCollected: 0,
+      summary,
+      evidence: [
+        {
+          dimension: "tooling",
+          signalType: "gap",
+          stageHint: 1,
+          text: "GitHub Copilot connector configured but no organization specified — cannot query the Copilot admin API.",
+        },
+      ],
+    };
+  }
+
+  // 1) Billing → assigned/active seats. This also re-confirms scope at run
+  //    time so we emit a clear gap row instead of a 500 when the token has
+  //    been rotated/downgraded since verify.
+  const billing = await copilotFetch<CopilotBilling>(
+    token,
+    `https://api.github.com/orgs/${encodeURIComponent(org)}/copilot/billing`,
+  );
+  if (billing instanceof Response) {
+    return {
+      recordsCollected: 0,
+      summary: { ...summary, billingStatus: billing.status },
+      evidence: [
+        {
+          dimension: "tooling",
+          signalType: "gap",
+          stageHint: 1,
+          text: copilotScopeMessage(billing.status, "run"),
+        },
+      ],
+    };
+  }
+  const seatsTotal = billing.seat_breakdown?.total ?? 0;
+  const seatsActive = billing.seat_breakdown?.active_this_cycle ?? 0;
+  const seatsInactive = billing.seat_breakdown?.inactive_this_cycle ?? 0;
+  const pendingInvitation = billing.seat_breakdown?.pending_invitation ?? 0;
+  summary.seatsTotal = seatsTotal;
+  summary.seatsActiveThisCycle = seatsActive;
+  summary.seatsInactiveThisCycle = seatsInactive;
+  summary.pendingInvitations = pendingInvitation;
+
+  // Seat utilization: active ÷ assigned. Tagged to Tooling because it
+  // measures how well the AI tool the org pays for is actually being used.
+  if (seatsTotal > 0) {
+    const seatUtil = seatsActive / seatsTotal;
+    summary.seatUtilizationPct = Number((seatUtil * 100).toFixed(1));
+    evidence.push({
+      dimension: "tooling",
+      signalType: seatUtil >= 0.6 ? "strength" : "gap",
+      stageHint: seatUtil >= 0.8 ? 5 : seatUtil >= 0.6 ? 4 : seatUtil >= 0.3 ? 3 : 2,
+      text: `Copilot seat utilization: ${(seatUtil * 100).toFixed(0)}% (${seatsActive} active of ${seatsTotal} assigned this cycle).`,
+    });
+  } else {
+    evidence.push({
+      dimension: "tooling",
+      signalType: "gap",
+      stageHint: 1,
+      text: `No GitHub Copilot seats assigned in org "${org}".`,
+    });
+  }
+
+  // 2) Metrics → daily active users, suggestion acceptance, language mix.
+  //    The GA endpoint is /copilot/metrics; the older /copilot/usage was
+  //    deprecated in 2025-04. We try metrics first and fall back to usage
+  //    only if the org hasn't been migrated yet.
+  let metrics: CopilotMetricsDay[] | null = null;
+  let usedEndpoint: string | null = null;
+  const metricsResp = await copilotFetch<CopilotMetricsDay[]>(
+    token,
+    `https://api.github.com/orgs/${encodeURIComponent(org)}/copilot/metrics`,
+  );
+  if (Array.isArray(metricsResp)) {
+    metrics = metricsResp;
+    usedEndpoint = "metrics";
+  } else if (metricsResp.status === 404) {
+    // Some orgs without ≥5 active users get 404 from /metrics (the privacy
+    // floor). Surface that as a clean gap rather than a transport error.
+    evidence.push({
+      dimension: "people",
+      signalType: "gap",
+      stageHint: 2,
+      text: `Copilot usage metrics unavailable for "${org}" (HTTP 404). The endpoint requires at least the platform's active-user privacy floor; once enough developers actively use Copilot, daily metrics will populate.`,
+    });
+  } else {
+    return {
+      recordsCollected: 0,
+      summary: { ...summary, metricsStatus: metricsResp.status },
+      evidence: [
+        ...evidence,
+        {
+          dimension: "tooling",
+          signalType: "gap",
+          stageHint: 1,
+          text: copilotScopeMessage(metricsResp.status, "metrics"),
+        },
+      ],
+    };
+  }
+
+  let recordsCollected = (metrics?.length ?? 0) + (seatsTotal > 0 ? 1 : 0);
+
+  if (metrics && metrics.length > 0) {
+    const days = metrics.length;
+    summary.metricsDays = days;
+    summary.metricsEndpoint = usedEndpoint;
+
+    // Daily active user rate (avg active users / day across the window).
+    const totalActiveSum = metrics.reduce(
+      (s, d) => s + (d.total_active_users ?? 0),
+      0,
+    );
+    const avgDau = totalActiveSum / days;
+    summary.avgDailyActiveUsers = Number(avgDau.toFixed(1));
+
+    if (engineerCount > 0) {
+      const dauRate = Math.min(1, avgDau / engineerCount);
+      summary.dailyActiveUserRatePct = Number((dauRate * 100).toFixed(1));
+      evidence.push({
+        dimension: "people",
+        signalType: dauRate >= 0.5 ? "strength" : "gap",
+        stageHint: dauRate >= 0.8 ? 5 : dauRate >= 0.5 ? 4 : dauRate >= 0.2 ? 3 : 2,
+        text: `Copilot daily-active-user rate: ~${(dauRate * 100).toFixed(0)}% (avg ${avgDau.toFixed(1)} DAU / ${engineerCount} engineers, last ${days}d).`,
+      });
+    } else if (seatsTotal > 0) {
+      const dauOfSeats = Math.min(1, avgDau / seatsTotal);
+      summary.dailyActiveUserRatePctOfSeats = Number(
+        (dauOfSeats * 100).toFixed(1),
+      );
+      evidence.push({
+        dimension: "people",
+        signalType: dauOfSeats >= 0.5 ? "strength" : "gap",
+        stageHint: dauOfSeats >= 0.8 ? 5 : dauOfSeats >= 0.5 ? 4 : dauOfSeats >= 0.2 ? 3 : 2,
+        text: `Copilot daily-active-user rate (vs. seats): ~${(dauOfSeats * 100).toFixed(0)}% (avg ${avgDau.toFixed(1)} DAU / ${seatsTotal} seats, last ${days}d). Set engineerCount in connector config to compare against the full engineering org instead.`,
+      });
+    }
+
+    // Acceptance + lines suggested vs accepted, aggregated across all
+    // editors/models/languages reported. We sum once and walk the language
+    // tree once to keep this O(metrics × languages) rather than O(n²).
+    let totalSuggestions = 0;
+    let totalAcceptances = 0;
+    let totalLinesSuggested = 0;
+    let totalLinesAccepted = 0;
+    const languageEngagement = new Map<string, number>();
+    for (const day of metrics) {
+      const completions = day.copilot_ide_code_completions;
+      if (!completions) continue;
+      for (const editor of completions.editors ?? []) {
+        for (const model of editor.models ?? []) {
+          for (const lang of model.languages ?? []) {
+            totalSuggestions += lang.total_code_suggestions ?? 0;
+            totalAcceptances += lang.total_code_acceptances ?? 0;
+            totalLinesSuggested += lang.total_code_lines_suggested ?? 0;
+            totalLinesAccepted += lang.total_code_lines_accepted ?? 0;
+          }
+        }
+      }
+      // Top-level language engagement (de-dup across editors per day).
+      for (const lang of completions.languages ?? []) {
+        languageEngagement.set(
+          lang.name,
+          (languageEngagement.get(lang.name) ?? 0) +
+            (lang.total_engaged_users ?? 0),
+        );
+      }
+    }
+    summary.totalSuggestions = totalSuggestions;
+    summary.totalAcceptances = totalAcceptances;
+    summary.totalLinesSuggested = totalLinesSuggested;
+    summary.totalLinesAccepted = totalLinesAccepted;
+    recordsCollected += totalSuggestions;
+
+    if (totalSuggestions > 0) {
+      const accept = totalAcceptances / totalSuggestions;
+      summary.acceptanceRatePct = Number((accept * 100).toFixed(1));
+      evidence.push({
+        dimension: "tooling",
+        signalType: accept >= 0.25 ? "strength" : "gap",
+        stageHint: accept >= 0.4 ? 5 : accept >= 0.25 ? 4 : accept >= 0.15 ? 3 : 2,
+        text: `Copilot suggestion acceptance: ${(accept * 100).toFixed(1)}% (${totalAcceptances.toLocaleString()} accepted of ${totalSuggestions.toLocaleString()} suggestions, last ${days}d).`,
+      });
+    }
+    if (totalLinesSuggested > 0) {
+      const lineAccept = totalLinesAccepted / totalLinesSuggested;
+      summary.lineAcceptanceRatePct = Number((lineAccept * 100).toFixed(1));
+      evidence.push({
+        dimension: "tooling",
+        signalType: lineAccept >= 0.2 ? "strength" : "gap",
+        stageHint: lineAccept >= 0.35 ? 5 : lineAccept >= 0.2 ? 4 : 3,
+        text: `Copilot lines accepted vs suggested: ${totalLinesAccepted.toLocaleString()} / ${totalLinesSuggested.toLocaleString()} (${(lineAccept * 100).toFixed(1)}%, last ${days}d).`,
+      });
+    }
+
+    if (languageEngagement.size > 0) {
+      const top = [...languageEngagement.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      summary.topLanguages = top.map(([name, n]) => ({ name, engagedUserDays: n }));
+      evidence.push({
+        dimension: "tooling",
+        signalType: "quote",
+        text: `Copilot language footprint (last ${days}d, top by engaged-user-days): ${top
+          .map(([name, n]) => `${name} (${n})`)
+          .join(", ")}.`,
+      });
+    }
+  } else if (metrics && metrics.length === 0) {
+    evidence.push({
+      dimension: "people",
+      signalType: "gap",
+      stageHint: 2,
+      text: `Copilot metrics endpoint returned zero days for "${org}" — no developer activity recorded in the lookback window.`,
+    });
+  }
+
+  if (engineerCount <= 0) {
+    evidence.push({
+      dimension: "people",
+      signalType: "quote",
+      text: `Set "Engineer count" on this connector so adoption % can be reported relative to the full engineering org (currently using assigned seats as the denominator).`,
+    });
+  }
+
+  return {
+    recordsCollected,
+    summary,
+    evidence,
+  };
+}
+
 async function runAiTooling(
   token: string,
   config: Record<string, unknown>,
   ctx: ConnectorCtx,
 ): Promise<ConnectorRunResult> {
   const provider = String(config.provider ?? "openai");
+  // Copilot has its own bespoke evidence shape (seat utilization, DAU rate,
+  // suggestion + line acceptance, language footprint) that doesn't map onto
+  // the shared ProviderRunOutcome adoption/acceptance pipeline, so it
+  // short-circuits before the generic dispatcher runs.
+  if (provider === "copilot") {
+    return runCopilot(token, config);
+  }
   const label = aiToolingLabel(provider);
   // engineerCount is the denominator for adoption rate. Assessors enter
   // this as part of connector config (or it can come from the People
