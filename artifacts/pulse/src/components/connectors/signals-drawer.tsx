@@ -28,8 +28,52 @@ interface SignalsDrawerProps {
 type DoraSummary = {
   deploysPerDay?: number | null;
   leadTimeHoursAvg?: number | null;
+  leadTimeHoursP50?: number | null;
+  leadTimeHoursP75?: number | null;
+  leadTimeHoursP95?: number | null;
+  leadTimeUnavailableReason?: string | null;
   changeFailureRate?: number | null;
   mttrHoursAvg?: number | null;
+  mttrHoursP50?: number | null;
+  mttrHoursP95?: number | null;
+  mttrSource?:
+    | "deployment_failure"
+    | "incident_issue_fallback"
+    | "unavailable"
+    | string
+    | null;
+};
+
+// PRD §6.2 CI/CD metrics. All fields optional — connectors that can't
+// observe a particular metric set the value to null and (when helpful)
+// pair it with an `*UnavailableReason` string the UI can show as a hint.
+type CiCdSummary = {
+  buildDurationMinutesP50?: number | null;
+  buildDurationMinutesP75?: number | null;
+  buildDurationMinutesP95?: number | null;
+  buildDurationSampleSize?: number | null;
+  buildDurationUnit?: string | null;
+  queueTimeMinutesP50?: number | null;
+  queueTimeMinutesP75?: number | null;
+  queueTimeSampleSize?: number | null;
+  queueTimeUnit?: string | null;
+  queueTimeUnavailableReason?: string | null;
+  buildSuccessRate?: number | null;
+  flakyTestRate?: number | null;
+  flakyRetrySuccesses30d?: number | null;
+  flakyDenominator30d?: number | null;
+  flakyDenominatorUnit?: string | null;
+  runsWithRetries30d?: number | null;
+  flakyTestRateUnavailableReason?: string | null;
+  jobsObserved30d?: number | null;
+  jobRunsSampled30d?: number | null;
+  workflowsInspectedForJobs30d?: number | null;
+  jobSampleTruncated?: boolean | null;
+  jobSampleTruncatedReason?: string | null;
+  leadTimeHoursP50?: number | null;
+  leadTimeHoursP75?: number | null;
+  leadTimeHoursP95?: number | null;
+  leadTimeUnavailableReason?: string | null;
 };
 
 // Issue-tracking flow metrics emitted by Jira and Linear runners under the
@@ -84,6 +128,18 @@ function formatPercent(v: number | null | undefined, digits = 0): string {
   return `${v.toFixed(digits)}%`;
 }
 
+function formatMinutes(m: number | null | undefined): string {
+  if (m === null || m === undefined) return "n/a";
+  if (m < 1) return `${(m * 60).toFixed(1)}s`;
+  if (m < 60) return `${m.toFixed(1)}m`;
+  return `${(m / 60).toFixed(1)}h`;
+}
+
+function formatRate(r: number | null | undefined): string {
+  if (r === null || r === undefined) return "n/a";
+  return `${(r * 100).toFixed(1)}%`;
+}
+
 function DoraMetrics({ summary }: { summary: DoraSummary }) {
   // Render the four DORA proxies only if at least one is present in the
   // summary; otherwise this connector doesn't produce DORA-style signals
@@ -94,6 +150,17 @@ function DoraMetrics({ summary }: { summary: DoraSummary }) {
     summary.changeFailureRate != null ||
     "mttrHoursAvg" in summary;
   if (!hasAny) return null;
+  // MTTR hint surfaces provenance per PRD: the assessor needs to know
+  // whether the number came from real deploy failure→success pairs or
+  // from the incident-issue proxy.
+  const mttrHint =
+    summary.mttrSource === "deployment_failure"
+      ? "Avg deploy failure → next success"
+      : summary.mttrSource === "incident_issue_fallback"
+        ? "Fallback: avg incident-issue close − open"
+        : summary.mttrSource === "unavailable"
+          ? "No deploy failures or incident issues observed"
+          : "Avg incident-issue close − open";
   const cells: Array<{ label: string; value: string; hint: string }> = [
     {
       label: "Deploy frequency",
@@ -119,12 +186,163 @@ function DoraMetrics({ summary }: { summary: DoraSummary }) {
     {
       label: "MTTR",
       value: formatHours(summary.mttrHoursAvg),
-      hint: "Avg incident-issue close − open",
+      hint: mttrHint,
     },
   ];
   return (
     <section>
       <h3 className="text-sm font-semibold mb-2">DORA metrics</h3>
+      <div className="grid grid-cols-2 gap-2">
+        {cells.map((c) => (
+          <div key={c.label} className="rounded border p-3">
+            <div className="text-xs text-muted-foreground">{c.label}</div>
+            <div className="text-lg font-semibold tabular-nums">{c.value}</div>
+            <div className="text-xs text-muted-foreground">{c.hint}</div>
+          </div>
+        ))}
+      </div>
+      {/* MTTR percentile detail (only when deploy-failure-driven). */}
+      {summary.mttrSource === "deployment_failure" &&
+      (summary.mttrHoursP50 != null || summary.mttrHoursP95 != null) ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          MTTR p50 {formatHours(summary.mttrHoursP50)} / p95{" "}
+          {formatHours(summary.mttrHoursP95)} across deploy failure→success
+          pairs.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+// PRD §6.2 CI/CD subgroup: build duration percentiles, queue time
+// percentiles, build success rate, flaky-test rate, and lead-time
+// percentiles. Renders n/a (with the connector-supplied reason when
+// available) for any metric the connector couldn't observe.
+function CiCdMetrics({ summary }: { summary: CiCdSummary }) {
+  const hasAny =
+    summary.buildDurationMinutesP50 != null ||
+    summary.buildDurationMinutesP75 != null ||
+    summary.buildDurationMinutesP95 != null ||
+    summary.queueTimeMinutesP50 != null ||
+    summary.queueTimeMinutesP75 != null ||
+    summary.buildSuccessRate != null ||
+    summary.flakyTestRate != null ||
+    summary.leadTimeHoursP50 != null ||
+    summary.leadTimeHoursP75 != null ||
+    summary.leadTimeHoursP95 != null ||
+    "queueTimeUnavailableReason" in summary ||
+    "flakyTestRateUnavailableReason" in summary ||
+    "leadTimeUnavailableReason" in summary;
+  if (!hasAny) return null;
+  // Hint must reflect the actual backend formula, which is harmonized
+  // across providers as `flakyRetrySuccesses30d / flakyDenominator30d`
+  // where the denominator unit (workflow_runs / job_groups / workflows)
+  // varies by provider but the ratio is comparable.
+  const flakyUnitLabel =
+    summary.flakyDenominatorUnit === "jobs"
+      ? "jobs"
+      : summary.flakyDenominatorUnit === "job_groups"
+        ? "job groups"
+        : summary.flakyDenominatorUnit === "workflows"
+          ? "workflows"
+          : summary.flakyDenominatorUnit === "workflow_runs"
+            ? "workflow runs"
+            : "runs";
+  const truncationNote = summary.jobSampleTruncated
+    ? ` (sample truncated: ${summary.jobSampleTruncatedReason ?? "API budget cap"})`
+    : "";
+  const flakyHint =
+    summary.flakyTestRate != null &&
+    summary.flakyRetrySuccesses30d != null &&
+    summary.flakyDenominator30d != null
+      ? `${summary.flakyRetrySuccesses30d}/${summary.flakyDenominator30d} ${flakyUnitLabel} passed on retry of same SHA (30d)${truncationNote}`
+      : (summary.flakyTestRateUnavailableReason ??
+        "Jobs that pass on retry of the same SHA");
+  // Sample-size suffixes make the percentile cells self-explanatory:
+  // assessors see at a glance how trustworthy each percentile is and what
+  // unit was sampled (jobs / workflow runs / workflows / pipelines).
+  const buildUnitLabel = summary.buildDurationUnit ?? "runs";
+  const queueUnitLabel = summary.queueTimeUnit ?? "runs";
+  const buildSampleSuffix =
+    summary.buildDurationSampleSize != null
+      ? ` (n=${summary.buildDurationSampleSize} ${buildUnitLabel})`
+      : "";
+  const queueSampleSuffix =
+    summary.queueTimeSampleSize != null
+      ? ` (n=${summary.queueTimeSampleSize} ${queueUnitLabel})`
+      : "";
+  const cells: Array<{ label: string; value: string; hint: string }> = [
+    {
+      label: "Build duration p50",
+      value: formatMinutes(summary.buildDurationMinutesP50),
+      hint: `Median CI build wall time, 30d${buildSampleSuffix}`,
+    },
+    {
+      label: "Build duration p75",
+      value: formatMinutes(summary.buildDurationMinutesP75),
+      hint: `75th-percentile CI build wall time${buildSampleSuffix}`,
+    },
+    {
+      label: "Build duration p95",
+      value: formatMinutes(summary.buildDurationMinutesP95),
+      hint: `95th-percentile CI build wall time${buildSampleSuffix}`,
+    },
+    {
+      label: "Queue time p50",
+      value: formatMinutes(summary.queueTimeMinutesP50),
+      hint:
+        summary.queueTimeMinutesP50 == null &&
+        summary.queueTimeUnavailableReason
+          ? summary.queueTimeUnavailableReason
+          : `Median wait before runner pickup, 30d${queueSampleSuffix}`,
+    },
+    {
+      label: "Queue time p75",
+      value: formatMinutes(summary.queueTimeMinutesP75),
+      hint:
+        summary.queueTimeMinutesP75 == null &&
+        summary.queueTimeUnavailableReason
+          ? summary.queueTimeUnavailableReason
+          : `75th-percentile wait before runner pickup${queueSampleSuffix}`,
+    },
+    {
+      label: "Build success rate",
+      value: formatRate(summary.buildSuccessRate),
+      hint: "Successful runs ÷ total (30d)",
+    },
+    {
+      label: `Flaky-test rate (${flakyUnitLabel})`,
+      value: formatRate(summary.flakyTestRate),
+      hint: flakyHint,
+    },
+    {
+      label: "Lead time p50",
+      value: formatHours(summary.leadTimeHoursP50),
+      hint:
+        summary.leadTimeHoursP50 == null && summary.leadTimeUnavailableReason
+          ? summary.leadTimeUnavailableReason
+          : "Median PR/MR open → merge",
+    },
+    {
+      label: "Lead time p75",
+      value: formatHours(summary.leadTimeHoursP75),
+      hint:
+        summary.leadTimeHoursP75 == null && summary.leadTimeUnavailableReason
+          ? summary.leadTimeUnavailableReason
+          : "75th-percentile PR/MR open → merge",
+    },
+    {
+      label: "Lead time p95",
+      value: formatHours(summary.leadTimeHoursP95),
+      hint:
+        summary.leadTimeHoursP95 == null && summary.leadTimeUnavailableReason
+          ? summary.leadTimeUnavailableReason
+          : "95th-percentile PR/MR open → merge",
+    },
+  ];
+  return (
+    <section>
+      <h3 className="text-sm font-semibold mb-2">CI/CD</h3>
       <div className="grid grid-cols-2 gap-2">
         {cells.map((c) => (
           <div key={c.label} className="rounded border p-3">
@@ -350,6 +568,11 @@ export function SignalsDrawer({
                     (data.latestRun.summary as { issueTracking: IssueTrackingSummary })
                       .issueTracking
                   }
+                />
+              ) : null}
+              {data.latestRun?.summary ? (
+                <CiCdMetrics
+                  summary={data.latestRun.summary as CiCdSummary}
                 />
               ) : null}
               <section>

@@ -8,7 +8,6 @@ import {
   classifyIssueType,
   classifyStatus,
   emptyIssueTypeDistribution,
-  percentiles,
   readStatusMappingFromConfig,
   type CanonicalIssueType,
   type IssueTypeDistribution,
@@ -281,6 +280,86 @@ export interface ConnectorRunResult {
   evidence: CollectedEvidence[];
 }
 
+// ---------------------------------------------------------------------------
+// Shared metric helpers
+// ---------------------------------------------------------------------------
+// Percentile utility used by every CI/CD runner so build-duration, queue-time
+// and lead-time series stay numerically consistent across providers. We use
+// linear interpolation between the two surrounding samples (the same method
+// numpy.percentile uses by default) so a tiny series of 2-3 samples still
+// returns a meaningful p75/p95 instead of "always the max".
+function percentile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  if (p <= 0) return sorted[0]!;
+  if (p >= 1) return sorted[sorted.length - 1]!;
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo]!;
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (idx - lo);
+}
+
+interface Percentiles {
+  p50: number | null;
+  p75: number | null;
+  p95: number | null;
+  count: number;
+}
+
+function percentiles(values: number[]): Percentiles {
+  if (values.length === 0)
+    return { p50: null, p75: null, p95: null, count: 0 };
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    p50: percentile(sorted, 0.5),
+    p75: percentile(sorted, 0.75),
+    p95: percentile(sorted, 0.95),
+    count: sorted.length,
+  };
+}
+
+// Convert a number of milliseconds to a fixed-precision number of seconds or
+// minutes for the summary JSON. We keep raw ms in computation and only round
+// at emit time so percentile maths aren't lossy.
+function msToMinutes(ms: number | null): number | null {
+  if (ms === null) return null;
+  return Number((ms / 60_000).toFixed(2));
+}
+
+function msToHours(ms: number | null): number | null {
+  if (ms === null) return null;
+  return Number((ms / 3_600_000).toFixed(2));
+}
+
+// Walk a sorted-by-time series of run results and pair every "failure" with
+// the next "success" on the same target. Returns the duration (ms) between
+// each such pair so the caller can average → DORA MTTR.
+function deployFailureMttrMs(
+  runs: Array<{ ts: number; ok: boolean; target: string }>,
+): number[] {
+  const byTarget = new Map<string, Array<{ ts: number; ok: boolean }>>();
+  for (const r of runs) {
+    const arr = byTarget.get(r.target) ?? [];
+    arr.push({ ts: r.ts, ok: r.ok });
+    byTarget.set(r.target, arr);
+  }
+  const durations: number[] = [];
+  for (const arr of byTarget.values()) {
+    arr.sort((a, b) => a.ts - b.ts);
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i]!.ok) continue;
+      // Find the next successful run on this target after the failure.
+      for (let j = i + 1; j < arr.length; j++) {
+        if (arr[j]!.ok) {
+          durations.push(arr[j]!.ts - arr[i]!.ts);
+          break;
+        }
+      }
+    }
+  }
+  return durations;
+}
+
 async function ghFetch<T>(token: string, url: string): Promise<T> {
   const r = await fetch(url, {
     headers: {
@@ -400,7 +479,36 @@ async function runGithub(
   let prsMerged = 0;
   let prLeadTimeSumMs = 0;
   let prLeadTimeCount = 0;
+  const prLeadTimesMs: number[] = [];
   let prsWithReviews = 0;
+  // CI/CD build-quality series. Build duration uses `updated_at` (final
+  // status timestamp) − `run_started_at`; queue time uses `run_started_at`
+  // − `created_at`. Flaky retries are runs where `run_attempt > 1`
+  // ultimately succeeded — i.e. an earlier attempt on the same SHA failed
+  // and a rerun passed. Deploy-failure MTTR pairs each failed run with the
+  // next successful run on the same workflow+branch.
+  const buildDurationsMs: number[] = [];
+  const queueTimesMs: number[] = [];
+  let runsWithRetries = 0;
+  let flakyRetrySuccesses = 0;
+  const deployRunSeries: Array<{ ts: number; ok: boolean; target: string }> = [];
+  // Job-level series — populated by a follow-up `/actions/runs/{id}/jobs`
+  // call per sampled run. Job duration is the wall time the runner spent on
+  // that single job; queue time is `started_at − run.created_at`. Flaky
+  // detection groups by `(job_name, head_sha)`: if any attempt failed and a
+  // later attempt of the same job+SHA succeeded, that group counts as a
+  // flaky-pass-on-retry. The denominator is total `(job_name, head_sha)`
+  // groups observed across sampled runs. We cap to 15 runs per repo
+  // (GH_JOB_RUNS_PER_REPO) to keep the API budget bounded — at 5 repos
+  // that's <=75 extra calls vs. 5 baseline workflow_runs calls.
+  const GH_JOB_RUNS_PER_REPO = 15;
+  const jobDurationsMs: number[] = [];
+  const jobQueueTimesMs: number[] = [];
+  type GhJobAttempt = { conclusion: string | null; runAttempt: number };
+  const jobGroups = new Map<string, GhJobAttempt[]>();
+  let jobRunsSampled = 0;
+  let jobsObserved = 0;
+  let jobSampleTruncated = false;
 
   for (const r of repos.slice(0, 5)) {
     try {
@@ -409,7 +517,18 @@ async function runGithub(
       // both so the same call serves both metrics.
       const wfr = await ghFetch<{
         total_count: number;
-        workflow_runs: Array<{ conclusion: string | null; created_at: string }>;
+        workflow_runs: Array<{
+          id: number;
+          conclusion: string | null;
+          status: string;
+          created_at: string;
+          updated_at: string;
+          run_started_at: string | null;
+          run_attempt: number;
+          head_sha: string;
+          head_branch: string | null;
+          name: string;
+        }>;
       }>(
         token,
         `https://api.github.com/repos/${org}/${r.name}/actions/runs?per_page=100&created=>=${since}`,
@@ -421,7 +540,103 @@ async function runGithub(
       workflowRunsFailed += wfr.workflow_runs.filter(
         (w) => w.conclusion === "failure",
       ).length;
+      for (const w of wfr.workflow_runs) {
+        // Build duration — only for completed runs where we have both
+        // start and end timestamps. `run_started_at` is when the runner
+        // actually picked the job up; `updated_at` is when its conclusion
+        // was set.
+        if (
+          w.run_started_at &&
+          (w.conclusion === "success" || w.conclusion === "failure")
+        ) {
+          const dur =
+            new Date(w.updated_at).getTime() -
+            new Date(w.run_started_at).getTime();
+          if (dur > 0) buildDurationsMs.push(dur);
+        }
+        // Queue time — gap between the workflow being created (queued)
+        // and the runner starting it.
+        if (w.run_started_at) {
+          const q =
+            new Date(w.run_started_at).getTime() -
+            new Date(w.created_at).getTime();
+          if (q >= 0) queueTimesMs.push(q);
+        }
+        // Flaky-test rate — count how many runs needed a rerun, and how
+        // many of those eventually succeeded on the retry.
+        if (w.run_attempt > 1) {
+          runsWithRetries += 1;
+          if (w.conclusion === "success") flakyRetrySuccesses += 1;
+        }
+        // Deploy-failure MTTR series. We use `<repo>:<workflow>:<branch>`
+        // as the deployment target heuristic per the PRD note that
+        // there's no explicit environment model yet.
+        if (
+          (w.conclusion === "success" || w.conclusion === "failure") &&
+          w.head_branch
+        ) {
+          deployRunSeries.push({
+            ts: new Date(w.updated_at).getTime(),
+            ok: w.conclusion === "success",
+            target: `${r.name}:${w.name}:${w.head_branch}`,
+          });
+        }
+      }
       recordsCollected += wfr.workflow_runs.length;
+      // Job-level pull for the first N runs in this repo. We fetch with
+      // `filter=all` so we get every attempt of every job (otherwise the
+      // API returns only the latest attempt's jobs).
+      const sampleRuns = wfr.workflow_runs.slice(0, GH_JOB_RUNS_PER_REPO);
+      if (wfr.workflow_runs.length > GH_JOB_RUNS_PER_REPO) {
+        jobSampleTruncated = true;
+      }
+      for (const w of sampleRuns) {
+        try {
+          const jr = await ghFetch<{
+            jobs: Array<{
+              id: number;
+              run_id: number;
+              run_attempt: number;
+              name: string;
+              conclusion: string | null;
+              status: string;
+              started_at: string | null;
+              completed_at: string | null;
+              head_sha?: string;
+            }>;
+          }>(
+            token,
+            `https://api.github.com/repos/${org}/${r.name}/actions/runs/${w.id}/jobs?filter=all&per_page=100`,
+          );
+          jobRunsSampled += 1;
+          for (const j of jr.jobs) {
+            jobsObserved += 1;
+            if (
+              j.started_at &&
+              j.completed_at &&
+              (j.conclusion === "success" || j.conclusion === "failure")
+            ) {
+              const dur =
+                new Date(j.completed_at).getTime() -
+                new Date(j.started_at).getTime();
+              if (dur > 0) jobDurationsMs.push(dur);
+              const q =
+                new Date(j.started_at).getTime() -
+                new Date(w.created_at).getTime();
+              if (q >= 0) jobQueueTimesMs.push(q);
+            }
+            const groupKey = `${r.name}::${j.name}::${w.head_sha}`;
+            const existing = jobGroups.get(groupKey) ?? [];
+            existing.push({
+              conclusion: j.conclusion,
+              runAttempt: j.run_attempt,
+            });
+            jobGroups.set(groupKey, existing);
+          }
+        } catch {
+          // ignore — jobs API may be unavailable for this run
+        }
+      }
     } catch {
       // ignore — repo may not have Actions enabled
     }
@@ -446,6 +661,7 @@ async function runGithub(
           if (lead > 0) {
             prLeadTimeSumMs += lead;
             prLeadTimeCount += 1;
+            prLeadTimesMs.push(lead);
           }
         }
         // Get review count for this PR (one call per PR is too many; sample
@@ -493,15 +709,146 @@ async function runGithub(
     });
   }
 
-  // Lead time for changes — median PR created→merged across the sample.
+  // Lead time for changes — average + p50/p75/p95 of PR created→merged
+  // across the sample. Percentiles are added so an outlier-heavy
+  // distribution doesn't get summarized to a misleadingly low average
+  // alone.
   if (prLeadTimeCount > 0) {
     const avgHours = prLeadTimeSumMs / prLeadTimeCount / 3_600_000;
     summary.leadTimeHoursAvg = Number(avgHours.toFixed(1));
+    const lt = percentiles(prLeadTimesMs);
+    summary.leadTimeHoursP50 = msToHours(lt.p50);
+    summary.leadTimeHoursP75 = msToHours(lt.p75);
+    summary.leadTimeHoursP95 = msToHours(lt.p95);
     evidence.push({
       dimension: "process",
       signalType: avgHours <= 48 ? "strength" : "gap",
       stageHint: avgHours <= 24 ? 5 : avgHours <= 48 ? 4 : avgHours <= 168 ? 3 : 2,
-      text: `Lead time for changes: avg ${avgHours.toFixed(1)} hours from PR open to merge (n=${prLeadTimeCount}).`,
+      text: `Lead time for changes: avg ${avgHours.toFixed(1)}h, p50 ${msToHours(lt.p50)?.toFixed(1)}h / p75 ${msToHours(lt.p75)?.toFixed(1)}h / p95 ${msToHours(lt.p95)?.toFixed(1)}h from PR open to merge (n=${prLeadTimeCount}).`,
+    });
+  }
+
+  // ---- CI/CD build quality ---------------------------------------------
+  // Build duration & queue time prefer job-level data (PRD-aligned: jobs,
+  // not workflow runs) when available; fall back to workflow-run level if
+  // the jobs API was unreachable for every sampled run. Build success rate
+  // stays workflow-run level because GitHub's "run conclusion" is the
+  // authoritative top-line outcome. Flaky-test rate uses job-level grouping
+  // by `(repo, job_name, head_sha)` per the PRD definition ("jobs that pass
+  // on retry of same SHA"), with the workflow-run signal kept as a fallback.
+  const useJobLevelDuration = jobDurationsMs.length > 0;
+  const bd = percentiles(useJobLevelDuration ? jobDurationsMs : buildDurationsMs);
+  const buildUnit = useJobLevelDuration ? "jobs" : "workflow_runs";
+  if (bd.count > 0) {
+    summary.buildDurationMinutesP50 = msToMinutes(bd.p50);
+    summary.buildDurationMinutesP75 = msToMinutes(bd.p75);
+    summary.buildDurationMinutesP95 = msToMinutes(bd.p95);
+    summary.buildDurationSampleSize = bd.count;
+    summary.buildDurationUnit = buildUnit;
+    const p95min = msToMinutes(bd.p95) ?? 0;
+    evidence.push({
+      dimension: "measurement",
+      signalType: p95min <= 15 ? "strength" : "gap",
+      stageHint: p95min <= 10 ? 5 : p95min <= 15 ? 4 : p95min <= 30 ? 3 : 2,
+      text: `CI build duration: p50 ${msToMinutes(bd.p50)?.toFixed(1)}m / p75 ${msToMinutes(bd.p75)?.toFixed(1)}m / p95 ${p95min.toFixed(1)}m (n=${bd.count} ${buildUnit}, 30d).`,
+    });
+  }
+  const useJobLevelQueue = jobQueueTimesMs.length > 0;
+  const qt = percentiles(useJobLevelQueue ? jobQueueTimesMs : queueTimesMs);
+  const queueUnit = useJobLevelQueue ? "jobs" : "workflow_runs";
+  if (qt.count > 0) {
+    summary.queueTimeMinutesP50 = msToMinutes(qt.p50);
+    summary.queueTimeMinutesP75 = msToMinutes(qt.p75);
+    summary.queueTimeSampleSize = qt.count;
+    summary.queueTimeUnit = queueUnit;
+    const p75min = msToMinutes(qt.p75) ?? 0;
+    evidence.push({
+      dimension: "measurement",
+      signalType: p75min <= 1 ? "strength" : "gap",
+      stageHint: p75min <= 1 ? 5 : p75min <= 5 ? 4 : p75min <= 15 ? 3 : 2,
+      text: `CI queue time: p50 ${msToMinutes(qt.p50)?.toFixed(2)}m / p75 ${p75min.toFixed(2)}m before runner pickup (n=${qt.count} ${queueUnit}, 30d).`,
+    });
+  }
+  if (jobsObserved > 0) {
+    summary.jobsObserved30d = jobsObserved;
+    summary.jobRunsSampled30d = jobRunsSampled;
+    if (jobSampleTruncated) {
+      summary.jobSampleTruncated = true;
+      summary.jobSampleTruncatedReason = `Only the first ${GH_JOB_RUNS_PER_REPO} workflow runs per repo were inspected for jobs to bound API cost; flaky/build/queue percentiles reflect that sample.`;
+    }
+  }
+  // Build success rate is the inverse of change-failure-rate but is the
+  // PRD-prescribed name; we expose both so dashboards can pick whichever
+  // they prefer without recomputation.
+  if (workflowRunsTotal > 0) {
+    const successRate = workflowRunsSucceeded / workflowRunsTotal;
+    summary.buildSuccessRate = Number(successRate.toFixed(3));
+    // Emit explicit build-success-rate evidence in addition to the
+    // change-failure-rate row so scoring rubrics that key off
+    // "buildSuccessRate" have a first-class signal to attach to.
+    evidence.push({
+      dimension: "measurement",
+      signalType: successRate >= 0.9 ? "strength" : "gap",
+      stageHint:
+        successRate >= 0.95 ? 5 : successRate >= 0.9 ? 4 : successRate >= 0.75 ? 3 : 2,
+      text: `Build success rate: ${(successRate * 100).toFixed(1)}% of CI runs succeeded (${workflowRunsSucceeded}/${workflowRunsTotal}, 30d).`,
+    });
+  }
+  // Flaky-test rate prefers job-level grouping per the PRD
+  // ("jobs that pass on retry of same SHA"). For each
+  // (repo, job_name, head_sha) group with at least one earlier failed
+  // attempt and a later successful attempt, count it as a flaky pass.
+  // The denominator is the total number of distinct (job_name, head_sha)
+  // groups observed in the sampled runs. If the jobs API returned nothing
+  // we fall back to the workflow-run signal (`run_attempt > 1`
+  // succeeded / total runs) so the metric is still populated.
+  if (jobGroups.size > 0) {
+    let jobFlakyRetrySuccesses = 0;
+    for (const attempts of jobGroups.values()) {
+      if (attempts.length < 2) continue;
+      const sorted = [...attempts].sort(
+        (a, b) => a.runAttempt - b.runAttempt,
+      );
+      const earlierFailed = sorted
+        .slice(0, -1)
+        .some((a) => a.conclusion === "failure");
+      const finalOk = sorted[sorted.length - 1]?.conclusion === "success";
+      if (earlierFailed && finalOk) jobFlakyRetrySuccesses += 1;
+    }
+    const denom = jobGroups.size;
+    const flakyRate = jobFlakyRetrySuccesses / denom;
+    summary.flakyTestRate = Number(flakyRate.toFixed(3));
+    summary.flakyRetrySuccesses30d = jobFlakyRetrySuccesses;
+    summary.flakyDenominator30d = denom;
+    summary.flakyDenominatorUnit = "jobs";
+    summary.runsWithRetries30d = runsWithRetries;
+    evidence.push({
+      dimension: "measurement",
+      signalType: flakyRate <= 0.02 ? "strength" : "gap",
+      stageHint: flakyRate <= 0.01 ? 5 : flakyRate <= 0.05 ? 3 : 2,
+      text:
+        jobFlakyRetrySuccesses === 0
+          ? `Flaky CI rate: 0% — no jobs needed a passing retry on the same SHA across ${denom} sampled (job, SHA) groups (30d).`
+          : `Flaky CI rate: ${(flakyRate * 100).toFixed(1)}% of (job, SHA) groups passed on retry (${jobFlakyRetrySuccesses}/${denom}, 30d).`,
+    });
+  } else if (workflowRunsTotal > 0) {
+    const flakyRate = flakyRetrySuccesses / workflowRunsTotal;
+    summary.flakyTestRate = Number(flakyRate.toFixed(3));
+    summary.flakyRetrySuccesses30d = flakyRetrySuccesses;
+    summary.flakyDenominator30d = workflowRunsTotal;
+    summary.flakyDenominatorUnit = "workflow_runs";
+    summary.runsWithRetries30d = runsWithRetries;
+    // Emit a flaky evidence row whenever we have a denominator, even at
+    // 0% — a strong "no flakes observed" outcome should be visible to
+    // the assessor, not silently absent.
+    evidence.push({
+      dimension: "measurement",
+      signalType: flakyRate <= 0.02 ? "strength" : "gap",
+      stageHint: flakyRate <= 0.01 ? 5 : flakyRate <= 0.05 ? 3 : 2,
+      text:
+        flakyRetrySuccesses === 0
+          ? `Flaky CI rate: 0% — no workflow runs needed a passing retry on the same SHA in the last 30 days (n=${workflowRunsTotal}).`
+          : `Flaky CI rate: ${(flakyRate * 100).toFixed(1)}% of workflow runs passed on retry of the same SHA (${flakyRetrySuccesses}/${workflowRunsTotal}, 30d).`,
     });
   }
 
@@ -520,10 +867,35 @@ async function runGithub(
   summary.prsSampled = prsSampled;
   summary.prsMerged = prsMerged;
 
-  // MTTR proxy — incident-labeled issues closed in the last 30 days. We
-  // search the org for issues with any of the common incident labels and
-  // approximate MTTR as closed_at − created_at. When no such issues exist
-  // we surface MTTR as "n/a" rather than fabricate a number.
+  // ---- MTTR -----------------------------------------------------------
+  // Per the PRD, the canonical DORA MTTR is "deployment failure → next
+  // successful deploy on the same target". We compute that first from the
+  // workflow-run stream (workflow + branch as the target heuristic). When
+  // no failure→success pair exists in the window we fall back to the
+  // incident-issue proxy and tag the provenance so the assessor can tell
+  // which signal drove the score.
+  const deployMttrSeries = deployFailureMttrMs(deployRunSeries);
+  if (deployMttrSeries.length > 0) {
+    const avgMs =
+      deployMttrSeries.reduce((s, x) => s + x, 0) / deployMttrSeries.length;
+    const mttrHours = avgMs / 3_600_000;
+    const dp = percentiles(deployMttrSeries);
+    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+    summary.mttrHoursP50 = msToHours(dp.p50);
+    summary.mttrHoursP95 = msToHours(dp.p95);
+    summary.mttrSource = "deployment_failure";
+    summary.deployFailurePairs30d = deployMttrSeries.length;
+    evidence.push({
+      dimension: "measurement",
+      signalType: mttrHours <= 24 ? "strength" : "gap",
+      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+      text: `MTTR (deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (30d).`,
+    });
+  }
+
+  // Incident-labeled issues closed in the last 30 days. Used as the MTTR
+  // signal when no deploy failure→success pairs exist; otherwise it's
+  // recorded but not used as the canonical MTTR.
   let mttrSumMs = 0;
   let mttrCount = 0;
   try {
@@ -569,25 +941,37 @@ async function runGithub(
     // search may fail on tokens without read:org or due to rate limiting;
     // we degrade gracefully to "n/a" below.
   }
-  if (mttrCount > 0) {
-    const mttrHours = mttrSumMs / mttrCount / 3_600_000;
-    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
-    summary.incidentIssues30d = mttrCount;
-    evidence.push({
-      dimension: "measurement",
-      signalType: mttrHours <= 24 ? "strength" : "gap",
-      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
-      text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to close incident-labeled issues (n=${mttrCount}, 30d).`,
-    });
-  } else {
-    summary.mttrHoursAvg = null;
-    summary.incidentIssues30d = 0;
-    evidence.push({
-      dimension: "measurement",
-      signalType: "gap",
-      stageHint: 1,
-      text: "MTTR n/a — no incident-labeled issues found in the last 30 days. Tag incidents with 'incident', 'outage', 'p0', or 'p1' to enable MTTR measurement.",
-    });
+  summary.incidentIssues30d = mttrCount;
+  if (deployMttrSeries.length === 0) {
+    // No deployment-failure pairs in the window — fall back to the
+    // incident-issue proxy so MTTR isn't silently null whenever a window
+    // has only successful deploys.
+    if (mttrCount > 0) {
+      const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+      summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+      summary.mttrSource = "incident_issue_fallback";
+      evidence.push({
+        dimension: "measurement",
+        signalType: mttrHours <= 24 ? "strength" : "gap",
+        stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+        text: `MTTR (incident-issue fallback): avg ${mttrHours.toFixed(1)}h to close incident-labeled issues (n=${mttrCount}, 30d). No deploy failure→success pairs available, so this is a proxy.`,
+      });
+    } else {
+      summary.mttrHoursAvg = null;
+      summary.mttrSource = "unavailable";
+      evidence.push({
+        dimension: "measurement",
+        signalType: "gap",
+        stageHint: 1,
+        text: "MTTR n/a — no deploy failure→success pairs and no incident-labeled issues found in the last 30 days. Tag incidents with 'incident', 'outage', 'p0', or 'p1', or ensure failed CI runs are followed by successful reruns to enable MTTR measurement.",
+      });
+    }
+  } else if (mttrCount > 0) {
+    // Keep the incident-issue average alongside the canonical MTTR for
+    // comparison without overwriting it.
+    summary.incidentIssueMttrHoursAvg = Number(
+      (mttrSumMs / mttrCount / 3_600_000).toFixed(1),
+    );
   }
 
   return { recordsCollected, summary, evidence };
@@ -659,25 +1043,136 @@ async function runGitlab(
   let mrsMerged = 0;
   let mrLeadSumMs = 0;
   let mrLeadCount = 0;
+  const mrLeadTimesMs: number[] = [];
   let mttrSumMs = 0;
   let mttrCount = 0;
   let recordsCollected = projects.length;
+  // CI/CD build-quality series across the GitLab project sample. We pull a
+  // pipeline-detail call per pipeline for the first slice of each project
+  // because the list endpoint doesn't return `duration` or
+  // `queued_duration`. Flaky comes from the per-pipeline jobs endpoint
+  // (`retried: true` + final status `success`).
+  const buildDurationsMs: number[] = [];
+  const queueTimesMs: number[] = [];
+  let runsWithRetries = 0;
+  let flakyRetrySuccesses = 0;
+  let totalJobsObserved = 0;
+  const deployRunSeries: Array<{ ts: number; ok: boolean; target: string }> = [];
+  // Cap per-project detail/jobs lookups to keep total API calls bounded
+  // (5 projects × 15 pipelines × 2 calls = 150 calls worst case). Jobs
+  // page size is intentionally maxed (per_page=100, GitLab's hard cap) so
+  // even busy pipelines don't get truncated; we still record `truncated`
+  // when the response is at the limit so the UI can disclose the bias.
+  const PIPELINE_DETAIL_LIMIT = 15;
+  const JOBS_PER_PAGE = 100;
+  let jobSampleTruncated = false;
 
   for (const p of projects.slice(0, 5)) {
+    let pipelineRows: Array<{
+      id: number;
+      status: string;
+      ref: string | null;
+      created_at: string;
+      updated_at: string;
+    }> = [];
     try {
       const pl = await fetch(
         `${baseUrl}/api/v4/projects/${p.id}/pipelines?updated_after=${since}&per_page=100`,
         { headers },
       );
       if (pl.ok) {
-        const rows = (await pl.json()) as Array<{ status: string }>;
-        pipelinesTotal += rows.length;
-        pipelinesFailed += rows.filter((x) => x.status === "failed").length;
-        pipelinesSucceeded += rows.filter((x) => x.status === "success").length;
-        recordsCollected += rows.length;
+        pipelineRows = (await pl.json()) as typeof pipelineRows;
+        pipelinesTotal += pipelineRows.length;
+        pipelinesFailed += pipelineRows.filter((x) => x.status === "failed").length;
+        pipelinesSucceeded += pipelineRows.filter((x) => x.status === "success").length;
+        recordsCollected += pipelineRows.length;
+        for (const pr of pipelineRows) {
+          if (
+            (pr.status === "success" || pr.status === "failed") &&
+            pr.ref
+          ) {
+            deployRunSeries.push({
+              ts: new Date(pr.updated_at).getTime(),
+              ok: pr.status === "success",
+              target: `${p.id}:${pr.ref}`,
+            });
+          }
+        }
       }
     } catch {
       // ignore — project may have pipelines disabled
+    }
+    // Pipeline detail — gives accurate `duration` (build time only) and
+    // `queued_duration` (seconds the pipeline waited before starting).
+    for (const pr of pipelineRows.slice(0, PIPELINE_DETAIL_LIMIT)) {
+      try {
+        const dr = await fetch(
+          `${baseUrl}/api/v4/projects/${p.id}/pipelines/${pr.id}`,
+          { headers },
+        );
+        if (dr.ok) {
+          const detail = (await dr.json()) as {
+            duration: number | null;
+            queued_duration: number | null;
+          };
+          if (typeof detail.duration === "number" && detail.duration > 0) {
+            buildDurationsMs.push(detail.duration * 1000);
+          }
+          if (
+            typeof detail.queued_duration === "number" &&
+            detail.queued_duration >= 0
+          ) {
+            queueTimesMs.push(detail.queued_duration * 1000);
+          }
+        }
+      } catch {
+        // ignore — single pipeline detail failure shouldn't sink the run
+      }
+      // Job-level retries on this pipeline → flaky-test rate. GitLab
+      // marks the *original* job's `retried: true` when a retry exists;
+      // the retry job itself is the one that may have succeeded.
+      try {
+        const jr = await fetch(
+          `${baseUrl}/api/v4/projects/${p.id}/pipelines/${pr.id}/jobs?per_page=${JOBS_PER_PAGE}`,
+          { headers },
+        );
+        if (jr.ok) {
+          const jobs = (await jr.json()) as Array<{
+            name: string;
+            status: string;
+            retried: boolean;
+          }>;
+          if (jobs.length >= JOBS_PER_PAGE) {
+            // GitLab caps a single page at 100; if we hit that ceiling
+            // there are likely more jobs we didn't see, so flag the
+            // sample as truncated.
+            jobSampleTruncated = true;
+          }
+          // Group by name: if any attempt was retried and final attempt
+          // succeeded, count as a flaky pass on retry. The denominator
+          // for flaky-test rate is the number of distinct job-groups
+          // observed in the window so the metric is a proper "rate of
+          // flakiness across all CI work" matching GitHub/CircleCI.
+          const byName = new Map<string, typeof jobs>();
+          for (const j of jobs) {
+            const arr = byName.get(j.name) ?? [];
+            arr.push(j);
+            byName.set(j.name, arr);
+          }
+          totalJobsObserved += byName.size;
+          for (const arr of byName.values()) {
+            const anyRetried = arr.some((x) => x.retried);
+            if (!anyRetried) continue;
+            runsWithRetries += 1;
+            const finalAttempt = arr.find((x) => !x.retried);
+            if (finalAttempt && finalAttempt.status === "success") {
+              flakyRetrySuccesses += 1;
+            }
+          }
+        }
+      } catch {
+        // ignore — jobs endpoint may be restricted or empty
+      }
     }
     try {
       const mr = await fetch(
@@ -697,6 +1192,7 @@ async function runGitlab(
             if (lead > 0) {
               mrLeadSumMs += lead;
               mrLeadCount += 1;
+              mrLeadTimesMs.push(lead);
             }
           }
         }
@@ -772,32 +1268,135 @@ async function runGitlab(
   if (mrLeadCount > 0) {
     const avgHours = mrLeadSumMs / mrLeadCount / 3_600_000;
     summary.leadTimeHoursAvg = Number(avgHours.toFixed(1));
+    const lt = percentiles(mrLeadTimesMs);
+    summary.leadTimeHoursP50 = msToHours(lt.p50);
+    summary.leadTimeHoursP75 = msToHours(lt.p75);
+    summary.leadTimeHoursP95 = msToHours(lt.p95);
     evidence.push({
       dimension: "process",
       signalType: avgHours <= 48 ? "strength" : "gap",
       stageHint: avgHours <= 24 ? 5 : avgHours <= 48 ? 4 : avgHours <= 168 ? 3 : 2,
-      text: `Lead time for changes: avg ${avgHours.toFixed(1)} hours from MR open to merge (n=${mrLeadCount}).`,
+      text: `Lead time for changes: avg ${avgHours.toFixed(1)}h, p50 ${msToHours(lt.p50)?.toFixed(1)}h / p75 ${msToHours(lt.p75)?.toFixed(1)}h / p95 ${msToHours(lt.p95)?.toFixed(1)}h from MR open to merge (n=${mrLeadCount}).`,
     });
   }
-  if (mttrCount > 0) {
-    const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+
+  // ---- CI/CD build quality (GitLab) ----------------------------------
+  const bd = percentiles(buildDurationsMs);
+  if (bd.count > 0) {
+    summary.buildDurationMinutesP50 = msToMinutes(bd.p50);
+    summary.buildDurationMinutesP75 = msToMinutes(bd.p75);
+    summary.buildDurationMinutesP95 = msToMinutes(bd.p95);
+    summary.buildDurationSampleSize = bd.count;
+    const p95min = msToMinutes(bd.p95) ?? 0;
+    evidence.push({
+      dimension: "measurement",
+      signalType: p95min <= 15 ? "strength" : "gap",
+      stageHint: p95min <= 10 ? 5 : p95min <= 15 ? 4 : p95min <= 30 ? 3 : 2,
+      text: `CI build duration: p50 ${msToMinutes(bd.p50)?.toFixed(1)}m / p75 ${msToMinutes(bd.p75)?.toFixed(1)}m / p95 ${p95min.toFixed(1)}m (n=${bd.count}, 30d).`,
+    });
+  }
+  const qt = percentiles(queueTimesMs);
+  if (qt.count > 0) {
+    summary.queueTimeMinutesP50 = msToMinutes(qt.p50);
+    summary.queueTimeMinutesP75 = msToMinutes(qt.p75);
+    summary.queueTimeSampleSize = qt.count;
+    const p75min = msToMinutes(qt.p75) ?? 0;
+    evidence.push({
+      dimension: "measurement",
+      signalType: p75min <= 1 ? "strength" : "gap",
+      stageHint: p75min <= 1 ? 5 : p75min <= 5 ? 4 : p75min <= 15 ? 3 : 2,
+      text: `CI queue time: p50 ${msToMinutes(qt.p50)?.toFixed(2)}m / p75 ${p75min.toFixed(2)}m before pipeline starts (n=${qt.count}, 30d).`,
+    });
+  }
+  if (pipelinesTotal > 0) {
+    const successRate = pipelinesSucceeded / pipelinesTotal;
+    summary.buildSuccessRate = Number(successRate.toFixed(3));
+    evidence.push({
+      dimension: "measurement",
+      signalType: successRate >= 0.9 ? "strength" : "gap",
+      stageHint:
+        successRate >= 0.95 ? 5 : successRate >= 0.9 ? 4 : successRate >= 0.75 ? 3 : 2,
+      text: `Build success rate: ${(successRate * 100).toFixed(1)}% of GitLab pipelines succeeded (${pipelinesSucceeded}/${pipelinesTotal}, 30d).`,
+    });
+    // Harmonized flaky-test rate: numerator = job-groups that passed on
+    // retry of the same SHA; denominator = total job-groups observed in
+    // the window. Closest to the PRD wording "jobs that pass on retry of
+    // same SHA" since GitLab is the only provider exposing job-level
+    // retry semantics cheaply (`retried: true` on /pipelines/:id/jobs).
+    if (totalJobsObserved > 0) {
+      const flakyRate = flakyRetrySuccesses / totalJobsObserved;
+      summary.flakyTestRate = Number(flakyRate.toFixed(3));
+      summary.flakyRetrySuccesses30d = flakyRetrySuccesses;
+      summary.flakyDenominator30d = totalJobsObserved;
+      summary.flakyDenominatorUnit = "job_groups";
+      summary.runsWithRetries30d = runsWithRetries;
+      summary.jobsObserved30d = totalJobsObserved;
+      if (jobSampleTruncated) {
+        summary.jobSampleTruncated = true;
+        summary.jobSampleTruncatedReason = `One or more sampled GitLab pipelines returned ${JOBS_PER_PAGE}+ jobs on the first page (GitLab's hard cap); flaky/build percentiles reflect that cap and may under-count jobs in very large pipelines.`;
+      }
+      // Emit even at 0% so a strong "no flakes" result is visible.
+      evidence.push({
+        dimension: "measurement",
+        signalType: flakyRate <= 0.02 ? "strength" : "gap",
+        stageHint: flakyRate <= 0.01 ? 5 : flakyRate <= 0.05 ? 3 : 2,
+        text:
+          flakyRetrySuccesses === 0
+            ? `Flaky CI rate: 0% — no GitLab jobs needed a passing retry on the same SHA in the last 30 days (n=${totalJobsObserved}).`
+            : `Flaky CI rate: ${(flakyRate * 100).toFixed(1)}% of GitLab jobs passed on retry of the same SHA (${flakyRetrySuccesses}/${totalJobsObserved}, 30d).`,
+      });
+    } else {
+      summary.flakyTestRate = null;
+      summary.flakyTestRateUnavailableReason =
+        "No jobs observed in the sampled GitLab pipelines (30d) — increase project sample or pipeline-detail limit to enable.";
+    }
+  }
+
+  // ---- MTTR (GitLab) --------------------------------------------------
+  const deployMttrSeries = deployFailureMttrMs(deployRunSeries);
+  if (deployMttrSeries.length > 0) {
+    const avgMs =
+      deployMttrSeries.reduce((s, x) => s + x, 0) / deployMttrSeries.length;
+    const mttrHours = avgMs / 3_600_000;
+    const dp = percentiles(deployMttrSeries);
     summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
-    summary.incidentIssues30d = mttrCount;
+    summary.mttrHoursP50 = msToHours(dp.p50);
+    summary.mttrHoursP95 = msToHours(dp.p95);
+    summary.mttrSource = "deployment_failure";
+    summary.deployFailurePairs30d = deployMttrSeries.length;
     evidence.push({
       dimension: "measurement",
       signalType: mttrHours <= 24 ? "strength" : "gap",
       stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
-      text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to close incident-labeled GitLab issues (n=${mttrCount}, 30d).`,
+      text: `MTTR (deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (30d).`,
     });
-  } else {
-    summary.mttrHoursAvg = null;
-    summary.incidentIssues30d = 0;
-    evidence.push({
-      dimension: "measurement",
-      signalType: "gap",
-      stageHint: 1,
-      text: "MTTR n/a — no GitLab issues with the 'incident' label closed in the last 30 days.",
-    });
+  }
+  summary.incidentIssues30d = mttrCount;
+  if (deployMttrSeries.length === 0) {
+    if (mttrCount > 0) {
+      const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+      summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+      summary.mttrSource = "incident_issue_fallback";
+      evidence.push({
+        dimension: "measurement",
+        signalType: mttrHours <= 24 ? "strength" : "gap",
+        stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+        text: `MTTR (incident-issue fallback): avg ${mttrHours.toFixed(1)}h to close incident-labeled GitLab issues (n=${mttrCount}, 30d). No deploy failure→success pipeline pairs available, so this is a proxy.`,
+      });
+    } else {
+      summary.mttrHoursAvg = null;
+      summary.mttrSource = "unavailable";
+      evidence.push({
+        dimension: "measurement",
+        signalType: "gap",
+        stageHint: 1,
+        text: "MTTR n/a — no deploy failure→success pipeline pairs and no incident-labeled GitLab issues in the last 30 days.",
+      });
+    }
+  } else if (mttrCount > 0) {
+    summary.incidentIssueMttrHoursAvg = Number(
+      (mttrSumMs / mttrCount / 3_600_000).toFixed(1),
+    );
   }
 
   return { recordsCollected, summary, evidence };
@@ -1924,18 +2523,49 @@ async function runCircleCi(
   );
   if (!r.ok) throw new Error(`CircleCI ${r.status}`);
   const data = (await r.json()) as {
-    items: Array<{ id: string; created_at: string; state: string }>;
+    items: Array<{
+      id: string;
+      created_at: string;
+      state: string;
+      vcs?: { branch?: string | null };
+    }>;
   };
   const since = Date.now() - 30 * 86_400_000;
   const recent = data.items.filter(
     (p) => new Date(p.created_at).getTime() >= since,
   );
 
-  // For each pipeline, fetch its workflows to determine pass/fail.
+  // For each pipeline, fetch its workflows to determine pass/fail and
+  // accumulate CI-quality series. CircleCI flags re-runs with `tag:
+  // "rerun"` (or "rerun_with_ssh"), which gives us workflow-level flaky
+  // detection. We additionally pull `/api/v2/workflow/{id}/job` for the
+  // first CI_JOBS_WORKFLOW_LIMIT workflows to get true job-level build
+  // duration and per-job flaky pass-on-retry detection (job_name + the
+  // pipeline's commit SHA), matching the GitHub/GitLab approach.
+  const CI_JOBS_WORKFLOW_LIMIT = 25;
   let workflowsTotal = 0;
   let workflowsFailed = 0;
   let workflowsSucceeded = 0;
+  const buildDurationsMs: number[] = [];
+  let runsWithRetries = 0;
+  let flakyRetrySuccesses = 0;
+  const deployRunSeries: Array<{ ts: number; ok: boolean; target: string }> = [];
+  // Job-level series (CircleCI v2 `/workflow/{id}/job`)
+  const jobDurationsMs: number[] = [];
+  type CiJobAttempt = { status: string; workflowCreatedAt: number };
+  const jobGroups = new Map<string, CiJobAttempt[]>();
+  let jobsObserved = 0;
+  let workflowsInspectedForJobs = 0;
+  let jobSampleTruncated = false;
+  // Pipeline → commit SHA so flaky job grouping can use (job_name, sha)
+  // exactly like GitHub. v2 /pipeline already returns vcs.revision.
+  const pipelineSha = new Map<string, string>();
   for (const p of recent.slice(0, 30)) {
+    const sha =
+      ((p as { vcs?: { revision?: string | null } }).vcs?.revision ??
+        "").toString();
+    if (sha) pipelineSha.set(p.id, sha);
+    const branch = p.vcs?.branch ?? "unknown";
     try {
       const wr = await fetch(
         `https://circleci.com/api/v2/pipeline/${p.id}/workflow`,
@@ -1943,13 +2573,113 @@ async function runCircleCi(
       );
       if (!wr.ok) continue;
       const w = (await wr.json()) as {
-        items: Array<{ status: string }>;
+        items: Array<{
+          name: string;
+          status: string;
+          created_at: string;
+          stopped_at: string | null;
+          tag?: string | null;
+        }>;
       };
       workflowsTotal += w.items.length;
       workflowsFailed += w.items.filter(
         (x) => x.status === "failed" || x.status === "failing",
       ).length;
       workflowsSucceeded += w.items.filter((x) => x.status === "success").length;
+      for (const wf of w.items) {
+        if (wf.created_at && wf.stopped_at) {
+          const dur =
+            new Date(wf.stopped_at).getTime() -
+            new Date(wf.created_at).getTime();
+          if (dur > 0) buildDurationsMs.push(dur);
+        }
+        const isRerun =
+          typeof wf.tag === "string" && wf.tag.startsWith("rerun");
+        if (isRerun) {
+          runsWithRetries += 1;
+          if (wf.status === "success") flakyRetrySuccesses += 1;
+        }
+        if (
+          wf.stopped_at &&
+          (wf.status === "success" ||
+            wf.status === "failed" ||
+            wf.status === "failing")
+        ) {
+          deployRunSeries.push({
+            ts: new Date(wf.stopped_at).getTime(),
+            ok: wf.status === "success",
+            target: `${slug}:${wf.name}:${branch}`,
+          });
+        }
+      }
+    } catch {
+      // ignore individual pipeline errors
+    }
+  }
+
+  // Job-level pull for the first N workflows we just observed.
+  // We re-iterate `recent` and re-fetch the workflow list to pair
+  // workflow ids with their pipeline SHAs cheaply, capping total job
+  // calls. Each /workflow/{id}/job call returns an array of job objects
+  // with started_at/stopped_at and status — enough to compute job-level
+  // build duration percentiles and (job_name, sha) flaky grouping.
+  let jobCallsRemaining = CI_JOBS_WORKFLOW_LIMIT;
+  for (const p of recent.slice(0, 30)) {
+    if (jobCallsRemaining <= 0) {
+      jobSampleTruncated = true;
+      break;
+    }
+    const sha = pipelineSha.get(p.id) ?? `pipeline:${p.id}`;
+    try {
+      const wr = await fetch(
+        `https://circleci.com/api/v2/pipeline/${p.id}/workflow`,
+        { headers },
+      );
+      if (!wr.ok) continue;
+      const w = (await wr.json()) as {
+        items: Array<{ id: string; name: string; created_at: string }>;
+      };
+      for (const wf of w.items) {
+        if (jobCallsRemaining <= 0) {
+          jobSampleTruncated = true;
+          break;
+        }
+        jobCallsRemaining -= 1;
+        workflowsInspectedForJobs += 1;
+        try {
+          const jr = await fetch(
+            `https://circleci.com/api/v2/workflow/${wf.id}/job`,
+            { headers },
+          );
+          if (!jr.ok) continue;
+          const jdata = (await jr.json()) as {
+            items: Array<{
+              name: string;
+              status: string;
+              started_at: string | null;
+              stopped_at: string | null;
+            }>;
+          };
+          for (const j of jdata.items) {
+            jobsObserved += 1;
+            if (j.started_at && j.stopped_at) {
+              const dur =
+                new Date(j.stopped_at).getTime() -
+                new Date(j.started_at).getTime();
+              if (dur > 0) jobDurationsMs.push(dur);
+            }
+            const groupKey = `${slug}::${j.name}::${sha}`;
+            const existing = jobGroups.get(groupKey) ?? [];
+            existing.push({
+              status: j.status,
+              workflowCreatedAt: new Date(wf.created_at).getTime(),
+            });
+            jobGroups.set(groupKey, existing);
+          }
+        } catch {
+          // ignore per-workflow job fetch failures
+        }
+      }
     } catch {
       // ignore individual pipeline errors
     }
@@ -1961,9 +2691,21 @@ async function runCircleCi(
     workflows30d: workflowsTotal,
     workflowsSucceeded30d: workflowsSucceeded,
     workflowsFailed30d: workflowsFailed,
-    // CircleCI has no incident-issue concept of its own, so MTTR is n/a from
-    // this connector. Pair with a Jira/Linear/GitHub connector to fill it.
-    mttrHoursAvg: null,
+    // CircleCI's v2 API doesn't expose queue time as a first-class field
+    // (it's available only via the Insights paid endpoint). We surface
+    // n/a + reason so the UI can render a helpful tooltip rather than a
+    // misleading 0.
+    queueTimeMinutesP50: null,
+    queueTimeMinutesP75: null,
+    queueTimeUnavailableReason:
+      "CircleCI v2 pipeline/workflow endpoints do not expose queue time. Enable Insights export or run the GitHub Actions / GitLab connector to get this.",
+    // Lead-time-for-changes lives in the source-control system (PR/MR
+    // open→merge), so the CircleCI connector intentionally leaves it null.
+    leadTimeHoursP50: null,
+    leadTimeHoursP75: null,
+    leadTimeHoursP95: null,
+    leadTimeUnavailableReason:
+      "Lead time for changes requires source-control PR/MR data. Add a GitHub or GitLab connector for the same project to populate this.",
   };
   if (workflowsSucceeded > 0) {
     const deploysPerDay = workflowsSucceeded / 30;
@@ -1977,13 +2719,132 @@ async function runCircleCi(
   }
   if (workflowsTotal > 0) {
     const cfr = workflowsFailed / workflowsTotal;
+    const successRate = workflowsSucceeded / workflowsTotal;
     summary.changeFailureRate = Number(cfr.toFixed(3));
+    summary.buildSuccessRate = Number(successRate.toFixed(3));
     evidence.push({
       dimension: "measurement",
       signalType: cfr <= 0.15 ? "strength" : "gap",
       stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
       text: `Change failure rate (CircleCI ${slug}): ${(cfr * 100).toFixed(1)}% (${workflowsFailed}/${workflowsTotal}).`,
     });
+    evidence.push({
+      dimension: "measurement",
+      signalType: successRate >= 0.9 ? "strength" : "gap",
+      stageHint:
+        successRate >= 0.95 ? 5 : successRate >= 0.9 ? 4 : successRate >= 0.75 ? 3 : 2,
+      text: `Build success rate (CircleCI ${slug}): ${(successRate * 100).toFixed(1)}% of workflows succeeded (${workflowsSucceeded}/${workflowsTotal}, 30d).`,
+    });
+  }
+  // ---- CI build-quality percentiles ---------------------------------
+  // Prefer job-level build duration (PRD-aligned) when /workflow/{id}/job
+  // returned at least one job; otherwise fall back to workflow-level
+  // duration computed from /pipeline/{id}/workflow.
+  const useJobLevelDuration = jobDurationsMs.length > 0;
+  const bd = percentiles(useJobLevelDuration ? jobDurationsMs : buildDurationsMs);
+  const buildUnit = useJobLevelDuration ? "jobs" : "workflows";
+  if (bd.count > 0) {
+    summary.buildDurationMinutesP50 = msToMinutes(bd.p50);
+    summary.buildDurationMinutesP75 = msToMinutes(bd.p75);
+    summary.buildDurationMinutesP95 = msToMinutes(bd.p95);
+    summary.buildDurationSampleSize = bd.count;
+    summary.buildDurationUnit = buildUnit;
+    const p95min = msToMinutes(bd.p95) ?? 0;
+    evidence.push({
+      dimension: "measurement",
+      signalType: p95min <= 15 ? "strength" : "gap",
+      stageHint: p95min <= 10 ? 5 : p95min <= 15 ? 4 : p95min <= 30 ? 3 : 2,
+      text: `CircleCI build duration: p50 ${msToMinutes(bd.p50)?.toFixed(1)}m / p75 ${msToMinutes(bd.p75)?.toFixed(1)}m / p95 ${p95min.toFixed(1)}m (n=${bd.count} ${buildUnit}, 30d).`,
+    });
+  }
+  if (jobsObserved > 0) {
+    summary.jobsObserved30d = jobsObserved;
+    summary.workflowsInspectedForJobs30d = workflowsInspectedForJobs;
+    if (jobSampleTruncated) {
+      summary.jobSampleTruncated = true;
+      summary.jobSampleTruncatedReason = `Only the first ${CI_JOBS_WORKFLOW_LIMIT} workflows were inspected for jobs to bound API cost; flaky/build percentiles reflect that sample.`;
+    }
+  }
+  // Flaky-test rate prefers job-level grouping by (slug, job_name, sha)
+  // per the PRD ("jobs that pass on retry of same SHA"). When two or more
+  // attempts of the same job exist for the same SHA across reruns/pipelines
+  // and an earlier attempt failed but a later one succeeded, count it.
+  // Falls back to workflow-level rerun detection when no job data was
+  // collected (e.g. /workflow/{id}/job all unauthorized).
+  if (jobGroups.size > 0) {
+    let jobFlakyRetrySuccesses = 0;
+    for (const attempts of jobGroups.values()) {
+      if (attempts.length < 2) continue;
+      const sorted = [...attempts].sort(
+        (a, b) => a.workflowCreatedAt - b.workflowCreatedAt,
+      );
+      const earlierFailed = sorted
+        .slice(0, -1)
+        .some((a) => a.status === "failed" || a.status === "failing");
+      const finalOk = sorted[sorted.length - 1]?.status === "success";
+      if (earlierFailed && finalOk) jobFlakyRetrySuccesses += 1;
+    }
+    const denom = jobGroups.size;
+    const flakyRate = jobFlakyRetrySuccesses / denom;
+    summary.flakyTestRate = Number(flakyRate.toFixed(3));
+    summary.flakyRetrySuccesses30d = jobFlakyRetrySuccesses;
+    summary.flakyDenominator30d = denom;
+    summary.flakyDenominatorUnit = "jobs";
+    summary.runsWithRetries30d = runsWithRetries;
+    evidence.push({
+      dimension: "measurement",
+      signalType: flakyRate <= 0.02 ? "strength" : "gap",
+      stageHint: flakyRate <= 0.01 ? 5 : flakyRate <= 0.05 ? 3 : 2,
+      text:
+        jobFlakyRetrySuccesses === 0
+          ? `Flaky CircleCI rate: 0% — no jobs needed a passing retry on the same SHA across ${denom} sampled (job, SHA) groups (30d).`
+          : `Flaky CircleCI rate: ${(flakyRate * 100).toFixed(1)}% of (job, SHA) groups passed on retry (${jobFlakyRetrySuccesses}/${denom}, 30d).`,
+    });
+  } else if (workflowsTotal > 0) {
+    const flakyRate = flakyRetrySuccesses / workflowsTotal;
+    summary.flakyTestRate = Number(flakyRate.toFixed(3));
+    summary.flakyRetrySuccesses30d = flakyRetrySuccesses;
+    summary.flakyDenominator30d = workflowsTotal;
+    summary.flakyDenominatorUnit = "workflows";
+    summary.runsWithRetries30d = runsWithRetries;
+    evidence.push({
+      dimension: "measurement",
+      signalType: flakyRate <= 0.02 ? "strength" : "gap",
+      stageHint: flakyRate <= 0.01 ? 5 : flakyRate <= 0.05 ? 3 : 2,
+      text:
+        flakyRetrySuccesses === 0
+          ? `Flaky CircleCI rate: 0% — no workflows needed a passing rerun on the same SHA in the last 30 days (n=${workflowsTotal}).`
+          : `Flaky CircleCI rate: ${(flakyRate * 100).toFixed(1)}% of workflows passed on rerun of the same SHA (${flakyRetrySuccesses}/${workflowsTotal}, 30d).`,
+    });
+  } else {
+    summary.flakyTestRate = null;
+    summary.flakyTestRateUnavailableReason =
+      "No CircleCI workflows observed in the last 30 days.";
+  }
+  // ---- Deploy-failure MTTR (CircleCI) -------------------------------
+  const deployMttrSeries = deployFailureMttrMs(deployRunSeries);
+  if (deployMttrSeries.length > 0) {
+    const avgMs =
+      deployMttrSeries.reduce((s, x) => s + x, 0) / deployMttrSeries.length;
+    const mttrHours = avgMs / 3_600_000;
+    const dp = percentiles(deployMttrSeries);
+    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+    summary.mttrHoursP50 = msToHours(dp.p50);
+    summary.mttrHoursP95 = msToHours(dp.p95);
+    summary.mttrSource = "deployment_failure";
+    summary.deployFailurePairs30d = deployMttrSeries.length;
+    evidence.push({
+      dimension: "measurement",
+      signalType: mttrHours <= 24 ? "strength" : "gap",
+      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+      text: `MTTR (CircleCI deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (30d).`,
+    });
+  } else {
+    // CircleCI has no incident-issue concept of its own, so MTTR is n/a
+    // from this connector unless paired with a Jira/Linear/GitHub
+    // connector.
+    summary.mttrHoursAvg = null;
+    summary.mttrSource = "unavailable";
   }
   if (workflowsTotal === 0) {
     evidence.push({
