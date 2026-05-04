@@ -111,6 +111,36 @@ interface IssueTrackingSummary {
   backlogGrowthPerDay?: number | null;
 }
 
+// Source-control metrics produced by the GitHub/GitLab runners
+// (PRD §6.2). All fields are optional — runners that haven't been
+// extended yet, or runs against empty repos, leave them absent and we
+// render the corresponding cell as "n/a".
+type ScSizeBucket = "xs" | "s" | "m" | "l" | "xl";
+type ScSummary = {
+  prThroughput30d?: number | null;
+  leadTimeHoursP50?: number | null;
+  leadTimeHoursP75?: number | null;
+  leadTimeHoursP95?: number | null;
+  timeToFirstReviewHoursP50?: number | null;
+  timeToFirstReviewHoursP75?: number | null;
+  timeToFirstReviewHoursP95?: number | null;
+  reviewTurnaroundHoursP50?: number | null;
+  reviewTurnaroundHoursP75?: number | null;
+  reviewTurnaroundHoursP95?: number | null;
+  commentsPerPRAvg?: number | null;
+  reviewIterationsAvg?: number | null;
+  prSizeDistribution?: Record<ScSizeBucket, number> | null;
+  commitsPerDay?: number | null;
+  reworkRate?: number | null;
+  busFactor?: number | null;
+  branchLifespanHoursAvg?: number | null;
+  branchLifespanHoursP50?: number | null;
+  branchLifespanHoursP95?: number | null;
+  prsSampledForDetail?: number | null;
+  prsAttemptedForDetail?: number | null;
+  prsAvailableForDetail?: number | null;
+};
+
 function formatHours(h: number | null | undefined): string {
   if (h === null || h === undefined) return "n/a";
   if (h < 1) return `${(h * 60).toFixed(0)}m`;
@@ -480,6 +510,159 @@ function IssueTrackingMetrics({ summary }: { summary: IssueTrackingSummary }) {
   );
 }
 
+function SourceControlMetrics({ summary }: { summary: ScSummary }) {
+  // Show the section if any source-control metric is present. Cells are
+  // independently nullable so partial data (e.g. PRs but no commits)
+  // still renders gracefully.
+  const hasAny =
+    summary.prThroughput30d != null ||
+    summary.leadTimeHoursP50 != null ||
+    summary.timeToFirstReviewHoursP50 != null ||
+    summary.reviewTurnaroundHoursP50 != null ||
+    summary.commentsPerPRAvg != null ||
+    summary.reviewIterationsAvg != null ||
+    summary.commitsPerDay != null ||
+    summary.reworkRate != null ||
+    summary.busFactor != null ||
+    summary.branchLifespanHoursAvg != null ||
+    (summary.prSizeDistribution != null &&
+      Object.values(summary.prSizeDistribution).some((v) => v > 0));
+  if (!hasAny) return null;
+
+  const fmtPct = (v: number | null | undefined) =>
+    v == null ? "n/a" : `${(v * 100).toFixed(0)}%`;
+  const fmtNum = (v: number | null | undefined, digits = 1) =>
+    v == null ? "n/a" : v.toFixed(digits);
+
+  const cells: Array<{ label: string; value: string; hint: string }> = [
+    {
+      label: "PR throughput",
+      value:
+        summary.prThroughput30d == null
+          ? "n/a"
+          : `${summary.prThroughput30d}/30d`,
+      hint: "Merged PRs in the last 30 days",
+    },
+    {
+      label: "Lead time (p50/p75/p95)",
+      value: `${formatHours(summary.leadTimeHoursP50)} / ${formatHours(summary.leadTimeHoursP75)} / ${formatHours(summary.leadTimeHoursP95)}`,
+      hint: "PR open → merge",
+    },
+    {
+      label: "Time to first review (p50/p75/p95)",
+      value: `${formatHours(summary.timeToFirstReviewHoursP50)} / ${formatHours(summary.timeToFirstReviewHoursP75)} / ${formatHours(summary.timeToFirstReviewHoursP95)}`,
+      hint: "PR open → first reviewer comment",
+    },
+    {
+      label: "Review turnaround (p50/p75/p95)",
+      value: `${formatHours(summary.reviewTurnaroundHoursP50)} / ${formatHours(summary.reviewTurnaroundHoursP75)} / ${formatHours(summary.reviewTurnaroundHoursP95)}`,
+      hint: "First review → merge",
+    },
+    {
+      label: "Comments per PR",
+      value: fmtNum(summary.commentsPerPRAvg, 1),
+      hint: "Avg reviewer comments per PR",
+    },
+    {
+      label: "Review iterations",
+      value: fmtNum(summary.reviewIterationsAvg, 1),
+      hint: "Avg review submissions per PR",
+    },
+    {
+      label: "Commits per day",
+      value: fmtNum(summary.commitsPerDay, 1),
+      hint: "Across sampled repos (30d)",
+    },
+    {
+      label: "Rework rate",
+      value: fmtPct(summary.reworkRate),
+      hint: "PRs with commits after first review",
+    },
+    {
+      label: "Bus factor",
+      value:
+        summary.busFactor == null ? "n/a" : `${summary.busFactor} contributor${summary.busFactor === 1 ? "" : "s"}`,
+      hint: "Authors covering ≥50% of commits",
+    },
+    {
+      label: "Branch lifespan (p50/p95)",
+      value: `${formatHours(summary.branchLifespanHoursP50)} / ${formatHours(summary.branchLifespanHoursP95)}`,
+      hint: "First commit → merge",
+    },
+  ];
+
+  // PR size distribution gets its own row — five buckets are noisy in
+  // the 2-col grid and a horizontal stacked-bar reads more clearly.
+  const dist = summary.prSizeDistribution;
+  const distTotal = dist
+    ? dist.xs + dist.s + dist.m + dist.l + dist.xl
+    : 0;
+
+  return (
+    <section>
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-sm font-semibold">Source control</h3>
+        {summary.prsSampledForDetail != null &&
+        summary.prsAvailableForDetail != null ? (
+          <span className="text-xs text-muted-foreground">
+            sampled {summary.prsSampledForDetail}
+            {summary.prsAttemptedForDetail != null &&
+            summary.prsAttemptedForDetail !== summary.prsSampledForDetail
+              ? ` of ${summary.prsAttemptedForDetail} attempted`
+              : ""}{" "}
+            / {summary.prsAvailableForDetail} PRs
+          </span>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {cells.map((c) => (
+          <div key={c.label} className="rounded border p-3">
+            <div className="text-xs text-muted-foreground">{c.label}</div>
+            <div className="text-lg font-semibold tabular-nums">{c.value}</div>
+            <div className="text-xs text-muted-foreground">{c.hint}</div>
+          </div>
+        ))}
+      </div>
+      {dist && distTotal > 0 ? (
+        <div className="rounded border p-3 mt-2">
+          <div className="text-xs text-muted-foreground mb-2">
+            PR size distribution (xs ≤10 / s ≤50 / m ≤250 / l ≤1000 / xl
+            &gt;1000 lines)
+          </div>
+          <div className="flex h-2 rounded overflow-hidden bg-muted">
+            {(["xs", "s", "m", "l", "xl"] as const).map((b, i) => {
+              const pct = (dist[b] / distTotal) * 100;
+              if (pct === 0) return null;
+              const bg = [
+                "bg-emerald-500",
+                "bg-sky-500",
+                "bg-amber-500",
+                "bg-orange-500",
+                "bg-rose-500",
+              ][i];
+              return (
+                <div
+                  key={b}
+                  className={bg}
+                  style={{ width: `${pct}%` }}
+                  title={`${b}: ${dist[b]} (${pct.toFixed(0)}%)`}
+                />
+              );
+            })}
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground mt-2 tabular-nums">
+            {(["xs", "s", "m", "l", "xl"] as const).map((b) => (
+              <span key={b}>
+                {b}: {dist[b]}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function SignalsDrawer({
   connectorId,
   connectorLabel,
@@ -573,6 +756,11 @@ export function SignalsDrawer({
               {data.latestRun?.summary ? (
                 <CiCdMetrics
                   summary={data.latestRun.summary as CiCdSummary}
+                />
+              ) : null}
+              {data.latestRun?.summary ? (
+                <SourceControlMetrics
+                  summary={data.latestRun.summary as ScSummary}
                 />
               ) : null}
               <section>

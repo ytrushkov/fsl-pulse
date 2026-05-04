@@ -13,6 +13,17 @@ import {
   type IssueTypeDistribution,
   type PercentileTriple,
 } from "./metrics";
+import {
+  bucketPrSizes,
+  branchLifespanStats,
+  busFactor,
+  detailSampleSize,
+  emptySizeDistribution,
+  percentiles as scPercentiles,
+  reworkRate,
+  type PrSizeDistribution,
+} from "./connector-metrics";
+
 
 // Aging WIP threshold: any in-progress issue older than this counts as "aging".
 // Two weeks matches the typical sprint length so anything spilling past one
@@ -246,6 +257,386 @@ function emitIssueTrackingMetrics(
   }
 }
 
+
+/**
+ * Lookback window applied to all source-control metrics. PRD §6.2 talks
+ * in months but anchoring on 30 days keeps deploy-frequency / CFR
+ * comparable to the existing DORA proxies and bounds the per-run cost
+ * of the deeper-detail sample.
+ */
+const SC_LOOKBACK_DAYS = 30;
+
+/**
+ * Hard cap on per-PR / per-MR deep-dive calls per run, on top of
+ * detailSampleSize(). Each deep-dive PR costs 3 extra API calls
+ * (detail + reviews + commits), so 30 PRs ≈ 90 extra calls per run on
+ * top of the workflow / pipeline / list calls. This keeps total run
+ * cost predictable even on very chatty repos / groups.
+ */
+const SC_DETAIL_HARD_CAP = 30;
+
+/**
+ * Shape collected per-PR / per-MR for the source-control metric block,
+ * shared by GitHub and GitLab so the helper functions can produce
+ * provider-identical output.
+ */
+interface ScPrDetail {
+  /** Open → merge in ms (defined for merged PRs/MRs only). */
+  leadTimeMs: number;
+  /** First review submitted_at − created_at, or null if no review yet. */
+  timeToFirstReviewMs: number | null;
+  /** First review → merge, captures the “final approval cycle” turnaround. */
+  reviewTurnaroundMs: number | null;
+  /** Total number of review submissions / approvals on the PR. */
+  reviewIterations: number;
+  /** All review-style comments on the PR (issue comments + inline). */
+  commentCount: number;
+  /** additions + deletions for the size-bucket distribution. */
+  linesChanged: number;
+  /** Commits authored *after* the first review submitted_at. */
+  commitsAfterFirstReview: number;
+  /** First commit on the source branch and merged_at, for branch lifespan. */
+  firstCommitMs: number | null;
+  mergedAtMs: number;
+}
+
+/**
+ * Compute the canonical source-control metric block from the deep-dive
+ * sample plus org-wide aggregates. Both runners call this so the
+ * resulting summary keys are byte-for-byte identical across providers.
+ */
+function buildSourceControlSummary(args: {
+  prDetails: ScPrDetail[];
+  /** All merged PR/MR lead-time durations in the window (not just sampled). */
+  allLeadTimesMs: number[];
+  authorCommitCounts: Record<string, number>;
+  totalCommitsInWindow: number;
+  prsInWindow: number;
+  /**
+   * Number of merged PRs the runner attempted to fetch detail for. May be
+   * higher than `prDetails.length` if some per-PR calls failed (counted
+   * separately so the UI can show "sampled N of M (k succeeded)").
+   */
+  prsAttemptedForDetail: number;
+}): {
+  summary: Record<string, unknown>;
+  evidence: CollectedEvidence[];
+} {
+  const summary: Record<string, unknown> = {};
+  const evidence: CollectedEvidence[] = [];
+
+  // Throughput — merged PR/MR count in the window. Always emit a
+  // dedicated process-dimension evidence row (including n=0) so the
+  // scoring engine sees one normalized row per metric.
+  summary.prThroughput30d = args.prsInWindow;
+  {
+    const perDay = args.prsInWindow / SC_LOOKBACK_DAYS;
+    evidence.push({
+      dimension: "process",
+      signalType:
+        args.prsInWindow === 0 ? "gap" : perDay >= 1 ? "strength" : "gap",
+      stageHint:
+        args.prsInWindow === 0
+          ? 1
+          : perDay >= 5
+            ? 5
+            : perDay >= 1
+              ? 4
+              : perDay >= 0.2
+                ? 3
+                : 2,
+      text:
+        args.prsInWindow === 0
+          ? `PR throughput n/a — no merged PRs/MRs in the last ${SC_LOOKBACK_DAYS} days.`
+          : `PR throughput: ${args.prsInWindow} merged PRs/MRs in the last ${SC_LOOKBACK_DAYS} days (~${perDay.toFixed(2)}/day).`,
+    });
+  }
+
+  // PR lead-time percentiles (uses ALL merged PRs, not just sampled).
+  const leadStats = scPercentiles(args.allLeadTimesMs);
+  if (leadStats.n > 0) {
+    summary.leadTimeHoursP50 = leadStats.p50 ? round1(leadStats.p50 / 3_600_000) : null;
+    summary.leadTimeHoursP75 = leadStats.p75 ? round1(leadStats.p75 / 3_600_000) : null;
+    summary.leadTimeHoursP95 = leadStats.p95 ? round1(leadStats.p95 / 3_600_000) : null;
+    evidence.push({
+      dimension: "process",
+      signalType: (summary.leadTimeHoursP75 as number) <= 72 ? "strength" : "gap",
+      stageHint:
+        (summary.leadTimeHoursP75 as number) <= 24
+          ? 5
+          : (summary.leadTimeHoursP75 as number) <= 72
+            ? 4
+            : (summary.leadTimeHoursP75 as number) <= 168
+              ? 3
+              : 2,
+      text: `PR lead time percentiles: p50 ${summary.leadTimeHoursP50}h · p75 ${summary.leadTimeHoursP75}h · p95 ${summary.leadTimeHoursP95}h (n=${leadStats.n}, ${SC_LOOKBACK_DAYS}d).`,
+    });
+  } else {
+    summary.leadTimeHoursP50 = null;
+    summary.leadTimeHoursP75 = null;
+    summary.leadTimeHoursP95 = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: `PR lead time n/a — no merged PRs/MRs in the last ${SC_LOOKBACK_DAYS} days.`,
+    });
+  }
+
+  // Time-to-first-review and review turnaround — from the deep-dive
+  // sample (we'd otherwise need an extra call per merged PR org-wide).
+  const ttfrSample = args.prDetails
+    .map((p) => p.timeToFirstReviewMs)
+    .filter((d): d is number => d !== null && d > 0);
+  if (ttfrSample.length > 0) {
+    const ttfr = scPercentiles(ttfrSample);
+    summary.timeToFirstReviewHoursP50 = ttfr.p50 ? round1(ttfr.p50 / 3_600_000) : null;
+    summary.timeToFirstReviewHoursP75 = ttfr.p75 ? round1(ttfr.p75 / 3_600_000) : null;
+    summary.timeToFirstReviewHoursP95 = ttfr.p95 ? round1(ttfr.p95 / 3_600_000) : null;
+    evidence.push({
+      dimension: "process",
+      signalType:
+        (summary.timeToFirstReviewHoursP75 as number) <= 24 ? "strength" : "gap",
+      stageHint:
+        (summary.timeToFirstReviewHoursP75 as number) <= 4
+          ? 5
+          : (summary.timeToFirstReviewHoursP75 as number) <= 24
+            ? 4
+            : (summary.timeToFirstReviewHoursP75 as number) <= 72
+              ? 3
+              : 2,
+      text: `Time to first review: p50 ${summary.timeToFirstReviewHoursP50}h · p75 ${summary.timeToFirstReviewHoursP75}h · p95 ${summary.timeToFirstReviewHoursP95}h (n=${ttfr.n}).`,
+    });
+  } else {
+    summary.timeToFirstReviewHoursP50 = null;
+    summary.timeToFirstReviewHoursP75 = null;
+    summary.timeToFirstReviewHoursP95 = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: "Time to first review n/a — no reviewed PRs in the deep-dive sample.",
+    });
+  }
+
+  // Review turnaround (first review → merge). Each new metric must
+  // emit either populated evidence or an explicit gap row so the
+  // scoring engine sees consistent rows regardless of provider.
+  const turnaroundSample = args.prDetails
+    .map((p) => p.reviewTurnaroundMs)
+    .filter((d): d is number => d !== null && d > 0);
+  if (turnaroundSample.length > 0) {
+    const ta = scPercentiles(turnaroundSample);
+    summary.reviewTurnaroundHoursP50 = ta.p50 ? round1(ta.p50 / 3_600_000) : null;
+    summary.reviewTurnaroundHoursP75 = ta.p75 ? round1(ta.p75 / 3_600_000) : null;
+    summary.reviewTurnaroundHoursP95 = ta.p95 ? round1(ta.p95 / 3_600_000) : null;
+    evidence.push({
+      dimension: "process",
+      signalType:
+        (summary.reviewTurnaroundHoursP75 as number) <= 24 ? "strength" : "gap",
+      stageHint:
+        (summary.reviewTurnaroundHoursP75 as number) <= 4
+          ? 5
+          : (summary.reviewTurnaroundHoursP75 as number) <= 24
+            ? 4
+            : (summary.reviewTurnaroundHoursP75 as number) <= 72
+              ? 3
+              : 2,
+      text: `Review turnaround: p50 ${summary.reviewTurnaroundHoursP50}h · p75 ${summary.reviewTurnaroundHoursP75}h · p95 ${summary.reviewTurnaroundHoursP95}h (n=${ta.n}).`,
+    });
+  } else {
+    summary.reviewTurnaroundHoursP50 = null;
+    summary.reviewTurnaroundHoursP75 = null;
+    summary.reviewTurnaroundHoursP95 = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: "Review turnaround n/a — no reviewed PRs in the deep-dive sample.",
+    });
+  }
+
+  // Review depth — comments + iteration count averaged across sample.
+  if (args.prDetails.length > 0) {
+    const avgComments =
+      args.prDetails.reduce((a, p) => a + p.commentCount, 0) /
+      args.prDetails.length;
+    const avgIters =
+      args.prDetails.reduce((a, p) => a + p.reviewIterations, 0) /
+      args.prDetails.length;
+    summary.commentsPerPRAvg = round1(avgComments);
+    summary.reviewIterationsAvg = round1(avgIters);
+    evidence.push({
+      dimension: "process",
+      signalType: avgIters >= 1.5 || avgComments >= 3 ? "strength" : "gap",
+      stageHint: avgIters >= 2 ? 4 : avgIters >= 1 ? 3 : 2,
+      text: `Review depth: avg ${avgComments.toFixed(1)} comments and ${avgIters.toFixed(1)} review iterations per PR (n=${args.prDetails.length}).`,
+    });
+  } else {
+    summary.commentsPerPRAvg = null;
+    summary.reviewIterationsAvg = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: "Review depth n/a — no PRs in the deep-dive sample.",
+    });
+  }
+
+  // PR size distribution.
+  const sizeDist: PrSizeDistribution =
+    args.prDetails.length > 0
+      ? bucketPrSizes(args.prDetails.map((p) => ({ linesChanged: p.linesChanged })))
+      : emptySizeDistribution();
+  summary.prSizeDistribution = sizeDist;
+  if (args.prDetails.length > 0) {
+    const small = sizeDist.xs + sizeDist.s;
+    const huge = sizeDist.xl;
+    const smallShare = small / args.prDetails.length;
+    evidence.push({
+      dimension: "process",
+      signalType: smallShare >= 0.5 ? "strength" : "gap",
+      stageHint: smallShare >= 0.6 ? 4 : smallShare >= 0.4 ? 3 : 2,
+      text: `PR size distribution: ${sizeDist.xs} xs · ${sizeDist.s} s · ${sizeDist.m} m · ${sizeDist.l} l · ${sizeDist.xl} xl (n=${args.prDetails.length}). ${huge > 0 ? `${huge} PRs over 1k LOC reviewed — risk of rubber-stamping.` : ""}`.trim(),
+    });
+  } else {
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: "PR size distribution n/a — no PRs in the deep-dive sample.",
+    });
+  }
+
+  // Commit frequency — commits/day in the window.
+  if (args.totalCommitsInWindow > 0) {
+    const perDay = args.totalCommitsInWindow / SC_LOOKBACK_DAYS;
+    summary.commitsPerDay = round2(perDay);
+    evidence.push({
+      dimension: "process",
+      signalType: perDay >= 5 ? "strength" : "gap",
+      stageHint: perDay >= 20 ? 5 : perDay >= 5 ? 4 : perDay >= 1 ? 3 : 2,
+      text: `Commit frequency: ~${perDay.toFixed(2)} commits/day across sampled repos (${SC_LOOKBACK_DAYS}d, n=${args.totalCommitsInWindow}).`,
+    });
+  } else {
+    summary.commitsPerDay = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: `Commit frequency n/a — no commits observed in the last ${SC_LOOKBACK_DAYS} days.`,
+    });
+  }
+
+  // Rework rate.
+  const rework = reworkRate(
+    args.prDetails.map((p) => ({ commitsAfterFirstReview: p.commitsAfterFirstReview })),
+  );
+  if (rework !== null) {
+    summary.reworkRate = round3(rework);
+    evidence.push({
+      dimension: "process",
+      signalType: rework <= 0.25 ? "strength" : "gap",
+      stageHint: rework <= 0.15 ? 4 : rework <= 0.4 ? 3 : 2,
+      text: `Rework rate: ${(rework * 100).toFixed(0)}% of sampled PRs received commits after first review (n=${args.prDetails.length}).`,
+    });
+  } else {
+    summary.reworkRate = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: "Rework rate n/a — no PRs in the deep-dive sample.",
+    });
+  }
+
+  // Bus factor — over commits in the window. Surfaced under the
+  // "process" dimension (not "people") so the scoring engine treats it
+  // alongside the other source-control delivery-process signals; the
+  // PRD groups bus factor with knowledge-distribution risk in process.
+  const bf = busFactor(args.authorCommitCounts);
+  if (bf !== null) {
+    summary.busFactor = bf;
+    evidence.push({
+      dimension: "process",
+      signalType: bf >= 3 ? "strength" : "risk",
+      stageHint: bf >= 5 ? 5 : bf >= 3 ? 4 : bf >= 2 ? 3 : 1,
+      text: `Bus factor: ${bf} author${bf === 1 ? "" : "s"} cover 50% of commits in the last ${SC_LOOKBACK_DAYS} days.`,
+    });
+  } else {
+    summary.busFactor = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: `Bus factor n/a — no commits observed in the last ${SC_LOOKBACK_DAYS} days.`,
+    });
+  }
+
+  // Branch lifespan — first commit → merge for sampled merged PRs.
+  const branches = args.prDetails
+    .filter((p): p is ScPrDetail & { firstCommitMs: number } => p.firstCommitMs !== null)
+    .map((p) => ({ firstCommitMs: p.firstCommitMs, mergedAtMs: p.mergedAtMs }));
+  const lifespan = branchLifespanStats(branches);
+  if (lifespan.avgHours !== null) {
+    summary.branchLifespanHoursAvg = round1(lifespan.avgHours);
+    summary.branchLifespanHoursP50 = lifespan.p50Hours ? round1(lifespan.p50Hours) : null;
+    summary.branchLifespanHoursP95 = lifespan.p95Hours ? round1(lifespan.p95Hours) : null;
+    evidence.push({
+      dimension: "process",
+      signalType: lifespan.avgHours <= 72 ? "strength" : "gap",
+      stageHint: lifespan.avgHours <= 24 ? 5 : lifespan.avgHours <= 72 ? 4 : lifespan.avgHours <= 168 ? 3 : 2,
+      text: `Branch lifespan: avg ${lifespan.avgHours.toFixed(1)}h from first commit to merge (n=${lifespan.n}).`,
+    });
+  } else {
+    summary.branchLifespanHoursAvg = null;
+    summary.branchLifespanHoursP50 = null;
+    summary.branchLifespanHoursP95 = null;
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: "Branch lifespan n/a — no PRs with attributable first-commit timestamps in the deep-dive sample.",
+    });
+  }
+
+  // Sampling provenance — surfaced as evidence for measurement-dimension
+  // scoring (the org has, or hasn't, instrumented enough). We expose
+  // both the attempted sample size and the count that actually returned
+  // valid detail so reviewers can spot a connector that's silently
+  // failing per-PR calls (e.g. token missing `repo` scope on a private
+  // PR). The provenance text also mentions the per-list page caps so
+  // anyone reading evidence understands these are bounded samples.
+  const succeeded = args.prDetails.length;
+  const attempted = args.prsAttemptedForDetail;
+  summary.prsSampledForDetail = succeeded;
+  summary.prsAttemptedForDetail = attempted;
+  summary.prsAvailableForDetail = args.prsInWindow;
+  if (args.prsInWindow > 0) {
+    const succeededNote =
+      attempted === succeeded
+        ? `${succeeded}`
+        : `${succeeded} of ${attempted} attempted`;
+    evidence.push({
+      dimension: "measurement",
+      signalType: "quote",
+      text: `Source-control metrics sampled ${succeededNote} merged PRs/MRs out of ${args.prsInWindow} observed in the last ${SC_LOOKBACK_DAYS} days. List endpoints are capped at 30 PRs/MRs and 100 commits per repo/project for cost control, so very high-volume orgs are also sampled at the list level.`,
+    });
+  }
+
+  return { summary, evidence };
+}
+
+function round1(n: number): number {
+  return Number(n.toFixed(1));
+}
+function round2(n: number): number {
+  return Number(n.toFixed(2));
+}
+function round3(n: number): number {
+  return Number(n.toFixed(3));
+}
+
 /**
  * Per-request context passed into connector calls so subcall-level logging
  * can be correlated with the originating API call. Routes pass `req.id`
@@ -373,6 +764,69 @@ async function ghFetch<T>(token: string, url: string): Promise<T> {
   return (await r.json()) as T;
 }
 
+/**
+ * Deep-dive collector for one merged PR. Used by the source-control
+ * metric block to compute time-to-first-review, review iterations,
+ * comments-per-PR, size bucket, rework rate, and branch lifespan.
+ *
+ * Returns null on any error so a single 500 / 404 cannot poison the
+ * whole metric block. We deliberately do NOT bubble per-PR errors —
+ * the surrounding runner already has try/catch boundaries for the
+ * coarse metrics, and this is a best-effort enrichment.
+ */
+async function fetchGithubPrDetail(
+  token: string,
+  org: string,
+  pr: { repo: string; number: number; createdAtMs: number; mergedAtMs: number },
+): Promise<ScPrDetail | null> {
+  try {
+    const base = `https://api.github.com/repos/${org}/${pr.repo}/pulls/${pr.number}`;
+    type Detail = {
+      additions: number;
+      deletions: number;
+      comments: number;
+      review_comments: number;
+    };
+    type Review = { state: string; submitted_at: string | null };
+    type Commit = { commit: { author: { date: string } } };
+    const [detail, reviews, commits] = await Promise.all([
+      ghFetch<Detail>(token, base),
+      ghFetch<Review[]>(token, `${base}/reviews?per_page=100`),
+      ghFetch<Commit[]>(token, `${base}/commits?per_page=100`),
+    ]);
+    const submittedReviews = reviews
+      .filter((r) => r.submitted_at)
+      .map((r) => ({ state: r.state, ms: Date.parse(r.submitted_at as string) }))
+      .filter((r) => Number.isFinite(r.ms))
+      .sort((a, b) => a.ms - b.ms);
+    const firstReviewMs = submittedReviews[0]?.ms ?? null;
+    const commitTimes = commits
+      .map((c) => Date.parse(c.commit.author.date))
+      .filter((t) => Number.isFinite(t))
+      .sort((a, b) => a - b);
+    const firstCommitMs = commitTimes[0] ?? null;
+    const commitsAfterFirstReview =
+      firstReviewMs === null
+        ? 0
+        : commitTimes.filter((t) => t > firstReviewMs).length;
+    return {
+      leadTimeMs: pr.mergedAtMs - pr.createdAtMs,
+      timeToFirstReviewMs:
+        firstReviewMs !== null ? firstReviewMs - pr.createdAtMs : null,
+      reviewTurnaroundMs:
+        firstReviewMs !== null ? pr.mergedAtMs - firstReviewMs : null,
+      reviewIterations: submittedReviews.length,
+      commentCount: (detail.comments ?? 0) + (detail.review_comments ?? 0),
+      linesChanged: (detail.additions ?? 0) + (detail.deletions ?? 0),
+      commitsAfterFirstReview,
+      firstCommitMs,
+      mergedAtMs: pr.mergedAtMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function verifyGithub(
   token: string,
   config: Record<string, unknown>,
@@ -471,7 +925,8 @@ async function runGithub(
   // We sample up to 5 repos and a 30-day window to keep runs cheap. Each
   // metric gets its own evidence row tagged to the right dimension so the
   // scoring engine can pick them up consistently across providers.
-  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const sinceMs = Date.now() - SC_LOOKBACK_DAYS * 86_400_000;
+  const since = new Date(sinceMs).toISOString();
   let workflowRunsTotal = 0;
   let workflowRunsFailed = 0;
   let workflowRunsSucceeded = 0;
@@ -509,6 +964,21 @@ async function runGithub(
   let jobRunsSampled = 0;
   let jobsObserved = 0;
   let jobSampleTruncated = false;
+
+  // Source-control metric inputs collected across the sampled repos.
+  // Kept separate from the DORA block so the existing summary keys
+  // (deploysPerDay, changeFailureRate, leadTimeHoursAvg, prReviewRate)
+  // remain backwards-compatible while the new percentile-based block is
+  // populated alongside them.
+  const allLeadTimesMs: number[] = [];
+  const mergedPrCandidates: Array<{
+    repo: string;
+    number: number;
+    createdAtMs: number;
+    mergedAtMs: number;
+  }> = [];
+  const authorCommitCounts: Record<string, number> = {};
+  let totalCommitsInWindow = 0;
 
   for (const r of repos.slice(0, 5)) {
     try {
@@ -655,13 +1125,26 @@ async function runGithub(
       prsSampled += prs.length;
       for (const p of prs) {
         if (p.merged_at) {
-          prsMerged += 1;
-          const lead =
-            new Date(p.merged_at).getTime() - new Date(p.created_at).getTime();
-          if (lead > 0) {
-            prLeadTimeSumMs += lead;
-            prLeadTimeCount += 1;
-            prLeadTimesMs.push(lead);
+          const mergedMs = new Date(p.merged_at).getTime();
+          // Bound merged PRs to the lookback window — `state=closed` gives
+          // us older PRs too, which would inflate throughput counts and
+          // skew percentiles.
+          if (mergedMs >= sinceMs) {
+            prsMerged += 1;
+            const createdMs = new Date(p.created_at).getTime();
+            const lead = mergedMs - createdMs;
+            if (lead > 0) {
+              prLeadTimeSumMs += lead;
+              prLeadTimeCount += 1;
+              prLeadTimesMs.push(lead);
+              allLeadTimesMs.push(lead);
+              mergedPrCandidates.push({
+                repo: r.name,
+                number: p.number,
+                createdAtMs: createdMs,
+                mergedAtMs: mergedMs,
+              });
+            }
           }
         }
         // Get review count for this PR (one call per PR is too many; sample
@@ -677,7 +1160,65 @@ async function runGithub(
     } catch {
       // ignore
     }
+
+    // Repo-level commits in the window — feeds commit frequency + bus
+    // factor. One page (100) per repo keeps cost flat; if a repo has more
+    // we capture the most recent 100 which is a reasonable activity
+    // sample for a 30-day window. Author identity falls back to
+    // commit.author.email when GitHub couldn't link the commit to a user.
+    try {
+      const commits = await ghFetch<
+        Array<{
+          sha: string;
+          commit: { author: { date: string; name?: string; email?: string } };
+          author: { login: string } | null;
+        }>
+      >(
+        token,
+        `https://api.github.com/repos/${org}/${r.name}/commits?per_page=100&since=${since}`,
+      );
+      for (const c of commits) {
+        totalCommitsInWindow += 1;
+        const id =
+          c.author?.login ??
+          c.commit.author?.email ??
+          c.commit.author?.name ??
+          "unknown";
+        authorCommitCounts[id] = (authorCommitCounts[id] ?? 0) + 1;
+      }
+      recordsCollected += commits.length;
+    } catch {
+      // ignore — empty/disabled repo
+    }
   }
+
+  // ---- Source-control deep-dive sample (PR detail / reviews / commits)
+  // Each sampled PR costs 3 extra REST calls; cap by detailSampleSize +
+  // SC_DETAIL_HARD_CAP so a 1000-PR/month repo doesn't explode our run
+  // budget. Errors on individual PRs are skipped so a single 500 doesn't
+  // poison the whole metric block.
+  const sampleN = Math.min(
+    detailSampleSize(mergedPrCandidates.length, SC_LOOKBACK_DAYS),
+    SC_DETAIL_HARD_CAP,
+  );
+  const sampledPrs = mergedPrCandidates.slice(0, sampleN);
+  const prDetails: ScPrDetail[] = [];
+  for (const p of sampledPrs) {
+    const detail = await fetchGithubPrDetail(token, org, p);
+    if (detail) prDetails.push(detail);
+  }
+  recordsCollected += prDetails.length;
+
+  const sc = buildSourceControlSummary({
+    prDetails,
+    allLeadTimesMs,
+    authorCommitCounts,
+    totalCommitsInWindow,
+    prsInWindow: mergedPrCandidates.length,
+    prsAttemptedForDetail: sampledPrs.length,
+  });
+  Object.assign(summary, sc.summary);
+  evidence.push(...sc.evidence);
 
   // Deployment frequency (successful workflow runs / day, last 30 days) —
   // proxy for DORA "deployment frequency". Only successful runs count as
@@ -977,6 +1518,132 @@ async function runGithub(
   return { recordsCollected, summary, evidence };
 }
 
+/**
+ * Deep-dive collector for one merged MR. Fetches notes (review activity
+ * + comments), commits (rework + branch lifespan + iteration count),
+ * and diffs (size bucket). Returns null on any sub-error so a single
+ * 500 can't poison the metric block.
+ *
+ * Reviewer / "first review" definition for GitLab: the earliest
+ * non-system, non-author note. GitLab's free-tier API does not expose
+ * formal "review submitted" events the way GitHub does, but every team
+ * we've seen uses `notes` to communicate review feedback, so the
+ * earliest such note approximates the same intent.
+ */
+async function fetchGitlabMrDetail(
+  token: string,
+  baseUrl: string,
+  mr: {
+    projectId: number;
+    iid: number;
+    authorId: number | null;
+    createdAtMs: number;
+    mergedAtMs: number;
+  },
+): Promise<ScPrDetail | null> {
+  try {
+    const headers = { "PRIVATE-TOKEN": token };
+    const base = `${baseUrl}/api/v4/projects/${mr.projectId}/merge_requests/${mr.iid}`;
+    const [notesRes, commitsRes, changesRes] = await Promise.all([
+      fetch(`${base}/notes?per_page=100&sort=asc`, { headers }),
+      fetch(`${base}/commits?per_page=100`, { headers }),
+      fetch(`${base}/changes`, { headers }),
+    ]);
+    if (!notesRes.ok || !commitsRes.ok || !changesRes.ok) return null;
+
+    type Note = {
+      system: boolean;
+      author: { id: number };
+      body: string;
+      created_at: string;
+    };
+    type Commit = {
+      created_at?: string;
+      authored_date?: string;
+      committed_date?: string;
+      author_email?: string;
+      author_name?: string;
+    };
+    type Changes = {
+      changes?: Array<{ diff?: string }>;
+    };
+    const notes = (await notesRes.json()) as Note[];
+    const commits = (await commitsRes.json()) as Commit[];
+    const changes = (await changesRes.json()) as Changes;
+
+    // First "review" = earliest non-system, non-author user note.
+    const reviewerNotes = notes
+      .filter(
+        (n) =>
+          !n.system &&
+          (mr.authorId === null || n.author.id !== mr.authorId) &&
+          typeof n.created_at === "string",
+      )
+      .map((n) => ({
+        ms: Date.parse(n.created_at),
+        authorId: n.author.id,
+      }))
+      .filter((n) => Number.isFinite(n.ms))
+      .sort((a, b) => a.ms - b.ms);
+    const firstReviewMs = reviewerNotes[0]?.ms ?? null;
+    // Iteration count — collapse runs of consecutive notes from the
+    // same author into one "review submission". This matches GitHub's
+    // `reviewIterations` (one number per submitted review) more closely
+    // than counting distinct reviewers, so the metric is comparable
+    // across providers.
+    let reviewIterations = 0;
+    let lastAuthor: number | null = null;
+    for (const n of reviewerNotes) {
+      if (n.authorId !== lastAuthor) {
+        reviewIterations += 1;
+        lastAuthor = n.authorId;
+      }
+    }
+    // Comment count = all reviewer notes (system events excluded).
+    const commentCount = reviewerNotes.length;
+
+    const commitTimes = commits
+      .map((c) =>
+        Date.parse(c.authored_date ?? c.committed_date ?? c.created_at ?? ""),
+      )
+      .filter((t) => Number.isFinite(t))
+      .sort((a, b) => a - b);
+    const firstCommitMs = commitTimes[0] ?? null;
+    const commitsAfterFirstReview =
+      firstReviewMs === null
+        ? 0
+        : commitTimes.filter((t) => t > firstReviewMs).length;
+
+    // Lines changed — count `+`/`-` lines in each diff, skipping the
+    // `+++`/`---` file headers. We cap per-diff string length at 200 KB
+    // so a pathological mega-diff can't OOM the runner.
+    let linesChanged = 0;
+    for (const ch of changes.changes ?? []) {
+      const diff = (ch.diff ?? "").slice(0, 200_000);
+      for (const line of diff.split("\n")) {
+        if (line.startsWith("+++") || line.startsWith("---")) continue;
+        if (line.startsWith("+") || line.startsWith("-")) linesChanged += 1;
+      }
+    }
+
+    return {
+      leadTimeMs: mr.mergedAtMs - mr.createdAtMs,
+      timeToFirstReviewMs:
+        firstReviewMs !== null ? firstReviewMs - mr.createdAtMs : null,
+      reviewTurnaroundMs:
+        firstReviewMs !== null ? mr.mergedAtMs - firstReviewMs : null,
+      reviewIterations,
+      commentCount,
+      linesChanged,
+      commitsAfterFirstReview,
+      firstCommitMs,
+      mergedAtMs: mr.mergedAtMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function verifyGitlab(
   token: string,
   config: Record<string, unknown>,
@@ -1036,7 +1703,8 @@ async function runGitlab(
   });
 
   // ---- DORA-style normalized signals (sample up to 5 projects, 30d) ---
-  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const sinceMsGl = Date.now() - SC_LOOKBACK_DAYS * 86_400_000;
+  const since = new Date(sinceMsGl).toISOString();
   let pipelinesTotal = 0;
   let pipelinesFailed = 0;
   let pipelinesSucceeded = 0;
@@ -1066,6 +1734,20 @@ async function runGitlab(
   const PIPELINE_DETAIL_LIMIT = 15;
   const JOBS_PER_PAGE = 100;
   let jobSampleTruncated = false;
+
+  // Source-control metric inputs collected across the sampled projects;
+  // mirrors the GitHub runner so buildSourceControlSummary produces
+  // identical summary keys regardless of provider.
+  const allLeadTimesMs: number[] = [];
+  const mergedMrCandidates: Array<{
+    projectId: number;
+    iid: number;
+    authorId: number | null;
+    createdAtMs: number;
+    mergedAtMs: number;
+  }> = [];
+  const authorCommitCounts: Record<string, number> = {};
+  let totalCommitsInWindow = 0;
 
   for (const p of projects.slice(0, 5)) {
     let pipelineRows: Array<{
@@ -1181,24 +1863,63 @@ async function runGitlab(
       );
       if (mr.ok) {
         const rows = (await mr.json()) as Array<{
+          iid: number;
+          author?: { id?: number };
           created_at: string;
           merged_at: string | null;
         }>;
         for (const m of rows) {
           if (m.merged_at) {
-            mrsMerged += 1;
-            const lead =
-              new Date(m.merged_at).getTime() - new Date(m.created_at).getTime();
-            if (lead > 0) {
-              mrLeadSumMs += lead;
-              mrLeadCount += 1;
-              mrLeadTimesMs.push(lead);
+            const mergedMs = new Date(m.merged_at).getTime();
+            // Bound to the 30-day window — `updated_after` lets in older
+            // MRs that were just touched; we only want fresh merges.
+            if (mergedMs >= sinceMsGl) {
+              mrsMerged += 1;
+              const createdMs = new Date(m.created_at).getTime();
+              const lead = mergedMs - createdMs;
+              if (lead > 0) {
+                mrLeadSumMs += lead;
+                mrLeadCount += 1;
+                mrLeadTimesMs.push(lead);
+                allLeadTimesMs.push(lead);
+                mergedMrCandidates.push({
+                  projectId: p.id,
+                  iid: m.iid,
+                  authorId: m.author?.id ?? null,
+                  createdAtMs: createdMs,
+                  mergedAtMs: mergedMs,
+                });
+              }
             }
           }
         }
       }
     } catch {
       // ignore
+    }
+    // Project-level commits in the window — feeds commit frequency + bus
+    // factor. One page (100) per project keeps cost flat; longer-tail
+    // history is intentionally not paginated. Author identity prefers
+    // author_email so renames in commit names don't double-count people.
+    try {
+      const cr = await fetch(
+        `${baseUrl}/api/v4/projects/${p.id}/repository/commits?since=${since}&per_page=100`,
+        { headers },
+      );
+      if (cr.ok) {
+        const rows = (await cr.json()) as Array<{
+          author_email?: string;
+          author_name?: string;
+        }>;
+        for (const c of rows) {
+          totalCommitsInWindow += 1;
+          const id = c.author_email ?? c.author_name ?? "unknown";
+          authorCommitCounts[id] = (authorCommitCounts[id] ?? 0) + 1;
+        }
+        recordsCollected += rows.length;
+      }
+    } catch {
+      // ignore — project may not have repository access for this token
     }
     // MTTR proxy — incident-labeled issues closed in the last 30 days for
     // this project. Approximated as closed_at − created_at; if no incident
@@ -1235,6 +1956,22 @@ async function runGitlab(
     }
   }
 
+  // ---- Source-control deep-dive sample (MR detail / notes / commits)
+  // See the matching block in runGithub for the cost rationale. We
+  // intentionally walk PRs sequentially per project to be polite to the
+  // GitLab API; on .com this stays well under the 10 req/s burst.
+  const sampleN = Math.min(
+    detailSampleSize(mergedMrCandidates.length, SC_LOOKBACK_DAYS),
+    SC_DETAIL_HARD_CAP,
+  );
+  const sampledMrs = mergedMrCandidates.slice(0, sampleN);
+  const prDetails: ScPrDetail[] = [];
+  for (const m of sampledMrs) {
+    const detail = await fetchGitlabMrDetail(token, baseUrl, m);
+    if (detail) prDetails.push(detail);
+  }
+  recordsCollected += prDetails.length;
+
   const summary: Record<string, unknown> = {
     projectCount: projects.length,
     pipelines30d: pipelinesTotal,
@@ -1242,6 +1979,17 @@ async function runGitlab(
     pipelinesFailed30d: pipelinesFailed,
     mrsMerged30d: mrsMerged,
   };
+
+  const sc = buildSourceControlSummary({
+    prDetails,
+    allLeadTimesMs,
+    authorCommitCounts,
+    totalCommitsInWindow,
+    prsInWindow: mergedMrCandidates.length,
+    prsAttemptedForDetail: sampledMrs.length,
+  });
+  Object.assign(summary, sc.summary);
+  evidence.push(...sc.evidence);
 
   if (pipelinesSucceeded > 0) {
     // Deployment frequency uses successful pipelines only — failed pipelines
