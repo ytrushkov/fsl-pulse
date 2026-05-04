@@ -1,6 +1,249 @@
 import type { Dimension } from "./rubric";
 import { assertSafeUrlResolved } from "./util";
 import { logger } from "./logger";
+import {
+  bucketTimeInStatus,
+  classifyIssueType,
+  classifyStatus,
+  emptyIssueTypeDistribution,
+  percentiles,
+  readStatusMappingFromConfig,
+  type CanonicalIssueType,
+  type IssueTypeDistribution,
+  type PercentileTriple,
+} from "./metrics";
+
+// Aging WIP threshold: any in-progress issue older than this counts as "aging".
+// Two weeks matches the typical sprint length so anything spilling past one
+// sprint shows up. Aligned across Jira and Linear so dashboards compare apples
+// to apples.
+const AGING_WIP_THRESHOLD_DAYS = 14;
+
+// ---------------------------------------------------------------------------
+// Issue-tracking flow metrics — shared accumulator
+// ---------------------------------------------------------------------------
+// Computed identically by the Jira and Linear runners so the scoring engine
+// sees the same metric shape regardless of provider. Each field can be null
+// when the underlying signal isn't measurable (e.g. no sprints configured).
+
+interface IssueFlowMetrics {
+  sampleSize: number;
+  cycleTimeHoursAvg: number | null;
+  leadTimeHoursAvg: number | null;
+  cycleTimeHoursPctl: PercentileTriple;
+  leadTimeHoursPctl: PercentileTriple;
+  flowEfficiencyPct: number | null;
+  blockedTimeHoursAvg: number | null;
+  throughputPerSprintAvg: number | null;
+  sprintCompletionRatePct: number | null;
+  sprintsObserved: number;
+  currentWip: number;
+  // Number of in-progress issues we actually inspected for aging — when
+  // smaller than `currentWip` the aging count is a lower bound and the
+  // share is computed against `currentWipSampled` (not `currentWip`) so we
+  // don't divide a partial numerator by a complete denominator.
+  currentWipSampled: number;
+  agingWipCount: number;
+  agingWipOldestDays: number | null;
+  issueTypeDistribution: IssueTypeDistribution;
+  backlogSize: number | null;
+  // Set to true when backlog or created counts hit the per-call pagination
+  // cap; signals to the UI that the figure is a lower bound.
+  backlogSizeCapped: boolean;
+  backlogGrowthCapped: boolean;
+  backlogGrowthPerDay: number | null;
+}
+
+/**
+ * Project an IssueFlowMetrics block onto the run summary as snake_case keys
+ * and emit the matching evidence rows. Used by both Jira and Linear so the
+ * shape is identical regardless of provider.
+ */
+function emitIssueTrackingMetrics(
+  m: IssueFlowMetrics,
+  providerLabel: string,
+  hasSprintCadence: boolean,
+  evidence: CollectedEvidence[],
+  summary: Record<string, unknown>,
+  noSprintCadenceMessage: string,
+): void {
+  summary.issueTracking = {
+    sampleSize: m.sampleSize,
+    cycleTimeHoursAvg: m.cycleTimeHoursAvg,
+    leadTimeHoursAvg: m.leadTimeHoursAvg,
+    cycleTimeHoursPctl: m.cycleTimeHoursPctl,
+    leadTimeHoursPctl: m.leadTimeHoursPctl,
+    flowEfficiencyPct: m.flowEfficiencyPct,
+    blockedTimeHoursAvg: m.blockedTimeHoursAvg,
+    throughputPerSprintAvg: m.throughputPerSprintAvg,
+    sprintCompletionRatePct: m.sprintCompletionRatePct,
+    sprintsObserved: m.sprintsObserved,
+    currentWip: m.currentWip,
+    currentWipSampled: m.currentWipSampled,
+    agingWipCount: m.agingWipCount,
+    agingWipOldestDays: m.agingWipOldestDays,
+    issueTypeDistribution: m.issueTypeDistribution,
+    backlogSize: m.backlogSize,
+    backlogSizeCapped: m.backlogSizeCapped,
+    backlogGrowthCapped: m.backlogGrowthCapped,
+    backlogGrowthPerDay: m.backlogGrowthPerDay,
+  };
+
+  // Cycle/lead time percentiles. Stage thresholds match the existing
+  // averages-only thresholds used in the source-control runners so the
+  // scoring engine doesn't see two competing scales.
+  if (m.cycleTimeHoursPctl.p50 !== null) {
+    const p50 = m.cycleTimeHoursPctl.p50;
+    const p95 = m.cycleTimeHoursPctl.p95 ?? p50;
+    evidence.push({
+      dimension: "process",
+      signalType: p50 <= 72 ? "strength" : "gap",
+      stageHint: p50 <= 24 ? 5 : p50 <= 72 ? 4 : p50 <= 240 ? 3 : 2,
+      text: `Cycle time (${providerLabel}): p50 ${p50.toFixed(1)}h / p75 ${(m.cycleTimeHoursPctl.p75 ?? 0).toFixed(1)}h / p95 ${p95.toFixed(1)}h (n=${m.sampleSize}, 30d).`,
+    });
+  }
+  if (m.leadTimeHoursPctl.p50 !== null) {
+    const p50 = m.leadTimeHoursPctl.p50;
+    const p95 = m.leadTimeHoursPctl.p95 ?? p50;
+    evidence.push({
+      dimension: "process",
+      signalType: p50 <= 72 ? "strength" : "gap",
+      stageHint: p50 <= 24 ? 5 : p50 <= 72 ? 4 : p50 <= 240 ? 3 : 2,
+      text: `Lead time (${providerLabel}): p50 ${p50.toFixed(1)}h / p75 ${(m.leadTimeHoursPctl.p75 ?? 0).toFixed(1)}h / p95 ${p95.toFixed(1)}h (n=${m.sampleSize}, 30d).`,
+    });
+  }
+
+  // Flow efficiency — active time over (active+blocked+todo). PRD §6.2.
+  if (m.flowEfficiencyPct !== null) {
+    evidence.push({
+      dimension: "process",
+      signalType: m.flowEfficiencyPct >= 40 ? "strength" : "gap",
+      stageHint:
+        m.flowEfficiencyPct >= 60
+          ? 5
+          : m.flowEfficiencyPct >= 40
+            ? 4
+            : m.flowEfficiencyPct >= 20
+              ? 3
+              : 2,
+      text: `Flow efficiency (${providerLabel}): ${m.flowEfficiencyPct.toFixed(0)}% of cycle time spent in active work (n=${m.sampleSize}, 30d).`,
+    });
+  }
+
+  // Blocked time — average per issue.
+  if (m.blockedTimeHoursAvg !== null && m.blockedTimeHoursAvg > 0) {
+    evidence.push({
+      dimension: "process",
+      signalType: m.blockedTimeHoursAvg <= 8 ? "strength" : "gap",
+      stageHint: m.blockedTimeHoursAvg <= 4 ? 4 : m.blockedTimeHoursAvg <= 24 ? 3 : 2,
+      text: `Blocked time (${providerLabel}): avg ${m.blockedTimeHoursAvg.toFixed(1)} hours per resolved issue (30d).`,
+    });
+  }
+
+  // Throughput — issues per sprint (or per 2-week rolling window).
+  if (m.throughputPerSprintAvg !== null) {
+    const cadenceLabel = hasSprintCadence ? "per sprint" : "per 2-week window";
+    evidence.push({
+      dimension: "process",
+      signalType: m.throughputPerSprintAvg >= 5 ? "strength" : "gap",
+      stageHint:
+        m.throughputPerSprintAvg >= 15
+          ? 5
+          : m.throughputPerSprintAvg >= 5
+            ? 4
+            : m.throughputPerSprintAvg >= 2
+              ? 3
+              : 2,
+      text: `Throughput (${providerLabel}): avg ${m.throughputPerSprintAvg.toFixed(1)} issues completed ${cadenceLabel} (n=${m.sprintsObserved}).`,
+    });
+  }
+
+  // Sprint/cycle completion rate — only meaningful when sprints exist.
+  if (hasSprintCadence && m.sprintCompletionRatePct !== null) {
+    evidence.push({
+      dimension: "process",
+      signalType: m.sprintCompletionRatePct >= 80 ? "strength" : "gap",
+      stageHint:
+        m.sprintCompletionRatePct >= 90
+          ? 5
+          : m.sprintCompletionRatePct >= 80
+            ? 4
+            : m.sprintCompletionRatePct >= 60
+              ? 3
+              : 2,
+      text: `Sprint completion (${providerLabel}): ${m.sprintCompletionRatePct.toFixed(0)}% of committed issues finished across ${m.sprintsObserved} closed sprints/cycles.`,
+    });
+  } else if (!hasSprintCadence) {
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: noSprintCadenceMessage,
+    });
+  }
+
+  // Current and aging WIP. Aging share uses the *inspected* sample as the
+  // denominator so a partial scan (e.g. capped pagination) doesn't divide
+  // a partial numerator by the full queue size and silently understate the
+  // share. We surface the inspected-vs-total ratio in the evidence text so
+  // assessors know when the figure is a lower bound.
+  if (m.currentWip > 0) {
+    const aging = m.agingWipCount;
+    const oldest = m.agingWipOldestDays;
+    const denom = Math.max(1, m.currentWipSampled || m.currentWip);
+    const agingShare = aging / denom;
+    const sampledNote =
+      m.currentWipSampled > 0 && m.currentWipSampled < m.currentWip
+        ? ` (sampled ${m.currentWipSampled} of ${m.currentWip})`
+        : "";
+    evidence.push({
+      dimension: "process",
+      signalType: agingShare <= 0.2 ? "strength" : "gap",
+      stageHint: agingShare <= 0.1 ? 5 : agingShare <= 0.2 ? 4 : agingShare <= 0.4 ? 3 : 2,
+      text: `WIP (${providerLabel}): ${m.currentWip} in-progress issues${sampledNote}, ${aging} aging (>${AGING_WIP_THRESHOLD_DAYS}d)${oldest !== null ? `, oldest ${oldest.toFixed(0)}d` : ""}.`,
+    });
+  } else {
+    evidence.push({
+      dimension: "process",
+      signalType: "quote",
+      text: `WIP (${providerLabel}): no in-progress issues currently. Either work is fully shipped or the workflow doesn't use an in-progress state.`,
+    });
+  }
+
+  // Issue type distribution — bug/feature/tech-debt/chore split.
+  const dist = m.issueTypeDistribution;
+  const totalTyped = dist.bug + dist.feature + dist.tech_debt + dist.chore + dist.other;
+  if (totalTyped > 0) {
+    const bugPct = (dist.bug / totalTyped) * 100;
+    const techDebtPct = (dist.tech_debt / totalTyped) * 100;
+    evidence.push({
+      dimension: "process",
+      signalType: bugPct <= 30 ? "strength" : "gap",
+      stageHint: bugPct <= 15 ? 4 : bugPct <= 30 ? 3 : 2,
+      text: `Issue mix (${providerLabel}): ${dist.bug} bugs (${bugPct.toFixed(0)}%), ${dist.feature} features, ${dist.tech_debt} tech-debt (${techDebtPct.toFixed(0)}%), ${dist.chore} chores, ${dist.other} other (n=${totalTyped}, 30d).`,
+    });
+  }
+
+  // Backlog growth — net inflow per day. When either input was capped at
+  // the per-call pagination limit, the growth figure is a lower bound; we
+  // append a "≥" hint so the reader interprets it accordingly.
+  if (m.backlogGrowthPerDay !== null) {
+    const g = m.backlogGrowthPerDay;
+    const lowerBound = m.backlogGrowthCapped || m.backlogSizeCapped;
+    const sign = g >= 0 ? "+" : "";
+    const prefix = lowerBound ? "≥" : "";
+    const sizeStr =
+      m.backlogSize !== null
+        ? ` (current backlog ${m.backlogSizeCapped ? "≥" : ""}${m.backlogSize})`
+        : "";
+    evidence.push({
+      dimension: "measurement",
+      signalType: g <= 0 ? "strength" : "gap",
+      stageHint: g <= 0 ? 4 : g <= 1 ? 3 : 2,
+      text: `Backlog growth (${providerLabel}): net ${prefix}${sign}${g.toFixed(2)} issues/day over the last 30 days${sizeStr}.`,
+    });
+  }
+}
 
 /**
  * Per-request context passed into connector calls so subcall-level logging
@@ -599,6 +842,123 @@ async function verifyJira(
   }
 }
 
+// ---- Jira issue shape -----------------------------------------------------
+// Sprint custom field is the standard Jira Cloud default (`customfield_10020`).
+// Teams that use a different sprint custom field can override it via
+// `config.sprintField`. The field's value can be a list of objects (modern)
+// or a list of opaque strings (legacy GreenHopper-era format) — we handle both.
+
+interface JiraStatusChange {
+  field: string;
+  fromString: string | null;
+  toString: string | null;
+}
+interface JiraHistory {
+  created: string;
+  items: JiraStatusChange[];
+}
+interface JiraSprintObject {
+  id: number;
+  name: string;
+  state: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  completeDate?: string | null;
+}
+interface JiraIssue {
+  id: string;
+  key?: string;
+  fields: {
+    created: string;
+    resolutiondate: string | null;
+    labels?: string[];
+    issuetype?: { name: string };
+    status?: { name: string };
+    [k: string]: unknown;
+  };
+  changelog?: { histories: JiraHistory[] };
+}
+
+interface JiraSearchResponse {
+  total: number;
+  issues: JiraIssue[];
+}
+
+/**
+ * Build an ordered status timeline for a Jira issue from its expanded
+ * changelog. Returns segments of the form `{ status, at }` where the issue
+ * is assumed to remain in `status` until the next segment's `at` (or the
+ * issue's resolution timestamp / now for the final segment).
+ *
+ * The first segment uses the `fromString` of the earliest status transition
+ * (i.e. the status the issue was created in). When an issue has no status
+ * transitions we fall back to the current status against the createdAt
+ * timestamp so blocked-time accounting still has a measurable span.
+ */
+function buildJiraStatusTimeline(
+  issue: JiraIssue,
+): Array<{ status: string; at: number }> {
+  const createdAt = Date.parse(issue.fields.created);
+  const histories = (issue.changelog?.histories ?? [])
+    .map((h) => ({
+      created: h.created,
+      item: h.items.find((i) => i.field === "status"),
+    }))
+    .filter((h): h is { created: string; item: JiraStatusChange } => Boolean(h.item))
+    .sort((a, b) => Date.parse(a.created) - Date.parse(b.created));
+  if (histories.length === 0) {
+    const cur = issue.fields.status?.name ?? "Unknown";
+    return [{ status: cur, at: createdAt }];
+  }
+  const initial = histories[0]!.item.fromString ?? "To Do";
+  const segs: Array<{ status: string; at: number }> = [
+    { status: initial, at: createdAt },
+  ];
+  for (const h of histories) {
+    if (!h.item.toString) continue;
+    segs.push({ status: h.item.toString, at: Date.parse(h.created) });
+  }
+  return segs;
+}
+
+/**
+ * Pull sprint metadata out of a Jira issue's custom field. Returns an empty
+ * array when the field is missing or unrecognised so callers can still emit
+ * the per-issue metrics without sprint cadence.
+ */
+function readJiraSprints(issue: JiraIssue, sprintField: string): JiraSprintObject[] {
+  const raw = issue.fields[sprintField];
+  if (!Array.isArray(raw)) return [];
+  const out: JiraSprintObject[] = [];
+  for (const v of raw) {
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      const id = typeof o.id === "number" ? o.id : Number(o.id);
+      if (!Number.isFinite(id)) continue;
+      out.push({
+        id,
+        name: String(o.name ?? `Sprint ${id}`),
+        state: String(o.state ?? "active").toLowerCase(),
+        startDate: typeof o.startDate === "string" ? o.startDate : null,
+        endDate: typeof o.endDate === "string" ? o.endDate : null,
+        completeDate: typeof o.completeDate === "string" ? o.completeDate : null,
+      });
+    } else if (typeof v === "string") {
+      // Legacy "com.atlassian.greenhopper.service.sprint.Sprint@...[id=12,...]" string.
+      const idMatch = /id=(\d+)/.exec(v);
+      const stateMatch = /state=([A-Z]+)/.exec(v);
+      const nameMatch = /name=([^,\]]+)/.exec(v);
+      if (!idMatch) continue;
+      out.push({
+        id: Number(idMatch[1]),
+        name: nameMatch?.[1] ?? `Sprint ${idMatch[1]}`,
+        state: (stateMatch?.[1] ?? "ACTIVE").toLowerCase(),
+      });
+    }
+  }
+  return out;
+}
+
 async function runJira(
   token: string,
   config: Record<string, unknown>,
@@ -612,27 +972,24 @@ async function runJira(
   const auth = Buffer.from(`${email}:${token}`).toString("base64");
   const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
   const projClause = project ? `project=${project} AND ` : "";
+  const statusMapping = readStatusMappingFromConfig(config);
+  const sprintField = String(config.sprintField ?? "customfield_10020");
+  const evidence: CollectedEvidence[] = [];
+  const summary: Record<string, unknown> = {};
 
-  // 1. Recently-resolved tickets — for cycle/lead-time and MTTR proxy.
+  // ---- 1. Resolved issues with changelog + sprint info (last 30d) --------
+  // expand=changelog returns the full status transition history per issue,
+  // which we need for flow-efficiency / blocked-time accounting.
   const resolvedJql = `${projClause}resolved >= -30d ORDER BY resolved DESC`;
+  const fields = `created,resolutiondate,labels,issuetype,status,${sprintField}`;
   const r = await fetch(
-    `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(resolvedJql)}&fields=created,resolutiondate,labels,issuetype&maxResults=100`,
+    `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(resolvedJql)}&fields=${encodeURIComponent(fields)}&expand=changelog&maxResults=100`,
     { headers },
   );
   if (!r.ok) throw new Error(`Jira ${r.status}`);
-  const data = (await r.json()) as {
-    total: number;
-    issues: Array<{
-      fields: {
-        created: string;
-        resolutiondate: string | null;
-        labels?: string[];
-        issuetype?: { name: string };
-      };
-    }>;
-  };
+  const data = (await r.json()) as JiraSearchResponse;
+  let recordsCollected = data.issues.length;
 
-  const evidence: CollectedEvidence[] = [];
   evidence.push({
     dimension: "process",
     signalType: "strength",
@@ -640,15 +997,23 @@ async function runJira(
     text: `Jira project has ${data.total} resolved issues in the last 30 days — active planning process.`,
   });
 
-  // Cycle time (created → resolved) across all resolved tickets.
-  let cycleSumMs = 0;
-  let cycleCount = 0;
-  // MTTR proxy: tickets whose type or labels suggest "incident" / "bug"
-  // (resolved − created). Industry-standard mapping for orgs that don't have
-  // a separate incident system.
+  // ---- 2. Per-issue cycle/lead time + flow buckets + MTTR ----------------
+  const cycleHours: number[] = [];
+  const leadHours: number[] = [];
+  let activeMsTotal = 0;
+  let blockedMsTotal = 0;
+  let todoMsTotal = 0;
+  const blockedHoursPerIssue: number[] = [];
   let mttrSumMs = 0;
   let mttrCount = 0;
-  const isIncident = (i: (typeof data.issues)[number]) => {
+  // Sprint accumulators: throughput is "issues completed in a sprint", and
+  // sprint completion rate is computed from issues that observably belonged
+  // to a closed sprint at any point in their resolution history.
+  const sprintCompletedById = new Map<number, { name: string; completed: number }>();
+  // Issue-type distribution
+  const issueTypeDistribution = emptyIssueTypeDistribution();
+
+  const isIncident = (i: JiraIssue) => {
     const type = i.fields.issuetype?.name?.toLowerCase() ?? "";
     const labels = (i.fields.labels ?? []).map((l) => l.toLowerCase());
     return (
@@ -660,36 +1025,272 @@ async function runJira(
       labels.includes("p1")
     );
   };
+
   for (const issue of data.issues) {
     if (!issue.fields.resolutiondate) continue;
-    const dur =
-      new Date(issue.fields.resolutiondate).getTime() -
-      new Date(issue.fields.created).getTime();
-    if (dur <= 0) continue;
-    cycleSumMs += dur;
-    cycleCount += 1;
+    const created = Date.parse(issue.fields.created);
+    const resolved = Date.parse(issue.fields.resolutiondate);
+    const leadMs = resolved - created;
+    if (leadMs <= 0) continue;
+    leadHours.push(leadMs / 3_600_000);
+
+    // Status timeline → bucketed time-in-status. Cycle time = first-time-in-
+    // progress → resolved. When no in_progress segment exists (issue was
+    // resolved without ever moving to active), cycle time falls back to lead
+    // time so the percentile is still meaningful.
+    const segs = buildJiraStatusTimeline(issue);
+    const buckets = bucketTimeInStatus(segs, resolved, statusMapping);
+    activeMsTotal += buckets.active;
+    blockedMsTotal += buckets.blocked;
+    todoMsTotal += buckets.todo;
+    blockedHoursPerIssue.push(buckets.blocked / 3_600_000);
+    const firstActive = segs.find(
+      (s) => classifyStatus(s.status, statusMapping) === "in_progress",
+    );
+    const cycleStart = firstActive?.at ?? created;
+    const cycleMs = Math.max(0, resolved - cycleStart);
+    if (cycleMs > 0) cycleHours.push(cycleMs / 3_600_000);
+    else cycleHours.push(leadMs / 3_600_000);
+
+    // Issue-type distribution
+    const t = classifyIssueType(issue.fields.issuetype?.name);
+    issueTypeDistribution[t] += 1;
+
+    // Sprint membership — count this resolved issue against every closed
+    // sprint it ever belonged to. (Issues moved between sprints contribute
+    // to each sprint's completion bucket; this is the same convention Jira
+    // uses internally for "completed issues" in a sprint report.)
+    const sprints = readJiraSprints(issue, sprintField);
+    for (const sp of sprints) {
+      if (sp.state !== "closed") continue;
+      const acc = sprintCompletedById.get(sp.id) ?? { name: sp.name, completed: 0 };
+      acc.completed += 1;
+      sprintCompletedById.set(sp.id, acc);
+    }
+
+    // MTTR proxy (incident-tagged issues)
     if (isIncident(issue)) {
-      mttrSumMs += dur;
+      mttrSumMs += leadMs;
       mttrCount += 1;
     }
   }
 
-  const summary: Record<string, unknown> = {
-    totalIssues: data.total,
-    sampleSize: data.issues.length,
-    resolved30d: cycleCount,
+  const sample = data.issues.length;
+  // Volume-weighted flow efficiency: sum(active) / sum(active+blocked+todo).
+  // Mean-of-ratios is more sensitive to short-lived issues; the volume-
+  // weighted form better reflects how the team actually spent its time.
+  const flowDenom = activeMsTotal + blockedMsTotal + todoMsTotal;
+  const flowEffPct = flowDenom > 0 ? (activeMsTotal / flowDenom) * 100 : null;
+  const blockedAvg =
+    blockedHoursPerIssue.length > 0
+      ? blockedHoursPerIssue.reduce((a, b) => a + b, 0) / blockedHoursPerIssue.length
+      : null;
+  const cycleAvg =
+    cycleHours.length > 0
+      ? cycleHours.reduce((a, b) => a + b, 0) / cycleHours.length
+      : null;
+  const leadAvg =
+    leadHours.length > 0
+      ? leadHours.reduce((a, b) => a + b, 0) / leadHours.length
+      : null;
+
+  // ---- 3. Sprint completion rate -----------------------------------------
+  // We need the *committed* count per closed sprint, not just the completed
+  // count. The Agile API exposes that via /sprint/{id} for each closed
+  // sprint we observed. We query the few sprints we found rather than every
+  // sprint on every board to keep the call budget bounded.
+  let sprintCommittedTotal = 0;
+  let sprintCompletedTotal = 0;
+  let sprintsObserved = 0;
+  for (const [sprintId, acc] of sprintCompletedById) {
+    try {
+      // Fetch sprint metadata first so we can use the sprint's completion
+      // (or end) date as the cutoff for "completed in sprint" — without it
+      // we'd inflate the completion rate by counting issues resolved long
+      // after the sprint closed (carry-over to a later cadence).
+      const metaReq = fetch(
+        `${baseUrl}/rest/agile/1.0/sprint/${sprintId}`,
+        { headers },
+      );
+      const issuesReq = fetch(
+        `${baseUrl}/rest/agile/1.0/sprint/${sprintId}/issue?fields=resolutiondate&maxResults=200`,
+        { headers },
+      );
+      const [metaRes, sr] = await Promise.all([metaReq, issuesReq]);
+      if (!sr.ok) continue;
+      let cutoffMs: number | null = null;
+      if (metaRes.ok) {
+        const md = (await metaRes.json()) as {
+          completeDate?: string | null;
+          endDate?: string | null;
+        };
+        const c = md.completeDate ?? md.endDate ?? null;
+        if (c) cutoffMs = Date.parse(c);
+      }
+      const sd = (await sr.json()) as {
+        issues: Array<{ fields: { resolutiondate: string | null } }>;
+      };
+      const committed = sd.issues.length;
+      const resolvedInSprint = sd.issues.filter((i) => {
+        const rd = i.fields.resolutiondate;
+        if (!rd) return false;
+        if (cutoffMs === null) return true;
+        return Date.parse(rd) <= cutoffMs;
+      }).length;
+      sprintCommittedTotal += committed;
+      sprintCompletedTotal += resolvedInSprint;
+      sprintsObserved += 1;
+      recordsCollected += committed;
+      // Use the cutoff-aware count instead of our pre-computed one when
+      // available — Agile counts subtasks consistently and we want the
+      // strict "completed by sprint end" semantics here.
+      acc.completed = resolvedInSprint;
+    } catch {
+      // ignore individual sprint failures; remaining sprints still contribute.
+    }
+  }
+  const hasSprintCadence = sprintsObserved > 0;
+  const sprintCompletionRatePct =
+    hasSprintCadence && sprintCommittedTotal > 0
+      ? (sprintCompletedTotal / sprintCommittedTotal) * 100
+      : null;
+  const throughputPerSprintAvg = hasSprintCadence
+    ? sprintCompletedTotal / sprintsObserved
+    : leadHours.length > 0
+      ? leadHours.length / Math.max(1, 30 / 14)
+      : null;
+
+  // ---- 4. Currently in-progress (aging WIP) -------------------------------
+  // Paginate up to 5 pages of 100 (= 500 issues) sorted by `updated ASC` so
+  // the *oldest-stale* items come first. Any aging issues are concentrated
+  // in early pages (aging means "not updated in 14+ days" → older `updated`
+  // timestamp), so we short-circuit when a page yields zero new aging items.
+  // The aging-share denominator in `emitIssueTrackingMetrics` uses the
+  // `currentWipSampled` field instead of `currentWip` (= total) so we never
+  // divide a partial numerator by a complete denominator.
+  let currentWip = 0;
+  let currentWipSampled = 0;
+  let agingWipCount = 0;
+  let agingWipOldestDays: number | null = null;
+  try {
+    const wipJql = `${projClause}statusCategory = "In Progress" ORDER BY updated ASC`;
+    const PAGE = 100;
+    const MAX_PAGES = 5;
+    const now = Date.now();
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const wipRes = await fetch(
+        `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(wipJql)}&fields=updated,created,status&maxResults=${PAGE}&startAt=${page * PAGE}`,
+        { headers },
+      );
+      if (!wipRes.ok) break;
+      const wipData = (await wipRes.json()) as {
+        total: number;
+        issues: Array<{ fields: { created: string; updated: string } }>;
+      };
+      if (page === 0) currentWip = wipData.total;
+      let agingThisPage = 0;
+      for (const i of wipData.issues) {
+        const ageDays = (now - Date.parse(i.fields.updated)) / 86_400_000;
+        if (ageDays > AGING_WIP_THRESHOLD_DAYS) {
+          agingWipCount += 1;
+          agingThisPage += 1;
+        }
+        if (agingWipOldestDays === null || ageDays > agingWipOldestDays) {
+          agingWipOldestDays = ageDays;
+        }
+      }
+      currentWipSampled += wipData.issues.length;
+      recordsCollected += wipData.issues.length;
+      if (wipData.issues.length < PAGE) break;
+      if (agingThisPage === 0) break;
+    }
+  } catch {
+    // WIP is best-effort; degrade silently and surface 0/null.
+  }
+
+  // ---- 5. Backlog growth: created vs resolved in the last 30 days --------
+  let createdLast30d: number | null = null;
+  let resolvedLast30d: number | null = null;
+  let backlogSize: number | null = null;
+  try {
+    const cReq = fetch(
+      `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(
+        `${projClause}created >= -30d`,
+      )}&fields=created&maxResults=0`,
+      { headers },
+    );
+    const rReq = fetch(
+      `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(
+        `${projClause}resolved >= -30d`,
+      )}&fields=resolutiondate&maxResults=0`,
+      { headers },
+    );
+    const bReq = fetch(
+      `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(
+        `${projClause}statusCategory = "To Do"`,
+      )}&fields=created&maxResults=0`,
+      { headers },
+    );
+    const [cR, rR, bR] = await Promise.all([cReq, rReq, bReq]);
+    if (cR.ok) {
+      createdLast30d = ((await cR.json()) as { total: number }).total;
+    }
+    if (rR.ok) {
+      resolvedLast30d = ((await rR.json()) as { total: number }).total;
+    }
+    if (bR.ok) {
+      backlogSize = ((await bR.json()) as { total: number }).total;
+    }
+  } catch {
+    // ignore; growth surfaces as null.
+  }
+  const backlogGrowthPerDay =
+    createdLast30d !== null && resolvedLast30d !== null
+      ? (createdLast30d - resolvedLast30d) / 30
+      : null;
+
+  // ---- Assemble + emit ----------------------------------------------------
+  const metrics: IssueFlowMetrics = {
+    sampleSize: sample,
+    cycleTimeHoursAvg: cycleAvg,
+    leadTimeHoursAvg: leadAvg,
+    cycleTimeHoursPctl: percentiles(cycleHours),
+    leadTimeHoursPctl: percentiles(leadHours),
+    flowEfficiencyPct: flowEffPct,
+    blockedTimeHoursAvg: blockedAvg,
+    throughputPerSprintAvg,
+    sprintCompletionRatePct,
+    sprintsObserved,
+    currentWip,
+    currentWipSampled,
+    agingWipCount,
+    agingWipOldestDays,
+    issueTypeDistribution,
+    backlogSize,
+    // Jira's `total` field is authoritative regardless of `maxResults`, so
+    // these counters are never silently capped.
+    backlogSizeCapped: false,
+    backlogGrowthCapped: false,
+    backlogGrowthPerDay,
   };
 
-  if (cycleCount > 0) {
-    const avgHours = cycleSumMs / cycleCount / 3_600_000;
-    summary.cycleTimeHoursAvg = Number(avgHours.toFixed(1));
-    evidence.push({
-      dimension: "process",
-      signalType: avgHours <= 72 ? "strength" : "gap",
-      stageHint: avgHours <= 24 ? 5 : avgHours <= 72 ? 4 : avgHours <= 240 ? 3 : 2,
-      text: `Lead time (Jira): avg ${avgHours.toFixed(1)} hours from create to resolve (n=${cycleCount}, 30d).`,
-    });
-  }
+  // Preserve back-compat keys used by the existing scoring/UI paths so the
+  // upgrade doesn't break dashboards looking for the old summary shape.
+  summary.totalIssues = data.total;
+  summary.sampleSize = sample;
+  summary.resolved30d = leadHours.length;
+  if (cycleAvg !== null) summary.cycleTimeHoursAvg = Number(cycleAvg.toFixed(1));
+
+  emitIssueTrackingMetrics(
+    metrics,
+    "Jira",
+    hasSprintCadence,
+    evidence,
+    summary,
+    "No Jira sprint cadence detected — set up a Scrum board with active sprints to enable sprint completion + throughput metrics.",
+  );
+
+  // ---- MTTR proxy (kept under the existing `measurement` dimension) ------
   if (mttrCount > 0) {
     const mttrHours = mttrSumMs / mttrCount / 3_600_000;
     summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
@@ -711,7 +1312,7 @@ async function runJira(
   }
 
   return {
-    recordsCollected: data.issues.length,
+    recordsCollected,
     summary,
     evidence,
   };
@@ -765,40 +1366,230 @@ async function verifyLinear(
   }
 }
 
-async function runLinear(token: string): Promise<ConnectorRunResult> {
-  // Pull issues completed in the last 30 days with timestamps and labels so
-  // we can compute cycle time and an MTTR proxy from incident-tagged issues.
+// ---- Linear shapes -------------------------------------------------------
+// Linear's GraphQL `IssueHistory` only includes nodes where the relevant
+// field actually changed, so for state transitions `fromState`/`toState` are
+// the authoritative source. `state.type` is one of `backlog`, `unstarted`,
+// `started`, `completed`, `canceled` — we map those onto our canonical
+// buckets ourselves rather than trusting the `name` field, which teams
+// frequently rename.
+
+interface LinearStateRef {
+  name: string;
+  type: string;
+}
+interface LinearIssueNode {
+  id: string;
+  identifier?: string;
+  createdAt: string;
+  completedAt: string | null;
+  labels: { nodes: Array<{ name: string }> };
+  state?: LinearStateRef | null;
+  cycle?: { id: string; name?: string | null; endsAt?: string | null } | null;
+  history?: {
+    nodes: Array<{
+      createdAt: string;
+      fromState?: LinearStateRef | null;
+      toState?: LinearStateRef | null;
+    }>;
+  };
+}
+
+interface LinearCycleNode {
+  id: string;
+  name?: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  completedAt: string | null;
+  issueCount?: number | null;
+  completedIssueCount?: number | null;
+}
+
+/**
+ * Map Linear's `state.type` enum onto our canonical status buckets. We
+ * accept the explicit type so the user-facing state name (which can be
+ * anything) doesn't matter.
+ */
+function linearStateTypeToCanonical(type: string): string {
+  switch (type.toLowerCase()) {
+    case "backlog":
+    case "unstarted":
+    case "triage":
+      return "To Do";
+    case "started":
+      return "In Progress";
+    case "completed":
+      return "Done";
+    case "canceled":
+      return "Done";
+    default:
+      return type;
+  }
+}
+
+/**
+ * Build a status timeline from Linear's history nodes. Linear emits one
+ * history entry per state change, with `fromState` on the earliest entry
+ * giving the issue's initial state. When history is empty we fall back to
+ * the current state against the createdAt.
+ */
+function buildLinearStatusTimeline(
+  issue: LinearIssueNode,
+): Array<{ status: string; at: number }> {
+  const createdAt = Date.parse(issue.createdAt);
+  const histories = (issue.history?.nodes ?? [])
+    .filter((h) => h.toState || h.fromState)
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  if (histories.length === 0) {
+    const cur = issue.state
+      ? linearStateTypeToCanonical(issue.state.type)
+      : "Unknown";
+    return [{ status: cur, at: createdAt }];
+  }
+  const initial = histories[0]!.fromState
+    ? linearStateTypeToCanonical(histories[0]!.fromState!.type)
+    : "To Do";
+  const segs: Array<{ status: string; at: number }> = [
+    { status: initial, at: createdAt },
+  ];
+  for (const h of histories) {
+    if (!h.toState) continue;
+    segs.push({
+      status: linearStateTypeToCanonical(h.toState.type),
+      at: Date.parse(h.createdAt),
+    });
+  }
+  return segs;
+}
+
+/**
+ * Paginated counter for Linear issue queries — used for backlog and recent
+ * inflow counts where Linear's connection types don't expose a `totalCount`
+ * field. Walks `pageInfo.endCursor` until exhausted or `MAX_PAGES`. Returns
+ * `{count, capped}` so callers can flag the figure as a lower bound when we
+ * stop early.
+ *
+ * The filter is passed as a typed GraphQL variable (`$filter: IssueFilter!`)
+ * rather than interpolated into the query string so callers can safely pass
+ * arbitrary filter objects without hand-escaping.
+ */
+async function countLinearIssues(
+  token: string,
+  filter: Record<string, unknown>,
+): Promise<{ count: number; capped: boolean }> {
+  const PAGE = 250;
+  const MAX_PAGES = 4; // 1000 issues max per counter — bounded API budget.
+  let count = 0;
+  let cursor: string | null = null;
+  let capped = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const r = await fetch("https://api.linear.app/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: token },
+      body: JSON.stringify({
+        query: `query($filter: IssueFilter!, $cursor: String) {
+          issues(first: ${PAGE}, filter: $filter, after: $cursor) {
+            nodes { id }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+        variables: { filter, cursor },
+      }),
+    });
+    if (!r.ok) break;
+    const data = (await r.json()) as {
+      data?: {
+        issues: {
+          nodes: Array<{ id: string }>;
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    if (!data.data || data.errors?.length) break;
+    count += data.data.issues.nodes.length;
+    if (!data.data.issues.pageInfo.hasNextPage) {
+      return { count, capped: false };
+    }
+    cursor = data.data.issues.pageInfo.endCursor;
+    if (page === MAX_PAGES - 1) capped = true;
+  }
+  return { count, capped };
+}
+
+async function runLinear(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorRunResult> {
+  // Batched GraphQL query for the metrics that benefit from co-location
+  // (completed issues, in-progress, cycles). Backlog and recent-created
+  // counters are fetched separately via `countLinearIssues` so they can
+  // paginate up to 1000 items each instead of being silently capped at the
+  // first 250 the inline query would have returned.
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const cycleSince = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  const statusMapping = readStatusMappingFromConfig(config);
   const r = await fetch("https://api.linear.app/graphql", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: token },
     body: JSON.stringify({
-      query: `query($since: DateTimeOrDuration!) {
+      query: `query($since: DateTimeOrDuration!, $cycleSince: DateTimeOrDuration!) {
         teams { nodes { id name } }
-        issues(first: 100, filter: { completedAt: { gte: $since } }) {
+        completed: issues(first: 100, filter: { completedAt: { gte: $since } }) {
           nodes {
             id
+            identifier
             createdAt
             completedAt
             labels { nodes { name } }
+            state { name type }
+            cycle { id name endsAt }
+            history(first: 50) {
+              nodes {
+                createdAt
+                fromState { name type }
+                toState { name type }
+              }
+            }
+          }
+        }
+        inProgress: issues(first: 100, filter: { state: { type: { eq: "started" } } }) {
+          nodes {
+            id
+            createdAt
+            updatedAt
+            state { name type }
+          }
+        }
+        cycles(first: 25, filter: { endsAt: { gte: $cycleSince } }) {
+          nodes {
+            id
+            name
+            startsAt
+            endsAt
+            completedAt
+            issueCount
+            completedIssueCount
           }
         }
       }`,
-      variables: { since },
+      variables: { since, cycleSince },
     }),
   });
   if (!r.ok) throw new Error(`Linear ${r.status}`);
   const data = (await r.json()) as {
     data?: {
       teams: { nodes: Array<{ id: string; name: string }> };
-      issues: {
+      completed: { nodes: LinearIssueNode[] };
+      inProgress: {
         nodes: Array<{
           id: string;
           createdAt: string;
-          completedAt: string | null;
-          labels: { nodes: Array<{ name: string }> };
+          updatedAt: string;
+          state?: LinearStateRef | null;
         }>;
       };
+      cycles: { nodes: LinearCycleNode[] };
     };
     errors?: Array<{ message: string }>;
   };
@@ -806,30 +1597,148 @@ async function runLinear(token: string): Promise<ConnectorRunResult> {
   if (!data.data) throw new Error("Linear: empty response");
 
   const teams = data.data.teams.nodes.length;
-  const issues = data.data.issues.nodes;
-  let cycleSumMs = 0;
-  let cycleCount = 0;
+  const issues = data.data.completed.nodes;
+  const wipNodes = data.data.inProgress.nodes;
+  const cycleNodes = data.data.cycles.nodes;
+
+  // Run the two paginated counters in parallel so we don't add a serial
+  // round-trip to the user-facing latency budget.
+  const [backlogResult, createdRecentResult] = await Promise.all([
+    countLinearIssues(token, { state: { type: { eq: "backlog" } } }).catch(
+      () => ({ count: 0, capped: false }),
+    ),
+    countLinearIssues(token, { createdAt: { gte: since } }).catch(() => ({
+      count: 0,
+      capped: false,
+    })),
+  ]);
+
+  // ---- Per-issue cycle/lead/flow accounting ------------------------------
+  const cycleHours: number[] = [];
+  const leadHours: number[] = [];
+  let activeMsTotal = 0;
+  let blockedMsTotal = 0;
+  let todoMsTotal = 0;
+  const blockedHoursPerIssue: number[] = [];
   let mttrSumMs = 0;
   let mttrCount = 0;
+  const issueTypeDistribution = emptyIssueTypeDistribution();
 
   for (const i of issues) {
     if (!i.completedAt) continue;
-    const dur =
-      new Date(i.completedAt).getTime() - new Date(i.createdAt).getTime();
-    if (dur <= 0) continue;
-    cycleSumMs += dur;
-    cycleCount += 1;
-    const labels = i.labels.nodes.map((l) => l.name.toLowerCase());
+    const created = Date.parse(i.createdAt);
+    const completed = Date.parse(i.completedAt);
+    const leadMs = completed - created;
+    if (leadMs <= 0) continue;
+    leadHours.push(leadMs / 3_600_000);
+
+    const segs = buildLinearStatusTimeline(i);
+    const buckets = bucketTimeInStatus(segs, completed, statusMapping);
+    activeMsTotal += buckets.active;
+    blockedMsTotal += buckets.blocked;
+    todoMsTotal += buckets.todo;
+    blockedHoursPerIssue.push(buckets.blocked / 3_600_000);
+    const firstActive = segs.find(
+      (s) => classifyStatus(s.status, statusMapping) === "in_progress",
+    );
+    const cycleStart = firstActive?.at ?? created;
+    const cycleMs = Math.max(0, completed - cycleStart);
+    cycleHours.push(cycleMs > 0 ? cycleMs / 3_600_000 : leadMs / 3_600_000);
+
+    // Issue type — Linear doesn't have a first-class "type" field, so we
+    // infer from labels. Common conventions: "bug", "feature", "tech debt",
+    // "chore". We pick the *first* matching label so a "bug" labelled issue
+    // can't double-count as both bug and tech-debt.
+    const labelNames = i.labels.nodes.map((l) => l.name);
+    let typed: CanonicalIssueType = "other";
+    for (const ln of labelNames) {
+      const t = classifyIssueType(ln);
+      if (t !== "other") {
+        typed = t;
+        break;
+      }
+    }
+    issueTypeDistribution[typed] += 1;
+
+    const labelsLower = labelNames.map((l) => l.toLowerCase());
     if (
-      labels.includes("incident") ||
-      labels.includes("outage") ||
-      labels.includes("p0") ||
-      labels.includes("p1")
+      labelsLower.includes("incident") ||
+      labelsLower.includes("outage") ||
+      labelsLower.includes("p0") ||
+      labelsLower.includes("p1")
     ) {
-      mttrSumMs += dur;
+      mttrSumMs += leadMs;
       mttrCount += 1;
     }
   }
+
+  const flowDenom = activeMsTotal + blockedMsTotal + todoMsTotal;
+  const flowEffPct = flowDenom > 0 ? (activeMsTotal / flowDenom) * 100 : null;
+  const blockedAvg =
+    blockedHoursPerIssue.length > 0
+      ? blockedHoursPerIssue.reduce((a, b) => a + b, 0) / blockedHoursPerIssue.length
+      : null;
+  const cycleAvg =
+    cycleHours.length > 0
+      ? cycleHours.reduce((a, b) => a + b, 0) / cycleHours.length
+      : null;
+  const leadAvg =
+    leadHours.length > 0
+      ? leadHours.reduce((a, b) => a + b, 0) / leadHours.length
+      : null;
+
+  // ---- Cycle (sprint analogue) completion + throughput ------------------
+  // Only consider cycles that actually ended (completedAt or endsAt in the
+  // past) so an in-flight cycle doesn't drag completion rate down.
+  const now = Date.now();
+  const closedCycles = cycleNodes.filter(
+    (c) =>
+      (c.completedAt && Date.parse(c.completedAt) <= now) ||
+      (c.endsAt && Date.parse(c.endsAt) <= now),
+  );
+  const sprintsObserved = closedCycles.length;
+  const hasSprintCadence = sprintsObserved > 0;
+  let sprintCompletionRatePct: number | null = null;
+  let throughputPerSprintAvg: number | null = null;
+  if (hasSprintCadence) {
+    const totalCommitted = closedCycles.reduce(
+      (a, c) => a + (c.issueCount ?? 0),
+      0,
+    );
+    const totalCompleted = closedCycles.reduce(
+      (a, c) => a + (c.completedIssueCount ?? 0),
+      0,
+    );
+    if (totalCommitted > 0) {
+      sprintCompletionRatePct = (totalCompleted / totalCommitted) * 100;
+    }
+    throughputPerSprintAvg = totalCompleted / sprintsObserved;
+  } else if (leadHours.length > 0) {
+    // No cycles configured — fall back to a 2-week rolling-window throughput
+    // so the metric is still meaningful for kanban-style teams.
+    throughputPerSprintAvg = leadHours.length / Math.max(1, 30 / 14);
+  }
+
+  // ---- Aging WIP ---------------------------------------------------------
+  let agingWipCount = 0;
+  let agingWipOldestDays: number | null = null;
+  for (const w of wipNodes) {
+    const age = (now - Date.parse(w.updatedAt)) / 86_400_000;
+    if (age > AGING_WIP_THRESHOLD_DAYS) agingWipCount += 1;
+    if (agingWipOldestDays === null || age > agingWipOldestDays) {
+      agingWipOldestDays = age;
+    }
+  }
+
+  // ---- Backlog growth ---------------------------------------------------
+  // Linear's connection types don't expose totalCount; we paginate via
+  // `countLinearIssues` (cursor walk, MAX_PAGES=4 → up to 1000). When either
+  // side hits the cap the metrics block carries a `*Capped` flag so the UI
+  // can render the figure as a lower bound.
+  const backlogSize = backlogResult.count;
+  const createdLast30d = createdRecentResult.count;
+  const resolvedLast30d = leadHours.length;
+  const backlogGrowthPerDay = (createdLast30d - resolvedLast30d) / 30;
 
   const evidence: CollectedEvidence[] = [
     {
@@ -843,17 +1752,45 @@ async function runLinear(token: string): Promise<ConnectorRunResult> {
     teams,
     issuesCompleted30d: issues.length,
   };
+  if (cycleAvg !== null) summary.cycleTimeHoursAvg = Number(cycleAvg.toFixed(1));
 
-  if (cycleCount > 0) {
-    const avgHours = cycleSumMs / cycleCount / 3_600_000;
-    summary.cycleTimeHoursAvg = Number(avgHours.toFixed(1));
-    evidence.push({
-      dimension: "process",
-      signalType: avgHours <= 72 ? "strength" : "gap",
-      stageHint: avgHours <= 24 ? 5 : avgHours <= 72 ? 4 : avgHours <= 240 ? 3 : 2,
-      text: `Lead time (Linear): avg ${avgHours.toFixed(1)} hours from create to complete (n=${cycleCount}, 30d).`,
-    });
-  }
+  const metrics: IssueFlowMetrics = {
+    sampleSize: leadHours.length,
+    cycleTimeHoursAvg: cycleAvg,
+    leadTimeHoursAvg: leadAvg,
+    cycleTimeHoursPctl: percentiles(cycleHours),
+    leadTimeHoursPctl: percentiles(leadHours),
+    flowEfficiencyPct: flowEffPct,
+    blockedTimeHoursAvg: blockedAvg,
+    throughputPerSprintAvg,
+    sprintCompletionRatePct,
+    sprintsObserved,
+    currentWip: wipNodes.length,
+    // Linear's in-progress query is capped at 100 nodes; for parity with
+    // Jira (which paginates) we treat the inline batch as the inspected
+    // sample. When teams run hotter than 100 in-progress this is a soft
+    // ceiling, but the share calc in `emitIssueTrackingMetrics` divides
+    // aging by the sampled size (not the total) so the reported share
+    // stays accurate against what we actually inspected.
+    currentWipSampled: wipNodes.length,
+    agingWipCount,
+    agingWipOldestDays,
+    issueTypeDistribution,
+    backlogSize,
+    backlogSizeCapped: backlogResult.capped,
+    backlogGrowthCapped: createdRecentResult.capped,
+    backlogGrowthPerDay,
+  };
+
+  emitIssueTrackingMetrics(
+    metrics,
+    "Linear",
+    hasSprintCadence,
+    evidence,
+    summary,
+    "No Linear cycles detected in the last 60 days — enable cycles on a team to measure cycle completion + throughput.",
+  );
+
   if (mttrCount > 0) {
     const mttrHours = mttrSumMs / mttrCount / 3_600_000;
     summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
@@ -866,7 +1803,8 @@ async function runLinear(token: string): Promise<ConnectorRunResult> {
   }
 
   return {
-    recordsCollected: teams + issues.length,
+    recordsCollected:
+      teams + issues.length + wipNodes.length + backlogResult.count,
     summary,
     evidence,
   };
@@ -1475,7 +2413,7 @@ export async function runConnector(
         result = await runJira(token, cfg);
         break;
       case "linear":
-        result = await runLinear(token);
+        result = await runLinear(token, cfg);
         break;
       case "cicd":
         result = await runCicd(token, cfg);

@@ -32,11 +32,56 @@ type DoraSummary = {
   mttrHoursAvg?: number | null;
 };
 
+// Issue-tracking flow metrics emitted by Jira and Linear runners under the
+// `issueTracking` key on `latestRun.summary`. Mirrors the IssueFlowMetrics
+// shape on the server side. Every field can be null when the underlying
+// signal isn't measurable (e.g. no sprint cadence).
+interface PercentileTriple {
+  p50: number | null;
+  p75: number | null;
+  p95: number | null;
+}
+interface IssueTrackingSummary {
+  sampleSize?: number;
+  cycleTimeHoursAvg?: number | null;
+  leadTimeHoursAvg?: number | null;
+  cycleTimeHoursPctl?: PercentileTriple;
+  leadTimeHoursPctl?: PercentileTriple;
+  flowEfficiencyPct?: number | null;
+  blockedTimeHoursAvg?: number | null;
+  throughputPerSprintAvg?: number | null;
+  sprintCompletionRatePct?: number | null;
+  sprintsObserved?: number;
+  currentWip?: number;
+  // Inspected sample size for aging-share — when smaller than `currentWip`
+  // the aging count is a lower bound (we only scanned the oldest N items).
+  currentWipSampled?: number;
+  agingWipCount?: number;
+  agingWipOldestDays?: number | null;
+  issueTypeDistribution?: Record<string, number>;
+  backlogSize?: number | null;
+  // True when the paginated counter hit its hard cap; the figure should be
+  // read as ≥ rather than =.
+  backlogSizeCapped?: boolean;
+  backlogGrowthCapped?: boolean;
+  backlogGrowthPerDay?: number | null;
+}
+
 function formatHours(h: number | null | undefined): string {
   if (h === null || h === undefined) return "n/a";
   if (h < 1) return `${(h * 60).toFixed(0)}m`;
   if (h < 48) return `${h.toFixed(1)}h`;
   return `${(h / 24).toFixed(1)}d`;
+}
+
+function formatPctlTriple(p: PercentileTriple | undefined): string {
+  if (!p || p.p50 === null) return "n/a";
+  return `${formatHours(p.p50)} / ${formatHours(p.p75)} / ${formatHours(p.p95)}`;
+}
+
+function formatPercent(v: number | null | undefined, digits = 0): string {
+  if (v === null || v === undefined) return "n/a";
+  return `${v.toFixed(digits)}%`;
 }
 
 function DoraMetrics({ summary }: { summary: DoraSummary }) {
@@ -89,6 +134,130 @@ function DoraMetrics({ summary }: { summary: DoraSummary }) {
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+function IssueTrackingMetrics({ summary }: { summary: IssueTrackingSummary }) {
+  // Only render when the connector emitted an issueTracking block — Jira/
+  // Linear runners always include it but the source-control runners don't,
+  // and we don't want a tile of "n/a" cells on those.
+  const dist = summary.issueTypeDistribution ?? {};
+  const distTotal = Object.values(dist).reduce((a, b) => a + (b ?? 0), 0);
+  const cells: Array<{ label: string; value: string; hint: string }> = [
+    {
+      label: "Cycle time (p50/p75/p95)",
+      value: formatPctlTriple(summary.cycleTimeHoursPctl),
+      hint: "First in-progress → done",
+    },
+    {
+      label: "Lead time (p50/p75/p95)",
+      value: formatPctlTriple(summary.leadTimeHoursPctl),
+      hint: "Created → resolved",
+    },
+    {
+      label: "Flow efficiency",
+      value: formatPercent(summary.flowEfficiencyPct),
+      hint: "Active ÷ (active+blocked+todo)",
+    },
+    {
+      label: "Blocked time",
+      value: formatHours(summary.blockedTimeHoursAvg),
+      hint: "Avg per resolved issue",
+    },
+    {
+      label: "Throughput",
+      value:
+        summary.throughputPerSprintAvg == null
+          ? "n/a"
+          : `${summary.throughputPerSprintAvg.toFixed(1)} issues`,
+      hint:
+        (summary.sprintsObserved ?? 0) > 0
+          ? `Avg per sprint (n=${summary.sprintsObserved})`
+          : "Per 2-week window",
+    },
+    {
+      label: "Sprint completion",
+      value:
+        (summary.sprintsObserved ?? 0) > 0
+          ? formatPercent(summary.sprintCompletionRatePct)
+          : "no cadence",
+      hint:
+        (summary.sprintsObserved ?? 0) > 0
+          ? `Across ${summary.sprintsObserved} closed sprints`
+          : "Set up sprints/cycles to enable",
+    },
+    {
+      label: "WIP",
+      value:
+        summary.currentWip == null
+          ? "n/a"
+          : `${summary.currentWip} (${summary.agingWipCount ?? 0}${
+              summary.currentWipSampled != null &&
+              summary.currentWip > 0 &&
+              summary.currentWipSampled < summary.currentWip
+                ? "+"
+                : ""
+            } aging)`,
+      hint:
+        summary.currentWipSampled != null &&
+        summary.currentWip != null &&
+        summary.currentWipSampled < summary.currentWip
+          ? `Sampled ${summary.currentWipSampled} of ${summary.currentWip} (>14d = aging)`
+          : summary.agingWipOldestDays != null
+            ? `Oldest ${summary.agingWipOldestDays.toFixed(0)}d`
+            : ">14 days = aging",
+    },
+    {
+      label: "Backlog growth",
+      value:
+        summary.backlogGrowthPerDay == null
+          ? "n/a"
+          : `${
+              summary.backlogGrowthCapped || summary.backlogSizeCapped ? "≥" : ""
+            }${summary.backlogGrowthPerDay >= 0 ? "+" : ""}${summary.backlogGrowthPerDay.toFixed(2)}/day`,
+      hint:
+        summary.backlogSize != null
+          ? `Backlog size ${summary.backlogSizeCapped ? "≥" : ""}${summary.backlogSize}`
+          : "Net (created − resolved) ÷ 30",
+    },
+  ];
+  return (
+    <section>
+      <h3 className="text-sm font-semibold mb-2">Issue Tracking</h3>
+      <div className="grid grid-cols-2 gap-2">
+        {cells.map((c) => (
+          <div key={c.label} className="rounded border p-3">
+            <div className="text-xs text-muted-foreground">{c.label}</div>
+            <div className="text-lg font-semibold tabular-nums">{c.value}</div>
+            <div className="text-xs text-muted-foreground">{c.hint}</div>
+          </div>
+        ))}
+      </div>
+      {distTotal > 0 ? (
+        <div className="mt-2 rounded border p-3 text-xs">
+          <div className="text-muted-foreground mb-1">
+            Issue mix (n={distTotal})
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {(["bug", "feature", "tech_debt", "chore", "other"] as const).map(
+              (k) => {
+                const n = dist[k] ?? 0;
+                if (n === 0) return null;
+                const pct = (n / distTotal) * 100;
+                return (
+                  <span key={k} className="tabular-nums">
+                    <span className="font-medium capitalize">
+                      {k.replace("_", " ")}
+                    </span>{" "}
+                    {n} ({pct.toFixed(0)}%)
+                  </span>
+                );
+              },
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -171,6 +340,16 @@ export function SignalsDrawer({
               {data.latestRun?.summary ? (
                 <DoraMetrics
                   summary={data.latestRun.summary as DoraSummary}
+                />
+              ) : null}
+              {data.latestRun?.summary &&
+              "issueTracking" in
+                (data.latestRun.summary as Record<string, unknown>) ? (
+                <IssueTrackingMetrics
+                  summary={
+                    (data.latestRun.summary as { issueTracking: IssueTrackingSummary })
+                      .issueTracking
+                  }
                 />
               ) : null}
               <section>
