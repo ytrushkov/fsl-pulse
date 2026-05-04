@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, ne } from "drizzle-orm";
 import {
   db,
   connectorsTable,
@@ -16,6 +16,12 @@ import {
 } from "../lib/util";
 import { verifyConnector as verifyConnectorImpl } from "../lib/connectors";
 import { executeConnectorRun } from "../lib/connector-runner";
+import {
+  DERIVED_KIND,
+  runDerivedMetrics,
+  getLatestDerivedMetrics,
+  computeDerivedMetrics,
+} from "../lib/derived-metrics";
 import { requireResourceMember, requireEngagementMember } from "../middlewares/auth";
 import {
   sanitizeFeatureFlags,
@@ -85,6 +91,11 @@ router.get("/engagements/:id/connectors", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  // We intentionally include the synthetic `derived_metrics` connector in
+  // the list so its run history (a `derived_metrics` pseudo-run per bulk
+  // run / on-demand recompute) is reachable from the standard connector
+  // history UX. The UI must treat that row as read-only — see the route
+  // guards on POST/PATCH/DELETE/run for the synthetic kind.
   const rows = await db
     .select()
     .from(connectorsTable)
@@ -102,6 +113,17 @@ router.post("/engagements/:id/connectors", async (req, res): Promise<void> => {
   const b = req.body ?? {};
   if (!b.kind || !b.provider || !b.label) {
     res.status(400).json({ error: "kind, provider, label required" });
+    return;
+  }
+  // The `derived_metrics` kind is reserved for the internal cross-connector
+  // derivation snapshot. It is created lazily server-side via
+  // `ensureDerivedConnector` and must never be authored by a user — doing so
+  // would break the idempotent one-row-per-engagement invariant the
+  // derivation runner relies on.
+  if (b.kind === DERIVED_KIND) {
+    res
+      .status(400)
+      .json({ error: "Derived metrics connector is internal and cannot be created" });
     return;
   }
   // SSRF guard: any user-supplied base URL must point at a public host.
@@ -160,6 +182,18 @@ router.patch("/connectors/:connectorId", requireConnectorMember, async (req, res
   const id = paramId(req.params.connectorId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  // Guard the synthetic derived-metrics connector against direct user
+  // mutation. It has no token to rotate, no provider config to tweak, and
+  // its scheduling is intentionally hard-disabled.
+  const [target] = await db
+    .select({ kind: connectorsTable.kind })
+    .from(connectorsTable)
+    .where(eq(connectorsTable.id, id))
+    .limit(1);
+  if (target?.kind === DERIVED_KIND) {
+    res.status(400).json({ error: "Derived metrics connector is not user-managed" });
     return;
   }
   const b = req.body ?? {};
@@ -265,6 +299,10 @@ router.delete("/connectors/:connectorId", requireConnectorMember, async (req, re
     .from(connectorsTable)
     .where(eq(connectorsTable.id, id))
     .limit(1);
+  if (doomed?.kind === DERIVED_KIND) {
+    res.status(400).json({ error: "Derived metrics connector is not user-managed" });
+    return;
+  }
   await db.delete(connectorsTable).where(eq(connectorsTable.id, id));
   if (doomed) {
     await recordActivity(req, {
@@ -297,6 +335,12 @@ router.post(
     const cfg = (b.config ?? {}) as Record<string, unknown>;
     if (!kind || !provider) {
       res.status(400).json({ error: "kind and provider required" });
+      return;
+    }
+    if (kind === DERIVED_KIND) {
+      res
+        .status(400)
+        .json({ error: "Derived metrics connector is internal and cannot be verified" });
       return;
     }
     if (typeof cfg.baseUrl === "string" && cfg.baseUrl.length > 0) {
@@ -389,7 +433,14 @@ router.post(
     const rows = await db
       .select()
       .from(connectorsTable)
-      .where(eq(connectorsTable.engagementId, id));
+      .where(
+        and(
+          eq(connectorsTable.engagementId, id),
+          // The synthetic derived connector has its own runner downstream;
+          // it must not be triggered as if it were a third-party API call.
+          ne(connectorsTable.kind, DERIVED_KIND),
+        ),
+      );
 
     const skipped = rows.filter((c) => c.status === "not_configured");
     const runnable = rows.filter((c) => c.status !== "not_configured");
@@ -443,6 +494,17 @@ router.post(
     const succeeded = ranResults.filter((r) => r.status === "success").length;
     const failed = ranResults.filter((r) => r.status === "failed").length;
 
+    // Cross-connector derivation runs *after* the per-connector runs above
+    // so it consumes the freshest summaries this bulk just wrote, not the
+    // ones from the previous run. It never throws — failures degrade to a
+    // failed connector_runs row and audit event without poisoning the
+    // bulk-run response.
+    const derivedMetrics = await runDerivedMetrics(id, {
+      trigger: "bulk",
+      req,
+      requestId: (req as typeof req & { id?: string }).id,
+    });
+
     await recordActivity(req, {
       engagementId: id,
       kind: "connectors_bulk_run",
@@ -453,6 +515,7 @@ router.post(
         succeeded,
         failed,
         skipped: skipped.length,
+        derivedMetricCount: derivedMetrics.metrics.length,
       },
     });
 
@@ -463,7 +526,83 @@ router.post(
       failed,
       skipped: skipped.length,
       results,
+      derivedMetrics,
     });
+  },
+);
+
+// On-demand derivation. Lets an assessor recompute the cross-connector
+// snapshot without re-running every per-provider connector — useful after
+// editing a connector's config without changing its source data, or after a
+// scoring rubric tweak that needs fresh derived evidence.
+router.post(
+  "/engagements/:id/derived-metrics",
+  requireEngagementMember,
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const result = await runDerivedMetrics(id, {
+      trigger: "manual",
+      req,
+      requestId: (req as typeof req & { id?: string }).id,
+    });
+    // Compute failures are captured inside `runDerivedMetrics` (the run
+    // row is marked failed) but for the manual endpoint we also need to
+    // signal failure via HTTP status so the UI can show an error toast
+    // instead of "snapshot refreshed". Bulk-run keeps the swallowed-error
+    // behavior because per-connector failures shouldn't fail the whole
+    // batch.
+    if (result.error) {
+      res.status(502).json(result);
+      return;
+    }
+    res.status(202).json(result);
+  },
+);
+
+// Read the latest persisted derived snapshot. Defaults to the cached
+// snapshot from the last successful derivation; pass `?fresh=1` to recompute
+// against current connector summaries without writing a new run row (useful
+// for the overview tile during a quick reload after editing an upstream
+// connector).
+router.get(
+  "/engagements/:id/derived-metrics",
+  requireEngagementMember,
+  async (req, res): Promise<void> => {
+    const id = paramId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const fresh = String(req.query.fresh ?? "") === "1";
+    if (fresh) {
+      const { metrics } = await computeDerivedMetrics(id);
+      res.json({
+        engagementId: id,
+        computedAt: new Date().toISOString(),
+        metrics,
+        connectorId: null,
+        runId: null,
+      });
+      return;
+    }
+    const result = await getLatestDerivedMetrics(id);
+    if (!result) {
+      // Return an empty envelope rather than 404 so the UI can render a
+      // first-run "no snapshot yet" state without an error toast.
+      res.json({
+        engagementId: id,
+        computedAt: null,
+        metrics: [],
+        connectorId: null,
+        runId: null,
+      });
+      return;
+    }
+    res.json(result);
   },
 );
 
@@ -471,6 +610,21 @@ router.post("/connectors/:connectorId/run", requireConnectorMember, async (req, 
   const id = paramId(req.params.connectorId);
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  // The synthetic derived connector has no provider API to call; it is
+  // produced from the other connectors' summaries via `runDerivedMetrics`.
+  // Reject single-connector run requests against it so the UI's per-row
+  // "Run now" button can't accidentally invoke it through the wrong path.
+  const [target] = await db
+    .select({ kind: connectorsTable.kind })
+    .from(connectorsTable)
+    .where(eq(connectorsTable.id, id))
+    .limit(1);
+  if (target?.kind === DERIVED_KIND) {
+    res
+      .status(400)
+      .json({ error: "Use POST /engagements/:id/derived-metrics to recompute" });
     return;
   }
   // Delegate to the shared executor so manual + scheduled runs share the same

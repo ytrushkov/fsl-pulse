@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { BulkConnectorRunItem } from "./bulkConnectorRunItem";
+import type { DerivedMetricsResult } from "./derivedMetricsResult";
 
 export interface BulkConnectorRunResult {
   totalConnectors: number;
@@ -14,4 +15,5 @@ export interface BulkConnectorRunResult {
   failed: number;
   skipped: number;
   results: BulkConnectorRunItem[];
+  derivedMetrics?: DerivedMetricsResult;
 }

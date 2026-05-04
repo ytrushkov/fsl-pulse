@@ -137,6 +137,9 @@ const REGISTRY: Record<ConnectorKind, FeatureFlagDef[]> = {
       default: true,
     },
   ],
+  // Synthetic per-engagement connector that aggregates other connectors'
+  // latest summaries — no upstream API calls, so no toggles.
+  derived_metrics: [],
 };
 
 export function getFeatureFlagDefs(kind: ConnectorKind): FeatureFlagDef[] {

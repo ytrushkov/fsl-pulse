@@ -640,6 +640,7 @@ export const ListConnectorsResponseItem = zod.object({
     "cicd",
     "ai_tooling",
     "azure_devops",
+    "derived_metrics",
   ]),
   provider: zod.string().optional(),
   label: zod.string(),
@@ -685,6 +686,7 @@ export const CreateConnectorBody = zod.object({
     "cicd",
     "ai_tooling",
     "azure_devops",
+    "derived_metrics",
   ]),
   provider: zod.string(),
   label: zod.string(),
@@ -725,6 +727,7 @@ export const UpdateConnectorResponse = zod.object({
     "cicd",
     "ai_tooling",
     "azure_devops",
+    "derived_metrics",
   ]),
   provider: zod.string().optional(),
   label: zod.string(),
@@ -779,6 +782,7 @@ export const VerifyConnectorConfigBody = zod.object({
     "cicd",
     "ai_tooling",
     "azure_devops",
+    "derived_metrics",
   ]),
   provider: zod.string(),
   token: zod.string().optional(),
@@ -803,6 +807,63 @@ export const VerifyConnectorResponse = zod.object({
 
 export const RunConnectorParams = zod.object({
   connectorId: zod.coerce.string(),
+});
+
+/**
+ * Latest cross-connector derived metrics snapshot for an engagement.
+Returns an envelope with `metrics: []` and null timestamps when no
+snapshot has ever been computed (no error). Pass `fresh=1` to compute
+on the fly without writing a new snapshot.
+
+ */
+export const GetDerivedMetricsParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetDerivedMetricsQueryParams = zod.object({
+  fresh: zod.enum(["1"]).optional(),
+});
+
+export const GetDerivedMetricsResponse = zod.object({
+  engagementId: zod.string(),
+  computedAt: zod.string().nullish(),
+  connectorId: zod.string().nullish(),
+  runId: zod.string().nullish(),
+  metrics: zod.array(
+    zod.object({
+      key: zod.enum([
+        "ai_code_ratio",
+        "delivery_efficiency",
+        "feedback_loop_speed",
+        "investment_split",
+      ]),
+      label: zod.string(),
+      dimension: zod.enum(["tooling", "process", "measurement"]),
+      value: zod.number().nullable(),
+      unit: zod.string(),
+      display: zod.string(),
+      stage: zod.number().nullable(),
+      signalType: zod.enum(["strength", "gap"]),
+      sourceConnectorIds: zod.array(zod.string()),
+      sourceRunIds: zod.array(zod.string()),
+      inputs: zod.record(zod.string(), zod.number().nullable()),
+      rationale: zod.string(),
+      degraded: zod.boolean(),
+      notes: zod.array(zod.string()),
+    }),
+  ),
+  error: zod.string().nullish(),
+});
+
+/**
+ * Recompute and persist a fresh derived-metrics snapshot for an
+engagement. Useful when an upstream connector's config has changed
+but its summary hasn't, or when the rubric needs re-derivation
+without re-running every per-provider connector.
+
+ */
+export const RunDerivedMetricsParams = zod.object({
+  id: zod.coerce.string(),
 });
 
 /**

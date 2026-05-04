@@ -73,6 +73,10 @@ const FEATURE_FLAG_REGISTRY: Record<ConnectorKind, FeatureFlagDef[]> = {
     { key: "pullPRs", label: "Pull pull-request lead-time signals", description: "Reads recently completed PRs to score lead time. Disable on very large projects.", default: true },
     { key: "pullIncidents", label: "Pull incident work items", description: "Reads work items tagged `incident`/`outage`/`p0`/`p1` for MTTR signal.", default: true },
   ],
+  // Synthetic per-engagement connector — no upstream calls, no toggles.
+  // Listed only to satisfy the exhaustive `Record<ConnectorKind, …>`; the
+  // dialog itself excludes this kind via `DialogConnectorKind`.
+  [ConnectorKind.derived_metrics]: [],
 };
 
 // Per-kind config catalog. Keeping this declarative (instead of one giant
@@ -120,7 +124,13 @@ interface KindSpec {
   fields: ConfigField[];
 }
 
-const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
+// `derived_metrics` is the synthetic per-engagement connector kind used by
+// the cross-connector derivation layer; it has no provider, no token, and is
+// never user-created, so it's intentionally excluded from this dialog's
+// kind spec map. We narrow `ConnectorKind` to a dialog-local alias so every
+// downstream lookup against `KIND_SPECS` stays type-safe.
+type DialogConnectorKind = Exclude<ConnectorKind, "derived_metrics">;
+const KIND_SPECS: Record<DialogConnectorKind, KindSpec> = {
   [ConnectorKind.github]: {
     kind: ConnectorKind.github,
     label: "GitHub",
@@ -399,8 +409,8 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
   },
 };
 
-const KIND_OPTIONS: Array<{ value: ConnectorKind; label: string }> = (
-  Object.keys(KIND_SPECS) as ConnectorKind[]
+const KIND_OPTIONS: Array<{ value: DialogConnectorKind; label: string }> = (
+  Object.keys(KIND_SPECS) as DialogConnectorKind[]
 ).map((k) => ({ value: k, label: KIND_SPECS[k].label }));
 
 // We deliberately keep config validation loose at the form layer (server is
@@ -453,7 +463,7 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
 
   const kind = useWatch({ control: form.control, name: "kind" });
   const provider = useWatch({ control: form.control, name: "provider" });
-  const spec = KIND_SPECS[kind as ConnectorKind] ?? KIND_SPECS[ConnectorKind.github];
+  const spec = KIND_SPECS[kind as DialogConnectorKind] ?? KIND_SPECS[ConnectorKind.github];
 
   // Resolve the effective token field shape, layering any provider-level
   // overrides on top of the kind-level defaults. This is what powers the
@@ -474,7 +484,7 @@ export function CreateConnectorDialog({ engagementId, open, onOpenChange }: Crea
   // typed-in label or token, since those are kind-agnostic.
   useEffect(() => {
     setVerifyResult(null);
-    const next = KIND_SPECS[kind as ConnectorKind];
+    const next = KIND_SPECS[kind as DialogConnectorKind];
     if (!next) return;
     const defaults: Record<string, string> = {};
     for (const f of next.fields) {

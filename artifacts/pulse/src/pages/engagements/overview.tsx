@@ -5,15 +5,19 @@ import {
   useGetMe,
   useListConnectors,
   useRunAllConnectors,
+  useGetDerivedMetrics,
+  useRunDerivedMetrics,
   getGetEngagementQueryKey,
   getGetEngagementDashboardQueryKey,
   getGetEngagementActivityQueryKey,
   getGetEngagementDashboardUrl,
   getListConnectorsQueryKey,
   getGetEngagementActivityUrl,
+  getGetDerivedMetricsQueryKey,
 } from "@workspace/api-client-react";
 import type {
   ActivityEvent,
+  DerivedMetric,
   GetEngagementActivityParams,
 } from "@workspace/api-client-react";
 import { useMemo, useState } from "react";
@@ -41,7 +45,9 @@ import {
   Presentation,
   ArrowRight,
   Activity,
-  Play
+  Play,
+  Sparkles,
+  RefreshCcw,
 } from "lucide-react";
 import { Link } from "wouter";
 import { Progress } from "@/components/ui/progress";
@@ -76,13 +82,32 @@ export default function EngagementOverview() {
 
   const runAll = useRunAllConnectors();
 
+  // Cross-connector derived snapshot. Read-only on the overview tile; the
+  // bulk runner triggers a fresh derivation server-side so we just invalidate
+  // this query when run-all completes.
+  const { data: derived, isLoading: isLoadingDerived } = useGetDerivedMetrics(
+    id,
+    undefined,
+    {
+      query: { enabled: !!id, queryKey: getGetDerivedMetricsQueryKey(id) },
+    },
+  );
+  const runDerived = useRunDerivedMetrics();
+
   // Only the configured connectors will actually be run by the backend; we
   // mirror that filter here so the button accurately reflects what will
-  // happen when clicked (and disables when there's nothing to run).
-  const runnableCount = (connectors ?? []).filter(
+  // happen when clicked (and disables when there's nothing to run). The
+  // synthetic `derived_metrics` connector is never triggered through the
+  // bulk run-all path (the server runs it as a post-step), so we exclude
+  // it from both counts to avoid an inflated "1 / 1" display when only the
+  // synthetic row exists.
+  const userConnectors = (connectors ?? []).filter(
+    (c) => c.kind !== "derived_metrics",
+  );
+  const runnableCount = userConnectors.filter(
     (c) => c.status !== "not_configured",
   ).length;
-  const totalCount = (connectors ?? []).length;
+  const totalCount = userConnectors.length;
   const noRunnable = totalCount === 0 || runnableCount === 0;
 
   const handleRunAll = () => {
@@ -97,6 +122,11 @@ export default function EngagementOverview() {
             queryKey: [getGetEngagementDashboardUrl(id)],
           });
           queryClient.invalidateQueries({ queryKey: getListConnectorsQueryKey(id) });
+          // Bulk run-all also recomputes derived metrics server-side, so the
+          // overview tile must refetch to surface the fresh snapshot.
+          queryClient.invalidateQueries({
+            queryKey: getGetDerivedMetricsQueryKey(id),
+          });
           queryClient.invalidateQueries({
             predicate: (q) => {
               const k = q.queryKey?.[0];
@@ -221,6 +251,49 @@ export default function EngagementOverview() {
             )}
           </CardContent>
         </Card>
+
+        {/* Derived metrics tile — cross-connector composite signals */}
+        <DerivedMetricsCard
+          engagementId={id}
+          derived={derived}
+          connectors={connectors ?? []}
+          isLoading={isLoadingDerived}
+          isRunning={runDerived.isPending}
+          onRecompute={() => {
+            runDerived.mutate(
+              { id },
+              {
+                onSuccess: () => {
+                  queryClient.invalidateQueries({
+                    queryKey: getGetDerivedMetricsQueryKey(id),
+                  });
+                  queryClient.invalidateQueries({
+                    predicate: (q) => {
+                      const k = q.queryKey?.[0];
+                      return (
+                        typeof k === "string" &&
+                        k.startsWith(getGetEngagementActivityUrl(id))
+                      );
+                    },
+                  });
+                  toast({
+                    title: "Derived metrics recomputed",
+                    description:
+                      "Snapshot refreshed from the latest connector summaries.",
+                  });
+                },
+                onError: (err) => {
+                  toast({
+                    variant: "destructive",
+                    title: "Recompute failed",
+                    description:
+                      err instanceof Error ? err.message : "Unknown error",
+                  });
+                },
+              },
+            );
+          }}
+        />
 
         {/* Survey Tile */}
         <Card className="hover:border-primary/50 transition-colors">
@@ -382,6 +455,137 @@ export default function EngagementOverview() {
 
       <ActivityFeed engagementId={id} />
     </AppLayout>
+  );
+}
+
+function stageBadgeClass(stage: number | null): string {
+  if (stage === null) return "bg-muted text-muted-foreground";
+  if (stage >= 4) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
+  if (stage === 3) return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
+  return "bg-rose-500/15 text-rose-700 dark:text-rose-300";
+}
+
+interface DerivedMetricsCardProps {
+  engagementId: string;
+  derived: { metrics: DerivedMetric[]; computedAt?: string | null } | undefined;
+  connectors: Array<{ id: string; label: string; kind: string }>;
+  isLoading: boolean;
+  isRunning: boolean;
+  onRecompute: () => void;
+}
+
+function DerivedMetricsCard({
+  engagementId,
+  derived,
+  connectors,
+  isLoading,
+  isRunning,
+  onRecompute,
+}: DerivedMetricsCardProps) {
+  const metrics = derived?.metrics ?? [];
+  const computedAt = derived?.computedAt;
+  // Map source connector ids back to their human-readable label so each
+  // metric can render named drill-through chips instead of raw uuids.
+  const labelById = new Map(connectors.map((c) => [c.id, c.label]));
+  return (
+    <Card className="hover:border-primary/50 transition-colors">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-chart-5" />
+            Derived metrics
+          </CardTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-primary"
+            onClick={onRecompute}
+            disabled={isRunning}
+            title="Recompute from current connector summaries"
+            data-testid="button-recompute-derived"
+          >
+            {isRunning ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCcw className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+        <CardDescription>
+          Cross-connector composites
+          {computedAt
+            ? ` · updated ${new Date(computedAt).toLocaleString()}`
+            : ""}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : metrics.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No snapshot yet. Run all connectors or recompute to derive metrics
+            from existing connector summaries.
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {metrics.map((m) => (
+              <li
+                key={m.key}
+                className="space-y-1 text-sm"
+                data-testid={`derived-metric-${m.key}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{m.label}</div>
+                    <div
+                      className={`text-xs truncate ${m.degraded ? "text-muted-foreground italic" : "text-muted-foreground"}`}
+                    >
+                      {m.display}
+                      {m.degraded ? " · partial" : ""}
+                    </div>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${stageBadgeClass(m.stage)}`}
+                    data-testid={`derived-metric-stage-${m.key}`}
+                  >
+                    {m.stage !== null ? `Stage ${m.stage}` : "n/a"}
+                  </span>
+                </div>
+                {/* Per-metric provenance: each source connector is a
+                    deep-link to its run-history dialog on the connectors
+                    page. This is the metric → contributing-runs drill
+                    path. We fall back to a single "view all sources" link
+                    when none of the source ids are resolvable yet (e.g.
+                    the connectors list hasn't loaded). */}
+                {m.sourceConnectorIds.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {m.sourceConnectorIds.map((cid) => {
+                      const label = labelById.get(cid);
+                      if (!label) return null;
+                      return (
+                        <Link
+                          key={cid}
+                          href={`/engagements/${engagementId}/connectors?historyFor=${cid}`}
+                          className="text-[11px] rounded border border-border bg-muted/40 px-1.5 py-0.5 hover:bg-muted hover:underline"
+                          data-testid={`derived-metric-source-${m.key}-${cid}`}
+                          title={`Open run history for ${label} (${m.sourceRunIds.length} contributing runs total)`}
+                        >
+                          {label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-muted-foreground italic">
+                    No source runs yet
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

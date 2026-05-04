@@ -476,6 +476,44 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ConnectorRun" }
 
+  /engagements/{id}/derived-metrics:
+    get:
+      operationId: getDerivedMetrics
+      tags: [connectors]
+      description: |
+        Latest cross-connector derived metrics snapshot for an engagement.
+        Returns an envelope with `metrics: []` and null timestamps when no
+        snapshot has ever been computed (no error). Pass `fresh=1` to compute
+        on the fly without writing a new snapshot.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: fresh
+          in: query
+          required: false
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DerivedMetricsResult" }
+    post:
+      operationId: runDerivedMetrics
+      tags: [connectors]
+      description: |
+        Recompute and persist a fresh derived-metrics snapshot for an
+        engagement. Useful when an upstream connector's config has changed
+        but its summary hasn't, or when the rubric needs re-derivation
+        without re-running every per-provider connector.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DerivedMetricsResult" }
+
   /engagements/{id}/connectors/run-all:
     post:
       operationId: runAllConnectors
@@ -1315,7 +1353,11 @@ components:
 
     ConnectorKind:
       type: string
-      enum: [github, gitlab, jira, linear, cicd, ai_tooling, azure_devops]
+      # `derived_metrics` identifies the per-engagement synthetic connector
+      # that holds cross-connector derivation snapshots. It's filtered out of
+      # the public connector list but appears here so connector_runs/audit
+      # consumers can render the kind label correctly.
+      enum: [github, gitlab, jira, linear, cicd, ai_tooling, azure_devops, derived_metrics]
 
     AuthedUser:
       type: object
@@ -1762,6 +1804,85 @@ components:
         results:
           type: array
           items: { $ref: "#/components/schemas/BulkConnectorRunItem" }
+        # Cross-connector derivation runs at the tail of every bulk so the
+        # snapshot reflects the freshest per-connector summaries this bulk
+        # just collected. Optional so older clients keep typechecking.
+        derivedMetrics:
+          $ref: "#/components/schemas/DerivedMetricsResult"
+
+    DerivedMetric:
+      type: object
+      required:
+        [
+          key,
+          label,
+          dimension,
+          value,
+          unit,
+          display,
+          stage,
+          signalType,
+          sourceConnectorIds,
+          sourceRunIds,
+          inputs,
+          rationale,
+          degraded,
+          notes,
+        ]
+      properties:
+        key:
+          type: string
+          enum:
+            [
+              ai_code_ratio,
+              delivery_efficiency,
+              feedback_loop_speed,
+              investment_split,
+            ]
+        label: { type: string }
+        dimension:
+          type: string
+          enum: [tooling, process, measurement]
+        value: { type: number, nullable: true }
+        unit: { type: string }
+        display: { type: string }
+        stage: { type: integer, nullable: true }
+        signalType:
+          type: string
+          enum: [strength, gap]
+        sourceConnectorIds:
+          type: array
+          items: { type: string }
+        sourceRunIds:
+          type: array
+          items: { type: string }
+        inputs:
+          type: object
+          additionalProperties:
+            type: number
+            nullable: true
+        rationale: { type: string }
+        degraded: { type: boolean }
+        notes:
+          type: array
+          items: { type: string }
+
+    DerivedMetricsResult:
+      type: object
+      required: [engagementId, metrics]
+      properties:
+        engagementId: { type: string }
+        # Null when no snapshot has ever been computed for this engagement.
+        computedAt: { type: string, nullable: true }
+        connectorId: { type: string, nullable: true }
+        runId: { type: string, nullable: true }
+        metrics:
+          type: array
+          items: { $ref: "#/components/schemas/DerivedMetric" }
+        # Set by POST /derived-metrics when a manual recompute fails so the
+        # client can distinguish a true failure from a degraded-but-empty
+        # snapshot. Endpoint also returns 502 in that case.
+        error: { type: string, nullable: true }
 
     BulkConnectorRunItem:
       type: object

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useParams } from "wouter";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearch } from "wouter";
 import {
   useListConnectors,
   useDeleteConnector,
@@ -120,6 +120,20 @@ export default function ConnectorsList() {
     query: { enabled: !!id, queryKey: getListConnectorsQueryKey(id) },
   });
 
+  // Deep-link support for the "Source runs" chips on the engagement overview.
+  // When the URL carries `?historyFor=<connectorId>` we auto-open the run
+  // history dialog for that connector once the list has loaded — that's the
+  // metric → source-connector-runs drill-through path.
+  const search = useSearch();
+  const historyForParam = useMemo(() => {
+    return new URLSearchParams(search).get("historyFor");
+  }, [search]);
+  useEffect(() => {
+    if (!historyForParam || !connectors) return;
+    const target = connectors.find((c) => c.id === historyForParam);
+    if (target) setHistoryFor(target);
+  }, [historyForParam, connectors]);
+
   const deleteConnector = useDeleteConnector();
   const runConnector = useRunConnector();
 
@@ -225,11 +239,22 @@ export default function ConnectorsList() {
                   const isRunning =
                     runConnector.isPending &&
                     runConnector.variables?.connectorId === connector.id;
+                  // The synthetic derived-metrics connector is shown so its
+                  // pseudo-run history is reachable, but it has no token to
+                  // verify, no provider config to edit, and is recomputed
+                  // via the engagement-level "Recompute" button — so we
+                  // disable the per-row mutation actions for it.
+                  const isDerived = connector.kind === "derived_metrics";
                   return (
-                    <TableRow key={connector.id}>
+                    <TableRow key={connector.id} data-testid={`connector-row-${connector.id}`}>
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
                           {connector.label}
+                          {isDerived ? (
+                            <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
+                              Internal
+                            </Badge>
+                          ) : null}
                           {connector.lastError ? (
                             <TooltipProvider delayDuration={200}>
                               <Tooltip>
@@ -301,14 +326,19 @@ export default function ConnectorsList() {
                             size="icon"
                             title="Run history"
                             onClick={() => setHistoryFor(connector)}
+                            data-testid={`button-history-${connector.id}`}
                           >
                             <History className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            title="Run now"
-                            disabled={isRunning}
+                            title={
+                              isDerived
+                                ? "Use Recompute on the overview Derived metrics tile"
+                                : "Run now"
+                            }
+                            disabled={isRunning || isDerived}
                             onClick={() => handleRun(connector)}
                           >
                             <Play className="h-4 w-4" />
@@ -316,7 +346,8 @@ export default function ConnectorsList() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            title="Configure"
+                            title={isDerived ? "Internal connector — not configurable" : "Configure"}
+                            disabled={isDerived}
                             onClick={() => setEditing(connector)}
                           >
                             <Settings className="h-4 w-4" />
@@ -326,7 +357,8 @@ export default function ConnectorsList() {
                             size="icon"
                             className="text-destructive hover:text-destructive hover:bg-destructive/10"
                             onClick={() => handleDelete(connector.id)}
-                            title="Remove"
+                            title={isDerived ? "Internal connector — cannot be removed" : "Remove"}
+                            disabled={isDerived}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

@@ -78,6 +78,7 @@ export const ConnectorKind = {
   cicd: "cicd",
   ai_tooling: "ai_tooling",
   azure_devops: "azure_devops",
+  derived_metrics: "derived_metrics",
 } as const;
 
 export type AuthedUserRole =
@@ -552,6 +553,61 @@ export interface BulkConnectorRunItem {
   error?: string | null;
 }
 
+export type DerivedMetricKey =
+  (typeof DerivedMetricKey)[keyof typeof DerivedMetricKey];
+
+export const DerivedMetricKey = {
+  ai_code_ratio: "ai_code_ratio",
+  delivery_efficiency: "delivery_efficiency",
+  feedback_loop_speed: "feedback_loop_speed",
+  investment_split: "investment_split",
+} as const;
+
+export type DerivedMetricDimension =
+  (typeof DerivedMetricDimension)[keyof typeof DerivedMetricDimension];
+
+export const DerivedMetricDimension = {
+  tooling: "tooling",
+  process: "process",
+  measurement: "measurement",
+} as const;
+
+export type DerivedMetricSignalType =
+  (typeof DerivedMetricSignalType)[keyof typeof DerivedMetricSignalType];
+
+export const DerivedMetricSignalType = {
+  strength: "strength",
+  gap: "gap",
+} as const;
+
+export type DerivedMetricInputs = { [key: string]: number | null };
+
+export interface DerivedMetric {
+  key: DerivedMetricKey;
+  label: string;
+  dimension: DerivedMetricDimension;
+  value: number | null;
+  unit: string;
+  display: string;
+  stage: number | null;
+  signalType: DerivedMetricSignalType;
+  sourceConnectorIds: string[];
+  sourceRunIds: string[];
+  inputs: DerivedMetricInputs;
+  rationale: string;
+  degraded: boolean;
+  notes: string[];
+}
+
+export interface DerivedMetricsResult {
+  engagementId: string;
+  computedAt?: string | null;
+  connectorId?: string | null;
+  runId?: string | null;
+  metrics: DerivedMetric[];
+  error?: string | null;
+}
+
 export interface BulkConnectorRunResult {
   totalConnectors: number;
   triggered: number;
@@ -559,6 +615,7 @@ export interface BulkConnectorRunResult {
   failed: number;
   skipped: number;
   results: BulkConnectorRunItem[];
+  derivedMetrics?: DerivedMetricsResult;
 }
 
 export type SurveyQuestionType =
@@ -1310,6 +1367,17 @@ export type GetPortfolioDistributionHistoryParams = {
   industry?: string;
   size?: PortfolioSizeBand;
 };
+
+export type GetDerivedMetricsParams = {
+  fresh?: GetDerivedMetricsFresh;
+};
+
+export type GetDerivedMetricsFresh =
+  (typeof GetDerivedMetricsFresh)[keyof typeof GetDerivedMetricsFresh];
+
+export const GetDerivedMetricsFresh = {
+  NUMBER_1: "1",
+} as const;
 
 export type ListConnectorRunsParams = {
   /**

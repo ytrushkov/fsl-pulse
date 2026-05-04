@@ -30,6 +30,19 @@ import {
   type ConnectorFetchOptions,
 } from "./connector-fetch";
 import { resolveFeatureFlags } from "./connector-flags";
+import { classifyCommitMessage } from "./derived-metrics";
+
+interface CommitClassification {
+  bug: number;
+  feature: number;
+  tech_debt: number;
+  chore: number;
+  other: number;
+}
+
+function emptyCommitClassification(): CommitClassification {
+  return { bug: 0, feature: 0, tech_debt: 0, chore: 0, other: 0 };
+}
 
 // Aging WIP threshold: any in-progress issue older than this counts as "aging".
 // Two weeks matches the typical sprint length so anything spilling past one
@@ -317,6 +330,13 @@ function buildSourceControlSummary(args: {
   allLeadTimesMs: number[];
   authorCommitCounts: Record<string, number>;
   totalCommitsInWindow: number;
+  /**
+   * Per-bucket counts from running `classifyCommitMessage` over every
+   * commit's subject in the lookback window. Feeds the cross-connector
+   * investment-split derivation. Pass `emptyCommitClassification()` when
+   * the runner couldn't fetch commit messages.
+   */
+  commitClassification: CommitClassification;
   prsInWindow: number;
   /**
    * Number of merged PRs the runner attempted to fetch detail for. May be
@@ -513,6 +533,18 @@ function buildSourceControlSummary(args: {
       text: "PR size distribution n/a — no PRs in the deep-dive sample.",
     });
   }
+
+  // Commit-message classification — feeds the cross-connector
+  // investment-split derivation. Always emit the bucket (zeros included)
+  // so derived-metrics can tell "no commits classified" apart from "older
+  // run, no key emitted". Stored under `summary.commitClassification`.
+  summary.commitClassification = {
+    bug: args.commitClassification.bug,
+    feature: args.commitClassification.feature,
+    tech_debt: args.commitClassification.tech_debt,
+    chore: args.commitClassification.chore,
+    other: args.commitClassification.other,
+  };
 
   // Commit frequency — commits/day in the window.
   if (args.totalCommitsInWindow > 0) {
@@ -1195,6 +1227,7 @@ async function runGithub(
   }> = [];
   const authorCommitCounts: Record<string, number> = {};
   let totalCommitsInWindow = 0;
+  const commitClassification = emptyCommitClassification();
 
   for (let i = nextDoraIndex; i < repos.length; i += 1) {
     if (!withinBudget(startMs, budgetMs)) {
@@ -1393,7 +1426,10 @@ async function runGithub(
       const commits = await ghFetch<
         Array<{
           sha: string;
-          commit: { author: { date: string; name?: string; email?: string } };
+          commit: {
+            author: { date: string; name?: string; email?: string };
+            message?: string;
+          };
           author: { login: string } | null;
         }>
       >(
@@ -1408,6 +1444,10 @@ async function runGithub(
           c.commit.author?.name ??
           "unknown";
         authorCommitCounts[id] = (authorCommitCounts[id] ?? 0) + 1;
+        // Classify the commit subject for the cross-connector investment
+        // split. We deliberately don't keep the message in memory beyond
+        // this loop iteration to keep the runner footprint flat.
+        commitClassification[classifyCommitMessage(c.commit.message)] += 1;
       }
       recordsCollected += commits.length;
     } catch {
@@ -1459,6 +1499,7 @@ async function runGithub(
     allLeadTimesMs,
     authorCommitCounts,
     totalCommitsInWindow,
+    commitClassification,
     prsInWindow: mergedPrCandidates.length,
     prsAttemptedForDetail: sampledPrs.length,
   });
@@ -2070,6 +2111,7 @@ async function runGitlab(
   }> = [];
   const authorCommitCounts: Record<string, number> = {};
   let totalCommitsInWindow = 0;
+  const commitClassification = emptyCommitClassification();
 
   for (let i = nextProjectIndex; i < projects.length; i += 1) {
     if (!withinBudget(startMs, budgetMs)) {
@@ -2239,11 +2281,19 @@ async function runGitlab(
         const rows = (await cr.json()) as Array<{
           author_email?: string;
           author_name?: string;
+          message?: string;
+          title?: string;
         }>;
         for (const c of rows) {
           totalCommitsInWindow += 1;
           const id = c.author_email ?? c.author_name ?? "unknown";
           authorCommitCounts[id] = (authorCommitCounts[id] ?? 0) + 1;
+          // GitLab returns both `title` (first line) and `message` (full body);
+          // prefer `title` and fall back to `message` so the classifier sees
+          // the same subject line regardless of which field the API populated.
+          commitClassification[
+            classifyCommitMessage(c.title ?? c.message)
+          ] += 1;
         }
         recordsCollected += rows.length;
       }
@@ -2331,6 +2381,7 @@ async function runGitlab(
     allLeadTimesMs,
     authorCommitCounts,
     totalCommitsInWindow,
+    commitClassification,
     prsInWindow: mergedMrCandidates.length,
     prsAttemptedForDetail: sampledMrs.length,
   });
@@ -3853,7 +3904,9 @@ async function runCircleCi(
   // with started_at/stopped_at and status — enough to compute job-level
   // build duration percentiles and (job_name, sha) flaky grouping.
   let jobCallsRemaining = CI_JOBS_WORKFLOW_LIMIT;
-  for (const p of recent.slice(0, 30)) {
+  const recentForJobs = recent.slice(0, 30);
+  for (let i = 0; i < recentForJobs.length; i += 1) {
+    const p = recentForJobs[i]!;
     if (jobCallsRemaining <= 0) {
       jobSampleTruncated = true;
       break;

@@ -35,12 +35,14 @@ import type {
   CreateSurveyInvitesInput,
   DeliverableVersion,
   Deliverables,
+  DerivedMetricsResult,
   Engagement,
   EngagementDashboard,
   EngagementMember,
   Evidence,
   ExportEngagementActivityCsvParams,
   ExportRecord,
+  GetDerivedMetricsParams,
   GetEngagementActivityParams,
   GetPortfolioDistributionHistoryParams,
   GetPortfolioDistributionParams,
@@ -2400,6 +2402,207 @@ export const useRunConnector = <
   TContext
 > => {
   return useMutation(getRunConnectorMutationOptions(options));
+};
+
+/**
+ * Latest cross-connector derived metrics snapshot for an engagement.
+Returns an envelope with `metrics: []` and null timestamps when no
+snapshot has ever been computed (no error). Pass `fresh=1` to compute
+on the fly without writing a new snapshot.
+
+ */
+export const getGetDerivedMetricsUrl = (
+  id: string,
+  params?: GetDerivedMetricsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/engagements/${id}/derived-metrics?${stringifiedParams}`
+    : `/api/engagements/${id}/derived-metrics`;
+};
+
+export const getDerivedMetrics = async (
+  id: string,
+  params?: GetDerivedMetricsParams,
+  options?: RequestInit,
+): Promise<DerivedMetricsResult> => {
+  return customFetch<DerivedMetricsResult>(
+    getGetDerivedMetricsUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetDerivedMetricsQueryKey = (
+  id: string,
+  params?: GetDerivedMetricsParams,
+) => {
+  return [
+    `/api/engagements/${id}/derived-metrics`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDerivedMetricsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDerivedMetrics>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  params?: GetDerivedMetricsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDerivedMetrics>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDerivedMetricsQueryKey(id, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDerivedMetrics>>
+  > = ({ signal }) =>
+    getDerivedMetrics(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDerivedMetrics>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDerivedMetricsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDerivedMetrics>>
+>;
+export type GetDerivedMetricsQueryError = ErrorType<unknown>;
+
+export function useGetDerivedMetrics<
+  TData = Awaited<ReturnType<typeof getDerivedMetrics>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  params?: GetDerivedMetricsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDerivedMetrics>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDerivedMetricsQueryOptions(id, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Recompute and persist a fresh derived-metrics snapshot for an
+engagement. Useful when an upstream connector's config has changed
+but its summary hasn't, or when the rubric needs re-derivation
+without re-running every per-provider connector.
+
+ */
+export const getRunDerivedMetricsUrl = (id: string) => {
+  return `/api/engagements/${id}/derived-metrics`;
+};
+
+export const runDerivedMetrics = async (
+  id: string,
+  options?: RequestInit,
+): Promise<DerivedMetricsResult> => {
+  return customFetch<DerivedMetricsResult>(getRunDerivedMetricsUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRunDerivedMetricsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runDerivedMetrics>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runDerivedMetrics>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["runDerivedMetrics"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runDerivedMetrics>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return runDerivedMetrics(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunDerivedMetricsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runDerivedMetrics>>
+>;
+
+export type RunDerivedMetricsMutationError = ErrorType<unknown>;
+
+export const useRunDerivedMetrics = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runDerivedMetrics>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runDerivedMetrics>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRunDerivedMetricsMutationOptions(options));
 };
 
 /**
