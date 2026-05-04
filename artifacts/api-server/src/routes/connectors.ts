@@ -274,6 +274,7 @@ router.post(
     });
     const result = await verifyConnectorImpl(kind, provider, token, cfg, {
       requestId: (req as typeof req & { id?: string }).id,
+      engagementId: id,
     });
     res.json(result);
   },
@@ -318,7 +319,10 @@ router.post("/connectors/:connectorId/verify", requireConnectorMember, async (re
     c.provider,
     token,
     c.config as Record<string, unknown>,
-    { requestId: (req as typeof req & { id?: string }).id },
+    {
+      requestId: (req as typeof req & { id?: string }).id,
+      engagementId: c.engagementId,
+    },
   );
   res.json(result);
 });

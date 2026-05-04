@@ -1,3 +1,5 @@
+import { eq } from "drizzle-orm";
+import { db, artifactDocsTable } from "@workspace/db";
 import type { Dimension } from "./rubric";
 import { assertSafeUrlResolved } from "./util";
 import { logger } from "./logger";
@@ -250,7 +252,7 @@ function emitIssueTrackingMetrics(
  * can be correlated with the originating API call. Routes pass `req.id`
  * here; the connector emits start/end log lines tagged with that id.
  */
-export type ConnectorCtx = { requestId?: string };
+export type ConnectorCtx = { requestId?: string; engagementId?: string };
 
 // Defense-in-depth: even though connector create/patch validates baseUrl
 // syntactically, we re-check at fetch time *and* resolve DNS so an
@@ -357,7 +359,7 @@ async function runGithub(
       if (wf.workflows.length > 0) totalWorkflowRepos += 1;
       if (
         wf.workflows.some((w) =>
-          /\b(copilot|cursor|claude|openai|llm|ai|cody|codeium)\b/i.test(`${w.name} ${w.path}`),
+          /\b(copilot|cursor|claude|openai|llm|ai|cody|codeium|windsurf|amazon[-_ ]q|amazonq)\b/i.test(`${w.name} ${w.path}`),
         )
       ) {
         aiWorkflowRepos += 1;
@@ -2229,12 +2231,283 @@ async function runJenkins(
   };
 }
 
+// =====================================================================
+// AI tooling connectors
+// ---------------------------------------------------------------------
+// Six sub-providers are supported under the `ai_tooling` kind:
+//   - openai          (admin API, optional)
+//   - anthropic       (models endpoint only — no org users API)
+//   - cursor          (Cursor admin API — members + daily usage)
+//   - claude_code     (Anthropic admin API — org members + usage report)
+//   - windsurf        (no public admin API → CSV upload mode)
+//   - amazon_q        (no public admin API → CSV upload mode)
+//
+// The shared metric shape across providers is:
+//   - seat utilization     (active users ÷ provisioned seats)
+//   - adoption rate        (active users ÷ engineerCount)
+//   - acceptance rate      (suggestions accepted ÷ suggestions seen)
+//
+// For providers without (or alongside) a usable API, the assessor uploads a
+// CSV via the existing artifacts upload flow and references the
+// `csvArtifactId` in the connector config. The CSV schema is:
+//   user,active_days,suggestions_seen,suggestions_accepted
+// =====================================================================
+
+const AI_TOOLING_API_PROVIDERS = new Set([
+  "openai",
+  "anthropic",
+  "cursor",
+  "claude_code",
+]);
+const AI_TOOLING_CSV_ONLY_PROVIDERS = new Set(["windsurf", "amazon_q"]);
+
+interface ParsedAdoptionCsv {
+  rows: number;
+  activeUsers: number;
+  suggestionsSeen: number;
+  suggestionsAccepted: number;
+}
+
+/**
+ * Parse a CSV in the documented schema. Permissive on whitespace and
+ * column order so spreadsheet-exported files Just Work. Throws on missing
+ * required columns so the assessor sees a clear error.
+ *
+ * Required column: `user`. Optional: `active_days`, `suggestions_seen`,
+ * `suggestions_accepted`. Rows with `active_days > 0` are counted as
+ * active users.
+ */
+export function parseAdoptionCsv(text: string): ParsedAdoptionCsv {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) {
+    throw new Error("CSV is empty");
+  }
+  // Strip a possible UTF-8 BOM from the header row.
+  if (lines[0].charCodeAt(0) === 0xfeff) lines[0] = lines[0].slice(1);
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const userIdx = header.indexOf("user");
+  if (userIdx === -1) {
+    throw new Error('CSV missing required "user" column');
+  }
+  const activeIdx = header.indexOf("active_days");
+  const seenIdx = header.indexOf("suggestions_seen");
+  const acceptedIdx = header.indexOf("suggestions_accepted");
+
+  let rows = 0;
+  let activeUsers = 0;
+  let suggestionsSeen = 0;
+  let suggestionsAccepted = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const cols = splitCsvLine(lines[i]);
+    const user = (cols[userIdx] ?? "").trim();
+    if (!user) continue;
+    rows += 1;
+    const active = activeIdx >= 0 ? Number(cols[activeIdx]) : NaN;
+    if (Number.isFinite(active) && active > 0) activeUsers += 1;
+    if (seenIdx >= 0) {
+      const n = Number(cols[seenIdx]);
+      if (Number.isFinite(n) && n > 0) suggestionsSeen += n;
+    }
+    if (acceptedIdx >= 0) {
+      const n = Number(cols[acceptedIdx]);
+      if (Number.isFinite(n) && n > 0) suggestionsAccepted += n;
+    }
+  }
+  return { rows, activeUsers, suggestionsSeen, suggestionsAccepted };
+}
+
+function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else {
+      if (ch === ",") {
+        out.push(cur);
+        cur = "";
+      } else if (ch === '"' && cur.length === 0) {
+        inQuotes = true;
+      } else {
+        cur += ch;
+      }
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+/**
+ * Shared adoption-rate evidence emitter used by every AI-tooling
+ * sub-provider so the People-dimension signal stays consistent across the
+ * five providers. `activeUsers` is the count of engineers with measurable
+ * usage in the recent window; `engineerCount` is the denominator from
+ * connector config (or 0 when the assessor hasn't supplied it).
+ */
+export function computeAdoptionEvidence(
+  activeUsers: number | null,
+  engineerCount: number,
+  providerLabel: string,
+  activeUsersLabel: string,
+): { evidence: CollectedEvidence; adoptionPct: number | null } {
+  if (activeUsers === null) {
+    return {
+      adoptionPct: null,
+      evidence: {
+        dimension: "people",
+        signalType: "gap",
+        stageHint: 2,
+        text: `AI tool adoption rate not measurable for ${providerLabel} via API alone. Upload a usage CSV (csvArtifactId) and set engineerCount, or rely on the adoption-survey module.`,
+      },
+    };
+  }
+  if (engineerCount <= 0) {
+    return {
+      adoptionPct: null,
+      evidence: {
+        dimension: "people",
+        signalType: "quote",
+        text: `AI tool reach: ${activeUsers} ${activeUsersLabel}. Set engineerCount in connector config to compute adoption %.`,
+      },
+    };
+  }
+  const pct = Math.min(100, (activeUsers / engineerCount) * 100);
+  return {
+    adoptionPct: pct,
+    evidence: {
+      dimension: "people",
+      signalType: pct >= 50 ? "strength" : "gap",
+      stageHint: pct >= 80 ? 5 : pct >= 50 ? 4 : pct >= 20 ? 3 : 2,
+      text: `AI tool adoption (${providerLabel}): ~${pct.toFixed(0)}% (${activeUsers} ${activeUsersLabel} / ${engineerCount} engineers).`,
+    },
+  };
+}
+
+/**
+ * Acceptance-rate evidence emitter. `seen` is the number of AI suggestions
+ * the IDE/tool surfaced; `accepted` is the number actually inserted into
+ * code. Quietly returns null when seen=0 — that's a "no usage data" case,
+ * not an acceptance signal.
+ */
+function computeAcceptanceEvidence(
+  accepted: number,
+  seen: number,
+  providerLabel: string,
+): { evidence: CollectedEvidence | null; acceptanceRatePct: number | null } {
+  if (seen <= 0) return { evidence: null, acceptanceRatePct: null };
+  const pct = Math.min(100, (accepted / seen) * 100);
+  return {
+    acceptanceRatePct: pct,
+    evidence: {
+      dimension: "tooling",
+      signalType: pct >= 30 ? "strength" : "gap",
+      stageHint: pct >= 50 ? 4 : pct >= 30 ? 3 : 2,
+      text: `${providerLabel} suggestion acceptance: ~${pct.toFixed(0)}% (${accepted} accepted / ${seen} shown).`,
+    },
+  };
+}
+
+/**
+ * Load the text content of a previously-uploaded artifact by id, scoped
+ * to the engagement attached to the connector. Returns null when the
+ * artifact doesn't exist or the engagement doesn't match (defence in depth
+ * — connector config is per-engagement, but we still verify here).
+ */
+async function loadCsvArtifactText(
+  csvArtifactId: string,
+  engagementId: string | null,
+): Promise<string | null> {
+  if (!csvArtifactId) return null;
+  const [row] = await db
+    .select({
+      content: artifactDocsTable.content,
+      engagementId: artifactDocsTable.engagementId,
+    })
+    .from(artifactDocsTable)
+    .where(eq(artifactDocsTable.id, csvArtifactId))
+    .limit(1);
+  if (!row) return null;
+  if (engagementId && row.engagementId !== engagementId) return null;
+  return row.content ?? "";
+}
+
+/** Friendly label for human-facing evidence text. */
+function aiToolingLabel(provider: string): string {
+  switch (provider) {
+    case "openai":
+      return "OpenAI";
+    case "anthropic":
+      return "Anthropic";
+    case "cursor":
+      return "Cursor";
+    case "claude_code":
+      return "Claude Code";
+    case "windsurf":
+      return "Windsurf";
+    case "amazon_q":
+      return "Amazon Q";
+    default:
+      return provider;
+  }
+}
+
 async function verifyAiTooling(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx,
 ): Promise<ConnectorVerifyResult> {
   const provider = String(config.provider ?? "openai");
+  const csvArtifactId = String(config.csvArtifactId ?? "").trim();
+  const engagementId = ctx.engagementId ?? null;
+  const label = aiToolingLabel(provider);
+
+  // CSV-mode preflight: if a CSV is referenced, validate it parses. This
+  // overrides API verify so an assessor in a no-API shop can still
+  // confirm the connector is wired up correctly.
+  if (csvArtifactId) {
+    const text = await loadCsvArtifactText(csvArtifactId, engagementId);
+    if (text === null) {
+      return { ok: false, message: "csvArtifactId not found in this engagement" };
+    }
+    try {
+      const parsed = parseAdoptionCsv(text);
+      return {
+        ok: true,
+        message: `${label}: CSV-upload mode active (${parsed.rows} users, ${parsed.activeUsers} active). No live API verify performed.`,
+        details: { mode: "csv", ...parsed },
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: `CSV parse failed: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  // CSV-only providers without a CSV → explicit, honest failure status.
+  if (AI_TOOLING_CSV_ONLY_PROVIDERS.has(provider)) {
+    return {
+      ok: false,
+      message: `${label} has no public admin API. Upload a usage CSV via Artifacts and reference its ID in csvArtifactId.`,
+    };
+  }
+
   if (!token) return { ok: false, message: "Token required" };
+
   if (provider === "openai") {
     const r = await fetch("https://api.openai.com/v1/models", {
       headers: { Authorization: `Bearer ${token}` },
@@ -2251,98 +2524,475 @@ async function verifyAiTooling(
       ? { ok: true, message: "Anthropic authenticated" }
       : { ok: false, message: `Anthropic ${r.status}` };
   }
+  if (provider === "cursor") {
+    // Cursor admin API uses HTTP Basic auth: API key as username, empty
+    // password. See https://docs.cursor.com/account/teams/admin-api
+    const auth = Buffer.from(`${token}:`).toString("base64");
+    const r = await fetch("https://api.cursor.com/teams/members", {
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    if (r.ok) {
+      const data = (await r.json()) as { teamMembers?: unknown[] };
+      const n = Array.isArray(data.teamMembers) ? data.teamMembers.length : 0;
+      return { ok: true, message: `Cursor authenticated — ${n} team members visible` };
+    }
+    return { ok: false, message: `Cursor ${r.status}` };
+  }
+  if (provider === "claude_code") {
+    // Anthropic Admin API: requires an admin key (sk-ant-admin01-…). The
+    // org-scoped users endpoint 401s for regular inference keys, so this
+    // doubles as a "did the assessor give us an admin key?" check.
+    const r = await fetch("https://api.anthropic.com/v1/organizations/users?limit=1", {
+      headers: { "x-api-key": token, "anthropic-version": "2023-06-01" },
+    });
+    if (r.ok) {
+      return { ok: true, message: "Claude Code authenticated (Anthropic admin key)" };
+    }
+    if (r.status === 401 || r.status === 403) {
+      return {
+        ok: false,
+        message: `Claude Code: token lacks admin scope (${r.status}). Use an admin API key (sk-ant-admin01-…) or switch to CSV mode.`,
+      };
+    }
+    return { ok: false, message: `Claude Code ${r.status}` };
+  }
   return { ok: true, message: `Token recorded for ${provider} (no live verify available)` };
+}
+
+interface ProviderRunOutcome {
+  /** Number of provisioned seats (org members on the AI tool). */
+  seatsProvisioned: number | null;
+  /** Engineers with measurable usage in the recent window. */
+  activeUsers: number | null;
+  /** Suggestions surfaced by the tool. */
+  suggestionsSeen: number;
+  /** Suggestions accepted into code. */
+  suggestionsAccepted: number;
+  /** Free-form details to merge into the run summary. */
+  details: Record<string, unknown>;
+  /** Records counted toward the run total (HTTP responses, CSV rows, etc). */
+  recordsCollected: number;
+  /** Provider-specific evidence rows (e.g. tooling-dimension reach signal). */
+  extraEvidence: CollectedEvidence[];
+  /** Mode the run executed in — drives the headline summary text. */
+  mode: "api" | "csv" | "none";
+}
+
+async function runAiToolingOpenAI(token: string): Promise<ProviderRunOutcome> {
+  let modelCount = 0;
+  let users: number | null = null;
+  let records = 0;
+  const r = await fetch("https://api.openai.com/v1/models", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (r.ok) {
+    const data = (await r.json()) as { data: unknown[] };
+    modelCount = data.data.length;
+    records += modelCount;
+  }
+  try {
+    const ur = await fetch(
+      "https://api.openai.com/v1/organization/users?limit=100",
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (ur.ok) {
+      const ud = (await ur.json()) as { data: Array<{ id: string }> };
+      users = ud.data.length;
+      records += users;
+    }
+  } catch {
+    // non-admin keys 403 here — that's expected.
+  }
+  return {
+    seatsProvisioned: users,
+    // OpenAI's API exposes membership but not per-user activity, so
+    // we treat membership as the activity proxy. The survey module is
+    // the right place for true usage adoption.
+    activeUsers: users,
+    suggestionsSeen: 0,
+    suggestionsAccepted: 0,
+    details: { modelsAvailable: modelCount, orgMembers: users },
+    recordsCollected: records,
+    extraEvidence: [
+      {
+        dimension: "tooling",
+        signalType: modelCount > 0 ? "strength" : "gap",
+        stageHint: modelCount > 0 ? 3 : 2,
+        text: `OpenAI configured with ${modelCount} models accessible.`,
+      },
+    ],
+    mode: "api",
+  };
+}
+
+async function runAiToolingAnthropic(token: string): Promise<ProviderRunOutcome> {
+  let modelCount = 0;
+  const r = await fetch("https://api.anthropic.com/v1/models", {
+    headers: { "x-api-key": token, "anthropic-version": "2023-06-01" },
+  });
+  if (r.ok) {
+    const data = (await r.json()) as { data: unknown[] };
+    modelCount = data.data.length;
+  }
+  return {
+    seatsProvisioned: null,
+    activeUsers: null,
+    suggestionsSeen: 0,
+    suggestionsAccepted: 0,
+    details: { modelsAvailable: modelCount },
+    recordsCollected: modelCount,
+    extraEvidence: [
+      {
+        dimension: "tooling",
+        signalType: modelCount > 0 ? "strength" : "gap",
+        stageHint: modelCount > 0 ? 3 : 2,
+        text: `Anthropic configured with ${modelCount} models accessible.`,
+      },
+    ],
+    mode: "api",
+  };
+}
+
+async function runAiToolingCursor(token: string): Promise<ProviderRunOutcome> {
+  const auth = Buffer.from(`${token}:`).toString("base64");
+  const headers: Record<string, string> = {
+    Authorization: `Basic ${auth}`,
+    "Content-Type": "application/json",
+  };
+  let seats = 0;
+  let records = 0;
+  try {
+    const mr = await fetch("https://api.cursor.com/teams/members", { headers });
+    if (mr.ok) {
+      const data = (await mr.json()) as { teamMembers?: Array<{ email: string }> };
+      seats = Array.isArray(data.teamMembers) ? data.teamMembers.length : 0;
+      records += seats;
+    }
+  } catch {
+    // network/permission issues fall through to the gap evidence below.
+  }
+  // Daily usage data over the last 30 days. Cursor's endpoint expects
+  // unix-millisecond startDate/endDate. Per-day rows include per-user
+  // activity counts and suggestion acceptance figures.
+  const now = Date.now();
+  const startDate = now - 30 * 86_400_000;
+  let suggestionsSeen = 0;
+  let suggestionsAccepted = 0;
+  const activeEmails = new Set<string>();
+  try {
+    const ur = await fetch("https://api.cursor.com/teams/daily-usage-data", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ startDate, endDate: now }),
+    });
+    if (ur.ok) {
+      const data = (await ur.json()) as {
+        data?: Array<{
+          email?: string;
+          isActive?: boolean;
+          totalLinesAdded?: number;
+          acceptedLinesAdded?: number;
+          totalTabsShown?: number;
+          totalTabsAccepted?: number;
+        }>;
+      };
+      const rows = Array.isArray(data.data) ? data.data : [];
+      records += rows.length;
+      for (const row of rows) {
+        if (row.email && (row.isActive || (row.totalLinesAdded ?? 0) > 0)) {
+          activeEmails.add(row.email);
+        }
+        suggestionsSeen += Number(row.totalTabsShown ?? 0);
+        suggestionsAccepted += Number(row.totalTabsAccepted ?? 0);
+      }
+    }
+  } catch {
+    // ignore — emit what we have.
+  }
+  return {
+    seatsProvisioned: seats || null,
+    activeUsers: activeEmails.size > 0 ? activeEmails.size : seats || null,
+    suggestionsSeen,
+    suggestionsAccepted,
+    details: {
+      seatsProvisioned: seats,
+      activeUsers30d: activeEmails.size,
+      suggestionsSeen,
+      suggestionsAccepted,
+    },
+    recordsCollected: records,
+    extraEvidence:
+      seats > 0
+        ? [
+            {
+              dimension: "tooling",
+              signalType: "strength",
+              stageHint: 3,
+              text: `Cursor team has ${seats} provisioned seats; ${activeEmails.size} active in the last 30 days.`,
+            },
+          ]
+        : [],
+    mode: "api",
+  };
+}
+
+async function runAiToolingClaudeCode(token: string): Promise<ProviderRunOutcome> {
+  let seats = 0;
+  let records = 0;
+  // Org members → seat count proxy.
+  try {
+    const ur = await fetch(
+      "https://api.anthropic.com/v1/organizations/users?limit=100",
+      { headers: { "x-api-key": token, "anthropic-version": "2023-06-01" } },
+    );
+    if (ur.ok) {
+      const data = (await ur.json()) as { data: Array<{ id: string }> };
+      seats = data.data.length;
+      records += seats;
+    }
+  } catch {
+    // fall through
+  }
+  // Anthropic Admin usage report. We don't compute acceptance from this
+  // endpoint (it surfaces tokens, not per-suggestion outcomes), but we do
+  // count distinct workspaces/users with non-zero usage as the activity
+  // signal for adoption.
+  const activeUsers = new Set<string>();
+  try {
+    const ur = await fetch(
+      "https://api.anthropic.com/v1/organizations/usage_report/messages?limit=100",
+      { headers: { "x-api-key": token, "anthropic-version": "2023-06-01" } },
+    );
+    if (ur.ok) {
+      const data = (await ur.json()) as {
+        data?: Array<{
+          api_key_id?: string;
+          workspace_id?: string;
+          uncached_input_tokens?: number;
+        }>;
+      };
+      const rows = Array.isArray(data.data) ? data.data : [];
+      records += rows.length;
+      for (const row of rows) {
+        const id = row.api_key_id ?? row.workspace_id ?? "";
+        if (id && (row.uncached_input_tokens ?? 0) > 0) activeUsers.add(id);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return {
+    seatsProvisioned: seats || null,
+    activeUsers: activeUsers.size > 0 ? activeUsers.size : seats || null,
+    suggestionsSeen: 0,
+    suggestionsAccepted: 0,
+    details: {
+      orgMembers: seats,
+      activeApiKeysOrWorkspaces: activeUsers.size,
+    },
+    recordsCollected: records,
+    extraEvidence:
+      seats > 0
+        ? [
+            {
+              dimension: "tooling",
+              signalType: "strength",
+              stageHint: 3,
+              text: `Claude Code (Anthropic org) has ${seats} provisioned members; ${activeUsers.size} active API keys/workspaces in the recent usage window.`,
+            },
+          ]
+        : [],
+    mode: "api",
+  };
+}
+
+function runAiToolingFromCsv(
+  provider: string,
+  csv: ParsedAdoptionCsv,
+): ProviderRunOutcome {
+  const label = aiToolingLabel(provider);
+  return {
+    seatsProvisioned: csv.rows,
+    activeUsers: csv.activeUsers,
+    suggestionsSeen: csv.suggestionsSeen,
+    suggestionsAccepted: csv.suggestionsAccepted,
+    details: {
+      mode: "csv",
+      csvRows: csv.rows,
+      csvActiveUsers: csv.activeUsers,
+      csvSuggestionsSeen: csv.suggestionsSeen,
+      csvSuggestionsAccepted: csv.suggestionsAccepted,
+    },
+    recordsCollected: csv.rows,
+    extraEvidence:
+      csv.rows > 0
+        ? [
+            {
+              dimension: "tooling",
+              signalType: "strength",
+              stageHint: 3,
+              text: `${label} usage CSV ingested: ${csv.rows} users (${csv.activeUsers} active in window).`,
+            },
+          ]
+        : [
+            {
+              dimension: "tooling",
+              signalType: "gap",
+              stageHint: 2,
+              text: `${label} usage CSV had no rows.`,
+            },
+          ],
+    mode: "csv",
+  };
 }
 
 async function runAiTooling(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx,
 ): Promise<ConnectorRunResult> {
   const provider = String(config.provider ?? "openai");
-  // engineerCount is the denominator for adoption rate. Assessors enter this
-  // as part of connector config (or it can come from the People module);
-  // when absent, we emit raw counts and an explicit gap.
+  const label = aiToolingLabel(provider);
+  // engineerCount is the denominator for adoption rate. Assessors enter
+  // this as part of connector config (or it can come from the People
+  // module); when absent, we emit raw counts and an explicit gap.
   const engineerCount = Number(config.engineerCount ?? 0);
-  let modelCount = 0;
-  let aiUsersCount: number | null = null;
-  let aiUsersLabel = "";
-  const evidence: CollectedEvidence[] = [];
+  const csvArtifactId = String(config.csvArtifactId ?? "").trim();
+  const engagementId = ctx.engagementId ?? null;
 
-  if (provider === "openai") {
-    const r = await fetch("https://api.openai.com/v1/models", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (r.ok) {
-      const data = (await r.json()) as { data: unknown[] };
-      modelCount = data.data.length;
+  let outcome: ProviderRunOutcome;
+
+  // CSV mode trumps API mode. If a CSV is referenced, parse it and short-
+  // circuit the API path — the assessor explicitly chose this mode.
+  if (csvArtifactId) {
+    const text = await loadCsvArtifactText(csvArtifactId, engagementId);
+    if (text === null) {
+      return {
+        recordsCollected: 0,
+        summary: { provider, error: "csvArtifactId not found", mode: "csv" },
+        evidence: [
+          {
+            dimension: "tooling",
+            signalType: "gap",
+            text: `${label} connector references csvArtifactId ${csvArtifactId} which was not found in this engagement.`,
+          },
+        ],
+      };
     }
-    // OpenAI Admin API: count users with org access. This is the single
-    // non-survey adoption signal OpenAI exposes (paid endpoint, requires an
-    // admin key — silently degrades if the token is a regular project key).
     try {
-      const ur = await fetch(
-        "https://api.openai.com/v1/organization/users?limit=100",
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      if (ur.ok) {
-        const ud = (await ur.json()) as { data: Array<{ id: string }> };
-        aiUsersCount = ud.data.length;
-        aiUsersLabel = "OpenAI org members";
-      }
-    } catch {
-      // ignore — non-admin tokens 403 here, which is expected.
+      outcome = runAiToolingFromCsv(provider, parseAdoptionCsv(text));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "CSV parse failed";
+      return {
+        recordsCollected: 0,
+        summary: { provider, error: msg, mode: "csv" },
+        evidence: [
+          {
+            dimension: "tooling",
+            signalType: "gap",
+            text: `${label} CSV parse failed: ${msg}`,
+          },
+        ],
+      };
     }
-  } else if (provider === "anthropic") {
-    const r = await fetch("https://api.anthropic.com/v1/models", {
-      headers: { "x-api-key": token, "anthropic-version": "2023-06-01" },
-    });
-    if (r.ok) {
-      const data = (await r.json()) as { data: unknown[] };
-      modelCount = data.data.length;
+  } else if (AI_TOOLING_CSV_ONLY_PROVIDERS.has(provider)) {
+    return {
+      recordsCollected: 0,
+      summary: { provider, mode: "none", note: "CSV upload required" },
+      evidence: [
+        {
+          dimension: "tooling",
+          signalType: "gap",
+          stageHint: 2,
+          text: `${label} has no public admin API. Upload a usage CSV via Artifacts and set csvArtifactId in this connector's config.`,
+        },
+      ],
+    };
+  } else if (AI_TOOLING_API_PROVIDERS.has(provider)) {
+    if (!token) {
+      return {
+        recordsCollected: 0,
+        summary: { provider, error: "Token required", mode: "none" },
+        evidence: [
+          {
+            dimension: "tooling",
+            signalType: "gap",
+            text: `${label} connector configured but no token saved.`,
+          },
+        ],
+      };
     }
-    // Anthropic does not expose an organization users endpoint publicly;
-    // adoption stays null and we emit a gap that points at the survey.
-  }
-
-  evidence.push({
-    dimension: "tooling",
-    signalType: modelCount > 0 ? "strength" : "gap",
-    stageHint: modelCount > 0 ? 3 : 2,
-    text: `AI tooling provider "${provider}" configured with ${modelCount} models accessible.`,
-  });
-
-  let adoptionPct: number | null = null;
-  if (aiUsersCount !== null && engineerCount > 0) {
-    adoptionPct = Math.min(100, (aiUsersCount / engineerCount) * 100);
-    evidence.push({
-      dimension: "people",
-      signalType: adoptionPct >= 50 ? "strength" : "gap",
-      stageHint: adoptionPct >= 80 ? 5 : adoptionPct >= 50 ? 4 : adoptionPct >= 20 ? 3 : 2,
-      text: `AI tool adoption: ~${adoptionPct.toFixed(0)}% (${aiUsersCount} ${aiUsersLabel} / ${engineerCount} engineers).`,
-    });
-  } else if (aiUsersCount !== null) {
-    evidence.push({
-      dimension: "people",
-      signalType: "quote",
-      text: `AI tool reach: ${aiUsersCount} ${aiUsersLabel}. Set engineerCount in connector config to compute adoption %.`,
-    });
+    if (provider === "openai") outcome = await runAiToolingOpenAI(token);
+    else if (provider === "anthropic") outcome = await runAiToolingAnthropic(token);
+    else if (provider === "cursor") outcome = await runAiToolingCursor(token);
+    else outcome = await runAiToolingClaudeCode(token);
   } else {
+    return {
+      recordsCollected: 0,
+      summary: { provider, error: `Unknown AI tooling provider: ${provider}` },
+      evidence: [],
+    };
+  }
+
+  const evidence: CollectedEvidence[] = [...outcome.extraEvidence];
+
+  // Seat utilization: only meaningful when both seats and activeUsers are
+  // present and seats > 0. Reported under tooling because it measures how
+  // well the licensed footprint is being used.
+  let seatUtilizationPct: number | null = null;
+  if (
+    outcome.seatsProvisioned !== null &&
+    outcome.seatsProvisioned > 0 &&
+    outcome.activeUsers !== null
+  ) {
+    seatUtilizationPct = Math.min(
+      100,
+      (outcome.activeUsers / outcome.seatsProvisioned) * 100,
+    );
     evidence.push({
-      dimension: "people",
-      signalType: "gap",
-      stageHint: 2,
-      text: `AI tool adoption rate not measurable for ${provider} via API alone. Provide an admin token (OpenAI) and engineerCount in config, or rely on the adoption-survey module.`,
+      dimension: "tooling",
+      signalType: seatUtilizationPct >= 60 ? "strength" : "gap",
+      stageHint: seatUtilizationPct >= 80 ? 4 : seatUtilizationPct >= 60 ? 3 : 2,
+      text: `${label} seat utilization: ~${seatUtilizationPct.toFixed(0)}% (${outcome.activeUsers} active / ${outcome.seatsProvisioned} seats).`,
     });
   }
+
+  // Adoption: shared helper so all five AI-tooling providers feed the same
+  // People-dimension metric consistently.
+  const adoption = computeAdoptionEvidence(
+    outcome.activeUsers,
+    engineerCount,
+    label,
+    "active users",
+  );
+  evidence.push(adoption.evidence);
+
+  // Acceptance rate (Cursor + CSV-mode for any provider that included
+  // suggestions_seen/accepted). Anthropic/OpenAI APIs don't surface this.
+  const acceptance = computeAcceptanceEvidence(
+    outcome.suggestionsAccepted,
+    outcome.suggestionsSeen,
+    label,
+  );
+  if (acceptance.evidence) evidence.push(acceptance.evidence);
 
   return {
-    recordsCollected: modelCount + (aiUsersCount ?? 0),
+    recordsCollected: outcome.recordsCollected,
     summary: {
       provider,
-      modelsAvailable: modelCount,
-      aiUsersCount,
+      mode: outcome.mode,
       engineerCount: engineerCount || null,
-      adoptionRatePct: adoptionPct === null ? null : Number(adoptionPct.toFixed(1)),
+      seatsProvisioned: outcome.seatsProvisioned,
+      activeUsers: outcome.activeUsers,
+      seatUtilizationPct:
+        seatUtilizationPct === null ? null : Number(seatUtilizationPct.toFixed(1)),
+      adoptionRatePct:
+        adoption.adoptionPct === null ? null : Number(adoption.adoptionPct.toFixed(1)),
+      acceptanceRatePct:
+        acceptance.acceptanceRatePct === null
+          ? null
+          : Number(acceptance.acceptanceRatePct.toFixed(1)),
+      ...outcome.details,
     },
     evidence,
   };
@@ -2718,7 +3368,7 @@ export async function verifyConnector(
         result = await verifyCicd(token, cfg);
         break;
       case "ai_tooling":
-        result = await verifyAiTooling(token, cfg);
+        result = await verifyAiTooling(token, cfg, ctx);
         break;
       case "azure_devops":
         result = await verifyAzureDevops(token, cfg);
@@ -2763,7 +3413,7 @@ export async function runConnector(
         result = await runCicd(token, cfg);
         break;
       case "ai_tooling":
-        result = await runAiTooling(token, cfg);
+        result = await runAiTooling(token, cfg, ctx);
         break;
       case "azure_devops":
         result = await runAzureDevops(token, cfg);

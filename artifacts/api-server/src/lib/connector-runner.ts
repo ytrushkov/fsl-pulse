@@ -105,7 +105,7 @@ export async function executeConnectorRun(
       c.provider,
       token,
       c.config as Record<string, unknown>,
-      { requestId: opts.requestId },
+      { requestId: opts.requestId, engagementId: c.engagementId },
     );
 
     if (out.evidence && out.evidence.length > 0) {

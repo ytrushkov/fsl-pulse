@@ -248,13 +248,15 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
     providerOptions: [
       { value: "openai", label: "OpenAI" },
       { value: "anthropic", label: "Anthropic" },
-      { value: "copilot", label: "GitHub Copilot (manual)" },
-      { value: "cursor", label: "Cursor (manual)" },
+      { value: "cursor", label: "Cursor (admin API)" },
+      { value: "claude_code", label: "Claude Code (Anthropic admin API)" },
+      { value: "windsurf", label: "Windsurf (CSV upload)" },
+      { value: "amazon_q", label: "Amazon Q (CSV upload)" },
     ],
     tokenLabel: "API key",
     tokenPlaceholder: "sk-…",
     tokenHelp:
-      "Use an admin/org-scoped key when available so usage data can be queried. Read-only inference keys work but adoption metrics will be unavailable.",
+      "Use an admin/org-scoped key when available so usage data can be queried. Read-only inference keys work but adoption metrics will be unavailable. CSV-only providers (Windsurf, Amazon Q) ignore the token — leave it blank.",
     tokenDocsUrl: "https://platform.openai.com/api-keys",
     fields: [
       {
@@ -263,7 +265,15 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
         type: "number",
         placeholder: "e.g. 80",
         description:
-          "Optional. Used to compute adoption rate (active AI users ÷ engineer count).",
+          "Optional. Used to compute adoption rate (active AI users ÷ engineer count). Shared across every AI-tooling provider.",
+      },
+      {
+        key: "csvArtifactId",
+        label: "Usage CSV artifact ID (optional)",
+        type: "text",
+        placeholder: "uuid of an uploaded artifact",
+        description:
+          "Required for Windsurf/Amazon Q (no public admin API). Optional fallback for the other providers. Upload a CSV via the Artifacts tab with header: user,active_days,suggestions_seen,suggestions_accepted — then paste the artifact's ID here.",
       },
     ],
   },
