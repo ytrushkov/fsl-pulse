@@ -892,6 +892,9 @@ async function verifyCicd(
     // gitlab_ci would Run successfully but Verify would always fail.
     return verifyGitlab(token, config);
   }
+  if (provider === "jenkins") {
+    return verifyJenkins(token, config);
+  }
   return { ok: false, message: `Unknown CI/CD provider: ${provider}` };
 }
 
@@ -918,8 +921,17 @@ async function runCicd(
     // pipeline metrics path so deploy/change-fail come out normalized.
     return runGitlab(token, config);
   }
-  // Truly unsupported providers (e.g. self-hosted Jenkins without a stable
-  // public API) get an explicit "no collector available" gap so the
+  if (provider === "jenkins") {
+    const out = await runJenkins(token, config);
+    out.evidence.push({
+      dimension: "process",
+      signalType: "strength",
+      stageHint: 3,
+      text: "CI/CD pipeline (Jenkins) actively in use.",
+    });
+    return out;
+  }
+  // Unknown providers get an explicit "no collector available" gap so the
   // dimension is visibly uncovered.
   return {
     recordsCollected: 0,
@@ -929,7 +941,7 @@ async function runCicd(
         dimension: "process",
         signalType: "gap",
         stageHint: 1,
-        text: `CI/CD connector configured for ${provider}, but no automated collector exists for this provider yet. Add a GitHub Actions, GitLab CI, or CircleCI connector for DORA coverage.`,
+        text: `CI/CD connector configured for ${provider}, but no automated collector exists for this provider yet. Add a GitHub Actions, GitLab CI, CircleCI, or Jenkins connector for DORA coverage.`,
       },
     ],
   };
@@ -1043,6 +1055,237 @@ async function runCircleCi(
   }
   return {
     recordsCollected: workflowsTotal + recent.length,
+    summary,
+    evidence,
+  };
+}
+
+// ---- Jenkins -----------------------------------------------------------
+// Jenkins exposes a JSON crumb at <baseUrl>/api/json that returns server
+// metadata (nodeName, version, jobs[]). We authenticate with HTTP Basic
+// (`username:apiToken`) since the API token IS the per-user PAT in Jenkins.
+// Read-only API consumption only — we never write back.
+
+interface JenkinsBuild {
+  number: number;
+  result: string | null;
+  timestamp: number;
+  duration: number;
+}
+interface JenkinsJobNode {
+  _class?: string;
+  name: string;
+  jobs?: JenkinsJobNode[];
+  builds?: JenkinsBuild[];
+}
+
+function isJenkinsFolder(klass: string | undefined): boolean {
+  // Common Jenkins container classes that don't have builds of their own
+  // but contain nested jobs we should recurse into.
+  const k = klass ?? "";
+  return (
+    k.includes("Folder") ||
+    k.includes("WorkflowMultiBranchProject") ||
+    k.includes("OrganizationFolder")
+  );
+}
+
+async function verifyJenkins(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorVerifyResult> {
+  const baseUrl = String(config.baseUrl ?? "").replace(/\/$/, "");
+  const username = String(config.username ?? "");
+  if (!baseUrl) return { ok: false, message: "baseUrl required in config" };
+  if (!username) return { ok: false, message: "username required in config" };
+  if (!token) return { ok: false, message: "API token required" };
+  try {
+    // SSRF guard: same defense-in-depth pattern as GitLab/Jira — block
+    // private hosts before issuing the request even though create/patch
+    // already validates baseUrl syntactically.
+    await assertSafeUrl(baseUrl);
+    const auth = Buffer.from(`${username}:${token}`).toString("base64");
+    const r = await fetch(`${baseUrl}/api/json`, {
+      headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+    });
+    if (r.status === 401 || r.status === 403) {
+      return {
+        ok: false,
+        message: `Jenkins auth failed (HTTP ${r.status}). Check username and API token.`,
+      };
+    }
+    if (!r.ok) throw new Error(`Jenkins ${r.status}`);
+    const data = (await r.json()) as {
+      nodeName?: string;
+      jobs?: unknown[];
+    };
+    const jobCount = Array.isArray(data.jobs) ? data.jobs.length : 0;
+    const node = data.nodeName ? ` (node: ${data.nodeName || "master"})` : "";
+    return {
+      ok: true,
+      message: `Authenticated to Jenkins as ${username}${node}`,
+      details: { username, jobCount },
+    };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Verify failed" };
+  }
+}
+
+async function runJenkins(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorRunResult> {
+  const baseUrl = String(config.baseUrl ?? "").replace(/\/$/, "");
+  const username = String(config.username ?? "");
+  const jobFilterRaw = String(config.jobFilter ?? "").trim();
+  if (!baseUrl || !username) {
+    return {
+      recordsCollected: 0,
+      summary: { provider: "jenkins" },
+      evidence: [
+        {
+          dimension: "process",
+          signalType: "gap",
+          stageHint: 1,
+          text: "Jenkins connector missing baseUrl or username — cannot collect.",
+        },
+      ],
+    };
+  }
+  await assertSafeUrl(baseUrl);
+  let jobFilter: RegExp | null = null;
+  if (jobFilterRaw) {
+    try {
+      jobFilter = new RegExp(jobFilterRaw);
+    } catch {
+      // Invalid regex falls back to "no filter" rather than failing the run;
+      // the assessor still sees the recorded summary.
+      jobFilter = null;
+    }
+  }
+  const auth = Buffer.from(`${username}:${token}`).toString("base64");
+  const headers = {
+    Authorization: `Basic ${auth}`,
+    Accept: "application/json",
+  };
+
+  // Walk jobs (paginating through folders), accumulating real jobs with
+  // their recent builds. Depth is capped to avoid runaway recursion on
+  // pathologically nested folder trees.
+  const collectedJobs: Array<{ fullName: string; builds: JenkinsBuild[] }> = [];
+  const MAX_DEPTH = 5;
+
+  async function walk(url: string, prefix: string, depth: number): Promise<void> {
+    if (depth > MAX_DEPTH) return;
+    const r = await fetch(
+      `${url}/api/json?tree=jobs[name,_class,builds[number,result,timestamp,duration]]`,
+      { headers },
+    );
+    if (!r.ok) {
+      // Surface auth/permission failures (and any other non-OK) as a real
+      // run failure so it shows up in run history instead of being masked
+      // as "no builds found". Matches the other CI/CD providers.
+      throw new Error(`Jenkins ${r.status}: ${await r.text()}`);
+    }
+    const data = (await r.json()) as { jobs?: JenkinsJobNode[] };
+    for (const j of data.jobs ?? []) {
+      const fullName = prefix ? `${prefix}/${j.name}` : j.name;
+      if (isJenkinsFolder(j._class)) {
+        await walk(`${url}/job/${encodeURIComponent(j.name)}`, fullName, depth + 1);
+      } else {
+        if (jobFilter && !jobFilter.test(fullName)) continue;
+        collectedJobs.push({
+          fullName,
+          builds: Array.isArray(j.builds) ? j.builds : [],
+        });
+      }
+    }
+  }
+
+  await walk(baseUrl, "", 0);
+
+  // Lookback window matches the other providers (30 days). Builds with
+  // `result === null` are still running and excluded from totals.
+  const sinceMs = Date.now() - 30 * 86_400_000;
+  let total = 0;
+  let succeeded = 0;
+  let failed = 0;
+  let durationSumMs = 0;
+  let durationCount = 0;
+  for (const j of collectedJobs) {
+    for (const b of j.builds) {
+      if (typeof b.timestamp !== "number" || b.timestamp < sinceMs) continue;
+      if (b.result === null) continue;
+      total += 1;
+      if (b.result === "SUCCESS") succeeded += 1;
+      // CFR per task spec: FAILURE + UNSTABLE ÷ total. ABORTED/NOT_BUILT
+      // are excluded from both numerator and "successful deploys" so they
+      // don't distort either DORA proxy.
+      if (b.result === "FAILURE" || b.result === "UNSTABLE") failed += 1;
+      if (typeof b.duration === "number" && b.duration > 0) {
+        durationSumMs += b.duration;
+        durationCount += 1;
+      }
+    }
+  }
+
+  const evidence: CollectedEvidence[] = [];
+  const summary: Record<string, unknown> = {
+    provider: "jenkins",
+    jobCount: collectedJobs.length,
+    builds30d: total,
+    buildsSucceeded30d: succeeded,
+    buildsFailed30d: failed,
+    // Jenkins has no incident concept; MTTR comes from a paired Jira/Linear/
+    // GitHub connector.
+    mttrHoursAvg: null,
+  };
+
+  if (succeeded > 0) {
+    const deploysPerDay = succeeded / 30;
+    summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
+    evidence.push({
+      dimension: "process",
+      signalType: deploysPerDay >= 1 ? "strength" : "gap",
+      stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
+      text: `Deployment frequency (Jenkins): ~${deploysPerDay.toFixed(2)} successful builds/day across ${collectedJobs.length} jobs (30d).`,
+    });
+  }
+  if (total > 0) {
+    const cfr = failed / total;
+    summary.changeFailureRate = Number(cfr.toFixed(3));
+    evidence.push({
+      dimension: "measurement",
+      signalType: cfr <= 0.15 ? "strength" : "gap",
+      stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
+      text: `Change failure rate (Jenkins): ${(cfr * 100).toFixed(1)}% (${failed}/${total} builds FAILURE/UNSTABLE, 30d).`,
+    });
+  }
+  if (durationCount > 0) {
+    const avgMin = durationSumMs / durationCount / 60_000;
+    summary.buildDurationMinutesAvg = Number(avgMin.toFixed(1));
+    // We surface average build duration as the lead-time-style signal
+    // because Jenkins has no PR concept of its own — the build IS the
+    // deploy, so its duration is the closest proxy to "time to ship".
+    summary.leadTimeHoursAvg = Number((avgMin / 60).toFixed(2));
+    evidence.push({
+      dimension: "process",
+      signalType: avgMin <= 30 ? "strength" : "gap",
+      stageHint: avgMin <= 10 ? 5 : avgMin <= 30 ? 4 : avgMin <= 60 ? 3 : 2,
+      text: `Build duration (Jenkins): avg ${avgMin.toFixed(1)} minutes per build (n=${durationCount}, 30d).`,
+    });
+  }
+  if (total === 0) {
+    evidence.push({
+      dimension: "process",
+      signalType: "gap",
+      stageHint: 1,
+      text: `No Jenkins builds found in the last 30 days across ${collectedJobs.length} discovered jobs.`,
+    });
+  }
+
+  return {
+    recordsCollected: total + collectedJobs.length,
     summary,
     evidence,
   };

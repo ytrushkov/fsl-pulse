@@ -178,11 +178,12 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
       { value: "github_actions", label: "GitHub Actions" },
       { value: "circleci", label: "CircleCI" },
       { value: "gitlab_ci", label: "GitLab CI" },
+      { value: "jenkins", label: "Jenkins" },
     ],
     tokenLabel: "API token",
-    tokenPlaceholder: "ghp_… or circle-token or glpat-…",
+    tokenPlaceholder: "ghp_… or circle-token or glpat-… or Jenkins API token",
     tokenHelp:
-      "GitHub Actions uses a GitHub PAT (repo + workflow). CircleCI uses a personal API token. GitLab CI reuses a GitLab PAT (read_api).",
+      "GitHub Actions uses a GitHub PAT (repo + workflow). CircleCI uses a personal API token. GitLab CI reuses a GitLab PAT (read_api). Jenkins uses the per-user API token paired with the username field.",
     tokenDocsUrl: "https://github.com/settings/tokens",
     fields: [
       {
@@ -210,6 +211,33 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
         placeholder: "engineering",
         required: true,
         whenProvider: ["gitlab_ci"],
+      },
+      {
+        key: "baseUrl",
+        label: "Jenkins base URL",
+        type: "url",
+        placeholder: "https://jenkins.acme.com",
+        description: "Public Jenkins controller URL (no trailing slash).",
+        required: true,
+        whenProvider: ["jenkins"],
+      },
+      {
+        key: "username",
+        label: "Jenkins username",
+        type: "text",
+        placeholder: "ci-readonly",
+        description: "User the API token belongs to. Combined into HTTP Basic auth.",
+        required: true,
+        whenProvider: ["jenkins"],
+      },
+      {
+        key: "jobFilter",
+        label: "Job filter (optional)",
+        type: "text",
+        placeholder: "^prod-.*",
+        description:
+          "Optional regex matched against the full job path (e.g. 'folder/job'). When set, only matching jobs contribute to DORA metrics.",
+        whenProvider: ["jenkins"],
       },
     ],
   },
