@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,7 +45,12 @@ const PRIORITY_RANK: Record<ActionItemPriority, number> = {
 // Each step down in priority order shifts the bar one week to the right so
 // higher-priority items visibly start sooner while still allowing overlap.
 const STAGGER_WEEKS = 1;
-const PIXELS_PER_WEEK = 22;
+// Minimum bar density so a long timeline (many weeks) still gets a horizontal
+// scroll instead of squishing every label to nothing. The actual pixels-per-
+// week used at render time is computed responsively from the container width
+// so that short timelines stretch to fill the whole panel instead of leaving
+// the right half blank.
+const MIN_PIXELS_PER_WEEK = 22;
 
 interface DerivedBar {
   item: ActionItem;
@@ -108,6 +113,27 @@ function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
   }, [derived]);
   const months = useMemo(() => buildMonthSegments(totalWeeks, today), [totalWeeks, today]);
 
+  // Measure the scroll container so pixels-per-week stretches to fill the
+  // available width when the timeline is short, and falls back to the minimum
+  // (with horizontal scroll) when it would otherwise crush the labels. We
+  // intentionally observe the wrapping div, not the inner grid, because the
+  // inner grid's width is what we're computing.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => setContainerWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const pixelsPerWeek = useMemo(() => {
+    if (containerWidth <= 0 || totalWeeks <= 0) return MIN_PIXELS_PER_WEEK;
+    return Math.max(MIN_PIXELS_PER_WEEK, containerWidth / totalWeeks);
+  }, [containerWidth, totalWeeks]);
+
   if (derived.length === 0) return null;
 
   const handleBarClick = (id: string) => {
@@ -135,7 +161,7 @@ function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
     }
   };
 
-  const widthPx = totalWeeks * PIXELS_PER_WEEK;
+  const widthPx = totalWeeks * pixelsPerWeek;
 
   return (
     <div className="mb-6 border rounded-md shadow-sm bg-card overflow-hidden">
@@ -145,13 +171,13 @@ function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
           {derived.length} {derived.length === 1 ? "initiative" : "initiatives"} · ~{totalWeeks} weeks
         </span>
       </div>
-      <div className="overflow-x-auto">
-        <div style={{ minWidth: `${widthPx}px` }}>
+      <div ref={scrollRef} className="overflow-x-auto">
+        <div style={{ width: `${widthPx}px`, minWidth: "100%" }}>
           <div className="flex border-b">
             {months.map((m, i) => (
               <div
                 key={`${m.label}-${i}`}
-                style={{ width: `${m.weeks * PIXELS_PER_WEEK}px` }}
+                style={{ width: `${m.weeks * pixelsPerWeek}px` }}
                 className="px-2 py-1 text-xs font-medium text-muted-foreground border-r last:border-r-0 bg-muted/20"
               >
                 {m.label}
@@ -162,7 +188,7 @@ function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
             {Array.from({ length: totalWeeks }).map((_, w) => (
               <div
                 key={w}
-                style={{ width: `${PIXELS_PER_WEEK}px` }}
+                style={{ width: `${pixelsPerWeek}px` }}
                 className="py-0.5 text-center text-[10px] text-muted-foreground/60 border-r border-border/40 last:border-r-0"
               >
                 {w + 1}
@@ -180,8 +206,8 @@ function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
                       aria-label={`${item.initiative} — ${item.dimension}, effort ${item.effort}, impact ${item.impact}`}
                       className="absolute h-6 top-0.5 rounded-sm border border-white/40 hover:ring-2 hover:ring-foreground/40 focus-visible:ring-2 focus-visible:ring-foreground/60 outline-none transition flex items-center px-2 text-xs text-white overflow-hidden"
                       style={{
-                        left: `${startWeek * PIXELS_PER_WEEK}px`,
-                        width: `${Math.max(widthWeeks * PIXELS_PER_WEEK, 16)}px`,
+                        left: `${startWeek * pixelsPerWeek}px`,
+                        width: `${Math.max(widthWeeks * pixelsPerWeek, 16)}px`,
                         backgroundColor: color,
                       }}
                     >
