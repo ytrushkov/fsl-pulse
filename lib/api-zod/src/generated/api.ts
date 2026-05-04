@@ -63,6 +63,9 @@ rescue pre-auth demo engagements that would otherwise be invisible
 to every signed-in user.
 
  */
+export const listOrphanEngagementsResponseConnectorLookbackDaysMin = 7;
+export const listOrphanEngagementsResponseConnectorLookbackDaysMax = 365;
+
 export const ListOrphanEngagementsResponseItem = zod.object({
   id: zod.string(),
   clientName: zod.string(),
@@ -84,6 +87,14 @@ export const ListOrphanEngagementsResponseItem = zod.object({
   modules: zod
     .array(zod.enum(["security", "data", "platform", "design"]))
     .optional(),
+  connectorLookbackDays: zod
+    .number()
+    .min(listOrphanEngagementsResponseConnectorLookbackDaysMin)
+    .max(listOrphanEngagementsResponseConnectorLookbackDaysMax)
+    .optional()
+    .describe(
+      'Sliding lookback window (days) applied to every connector\'s \"recent\" queries (deploys, MRs\/PRs, incidents, etc). Defaults to 90 when not set. Range 7–365.',
+    ),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -100,6 +111,9 @@ members.
 export const ClaimOrphanEngagementParams = zod.object({
   id: zod.coerce.string(),
 });
+
+export const claimOrphanEngagementResponseConnectorLookbackDaysMin = 7;
+export const claimOrphanEngagementResponseConnectorLookbackDaysMax = 365;
 
 export const ClaimOrphanEngagementResponse = zod.object({
   id: zod.string(),
@@ -122,6 +136,14 @@ export const ClaimOrphanEngagementResponse = zod.object({
   modules: zod
     .array(zod.enum(["security", "data", "platform", "design"]))
     .optional(),
+  connectorLookbackDays: zod
+    .number()
+    .min(claimOrphanEngagementResponseConnectorLookbackDaysMin)
+    .max(claimOrphanEngagementResponseConnectorLookbackDaysMax)
+    .optional()
+    .describe(
+      'Sliding lookback window (days) applied to every connector\'s \"recent\" queries (deploys, MRs\/PRs, incidents, etc). Defaults to 90 when not set. Range 7–365.',
+    ),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -134,6 +156,9 @@ Returns 409 if the engagement has any members.
 export const DeleteOrphanEngagementParams = zod.object({
   id: zod.coerce.string(),
 });
+
+export const listEngagementsResponseConnectorLookbackDaysMin = 7;
+export const listEngagementsResponseConnectorLookbackDaysMax = 365;
 
 export const ListEngagementsResponseItem = zod.object({
   id: zod.string(),
@@ -156,6 +181,14 @@ export const ListEngagementsResponseItem = zod.object({
   modules: zod
     .array(zod.enum(["security", "data", "platform", "design"]))
     .optional(),
+  connectorLookbackDays: zod
+    .number()
+    .min(listEngagementsResponseConnectorLookbackDaysMin)
+    .max(listEngagementsResponseConnectorLookbackDaysMax)
+    .optional()
+    .describe(
+      'Sliding lookback window (days) applied to every connector\'s \"recent\" queries (deploys, MRs\/PRs, incidents, etc). Defaults to 90 when not set. Range 7–365.',
+    ),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -179,6 +212,9 @@ export const GetEngagementParams = zod.object({
   id: zod.coerce.string(),
 });
 
+export const getEngagementResponseConnectorLookbackDaysMin = 7;
+export const getEngagementResponseConnectorLookbackDaysMax = 365;
+
 export const GetEngagementResponse = zod.object({
   id: zod.string(),
   clientName: zod.string(),
@@ -200,6 +236,14 @@ export const GetEngagementResponse = zod.object({
   modules: zod
     .array(zod.enum(["security", "data", "platform", "design"]))
     .optional(),
+  connectorLookbackDays: zod
+    .number()
+    .min(getEngagementResponseConnectorLookbackDaysMin)
+    .max(getEngagementResponseConnectorLookbackDaysMax)
+    .optional()
+    .describe(
+      'Sliding lookback window (days) applied to every connector\'s \"recent\" queries (deploys, MRs\/PRs, incidents, etc). Defaults to 90 when not set. Range 7–365.',
+    ),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -207,6 +251,9 @@ export const GetEngagementResponse = zod.object({
 export const UpdateEngagementParams = zod.object({
   id: zod.coerce.string(),
 });
+
+export const updateEngagementBodyConnectorLookbackDaysMin = 7;
+export const updateEngagementBodyConnectorLookbackDaysMax = 365;
 
 export const UpdateEngagementBody = zod.object({
   clientName: zod.string().optional(),
@@ -230,7 +277,18 @@ export const UpdateEngagementBody = zod.object({
   modules: zod
     .array(zod.enum(["security", "data", "platform", "design"]))
     .optional(),
+  connectorLookbackDays: zod
+    .number()
+    .min(updateEngagementBodyConnectorLookbackDaysMin)
+    .max(updateEngagementBodyConnectorLookbackDaysMax)
+    .optional()
+    .describe(
+      "Sliding lookback window (days) for every connector under this engagement. Server clamps to 7..365 and rejects out-of-range values with HTTP 400.",
+    ),
 });
+
+export const updateEngagementResponseConnectorLookbackDaysMin = 7;
+export const updateEngagementResponseConnectorLookbackDaysMax = 365;
 
 export const UpdateEngagementResponse = zod.object({
   id: zod.string(),
@@ -253,6 +311,14 @@ export const UpdateEngagementResponse = zod.object({
   modules: zod
     .array(zod.enum(["security", "data", "platform", "design"]))
     .optional(),
+  connectorLookbackDays: zod
+    .number()
+    .min(updateEngagementResponseConnectorLookbackDaysMin)
+    .max(updateEngagementResponseConnectorLookbackDaysMax)
+    .optional()
+    .describe(
+      'Sliding lookback window (days) applied to every connector\'s \"recent\" queries (deploys, MRs\/PRs, incidents, etc). Defaults to 90 when not set. Range 7–365.',
+    ),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -782,6 +848,30 @@ export const ListConnectorRunsResponseItem = zod.object({
   recordsCollected: zod.number().optional(),
   error: zod.string().nullish(),
   summary: zod.record(zod.string(), zod.unknown()).optional(),
+  lookbackDays: zod
+    .number()
+    .nullish()
+    .describe(
+      "Lookback window (days) actually used by this run, snapshotted from the engagement setting at run start. Null on legacy rows written before the column existed.",
+    ),
+  wallClockBudgetMs: zod
+    .number()
+    .nullish()
+    .describe(
+      "Wall-clock budget (ms) the run was scheduled with. Null on legacy rows.",
+    ),
+  cursors: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe(
+      "Per-resource opaque resume cursors (e.g. `repos.workflowsIndex`). The next run reads these to pick up where this one stopped when it ran out of wall-clock budget.",
+    ),
+  coverage: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe(
+      'Per-resource coverage stats (e.g. `repos.total \/ sampled \/ remaining`) so the run-history UI can display \"sampled X of Y\" without inferring it from the cursor shape.',
+    ),
 });
 export const ListConnectorRunsResponse = zod.array(
   ListConnectorRunsResponseItem,
@@ -808,6 +898,30 @@ export const GetConnectorSignalsResponse = zod.object({
       recordsCollected: zod.number().optional(),
       error: zod.string().nullish(),
       summary: zod.record(zod.string(), zod.unknown()).optional(),
+      lookbackDays: zod
+        .number()
+        .nullish()
+        .describe(
+          "Lookback window (days) actually used by this run, snapshotted from the engagement setting at run start. Null on legacy rows written before the column existed.",
+        ),
+      wallClockBudgetMs: zod
+        .number()
+        .nullish()
+        .describe(
+          "Wall-clock budget (ms) the run was scheduled with. Null on legacy rows.",
+        ),
+      cursors: zod
+        .record(zod.string(), zod.unknown())
+        .optional()
+        .describe(
+          "Per-resource opaque resume cursors (e.g. `repos.workflowsIndex`). The next run reads these to pick up where this one stopped when it ran out of wall-clock budget.",
+        ),
+      coverage: zod
+        .record(zod.string(), zod.unknown())
+        .optional()
+        .describe(
+          'Per-resource coverage stats (e.g. `repos.total \/ sampled \/ remaining`) so the run-history UI can display \"sampled X of Y\" without inferring it from the cursor shape.',
+        ),
     })
     .nullish(),
   evidence: zod.array(

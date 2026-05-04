@@ -1,12 +1,17 @@
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import {
   db,
   connectorsTable,
   connectorRunsTable,
+  engagementsTable,
   evidenceTable,
 } from "@workspace/db";
 import { decryptToken } from "./util";
-import { runConnector as runConnectorImpl } from "./connectors";
+import {
+  runConnector as runConnectorImpl,
+  DEFAULT_CONNECTOR_LOOKBACK_DAYS,
+  DEFAULT_WALL_CLOCK_BUDGET_MS,
+} from "./connectors";
 import { recordActivity, recordSystemActivity } from "./audit";
 import { logger } from "./logger";
 import type { Request } from "express";
@@ -38,9 +43,40 @@ export async function executeConnectorRun(
     .limit(1);
   if (!c) return null;
 
+  // Resolve the engagement-level lookback window so every connector under
+  // the engagement uses the same freshness/cost setting. Falls back to the
+  // shared default if the engagement row is missing the column for any
+  // reason (e.g. mid-migration on a stale read replica).
+  const [eng] = await db
+    .select({ connectorLookbackDays: engagementsTable.connectorLookbackDays })
+    .from(engagementsTable)
+    .where(eq(engagementsTable.id, c.engagementId))
+    .limit(1);
+  const lookbackDays =
+    eng?.connectorLookbackDays ?? DEFAULT_CONNECTOR_LOOKBACK_DAYS;
+  const wallClockBudgetMs = DEFAULT_WALL_CLOCK_BUDGET_MS;
+
+  // Read the most recent run's cursors so a budget-truncated run picks up
+  // where it left off. We deliberately read regardless of prior status:
+  // even a failed run may have written partial cursors before the error,
+  // and resuming from there is strictly better than restarting from zero.
+  const [lastRun] = await db
+    .select({ cursors: connectorRunsTable.cursors })
+    .from(connectorRunsTable)
+    .where(eq(connectorRunsTable.connectorId, connectorId))
+    .orderBy(desc(connectorRunsTable.startedAt))
+    .limit(1);
+  const priorCursors =
+    (lastRun?.cursors as Record<string, unknown> | undefined) ?? {};
+
   const [run] = await db
     .insert(connectorRunsTable)
-    .values({ connectorId, status: "running" })
+    .values({
+      connectorId,
+      status: "running",
+      lookbackDays,
+      wallClockBudgetMs,
+    })
     .returning();
   await db
     .update(connectorsTable)
@@ -100,12 +136,60 @@ export async function executeConnectorRun(
       });
     }
 
+    // Debounced incremental-checkpoint writer. Runners call this on every
+    // iteration of long walks; we throttle DB writes to roughly one per
+    // CHECKPOINT_MIN_INTERVAL_MS so a tight loop doesn't hammer Postgres
+    // while still ensuring a kill/crash mid-walk leaves up-to-date
+    // cursors+coverage on the run row for the next run to resume from.
+    // Failures are swallowed so a transient DB blip never breaks the run.
+    const CHECKPOINT_MIN_INTERVAL_MS = 5_000;
+    let lastCheckpointMs = 0;
+    let lastCheckpointCursors: Record<string, unknown> = priorCursors;
+    let lastCheckpointCoverage: Record<string, unknown> = {};
+    let lastCheckpointRecords = 0;
+    const checkpoint = async (state: {
+      cursors?: Record<string, unknown>;
+      coverage?: Record<string, unknown>;
+      recordsCollected?: number;
+    }) => {
+      if (state.cursors !== undefined) lastCheckpointCursors = state.cursors;
+      if (state.coverage !== undefined) lastCheckpointCoverage = state.coverage;
+      if (typeof state.recordsCollected === "number") {
+        lastCheckpointRecords = state.recordsCollected;
+      }
+      const now = Date.now();
+      if (now - lastCheckpointMs < CHECKPOINT_MIN_INTERVAL_MS) return;
+      lastCheckpointMs = now;
+      try {
+        await db
+          .update(connectorRunsTable)
+          .set({
+            cursors: lastCheckpointCursors,
+            coverage: lastCheckpointCoverage,
+            recordsCollected: lastCheckpointRecords,
+          })
+          .where(eq(connectorRunsTable.id, run.id));
+      } catch (err) {
+        logger.warn(
+          { err, runId: run.id, connectorId },
+          "connector run checkpoint persist failed",
+        );
+      }
+    };
+
     const out = await runConnectorImpl(
       c.kind,
       c.provider,
       token,
       c.config as Record<string, unknown>,
-      { requestId: opts.requestId, engagementId: c.engagementId },
+      {
+        requestId: opts.requestId,
+        engagementId: c.engagementId,
+        lookbackDays,
+        wallClockBudgetMs,
+        priorCursors,
+        checkpoint,
+      },
     );
 
     if (out.evidence && out.evidence.length > 0) {
@@ -130,6 +214,12 @@ export async function executeConnectorRun(
         finishedAt: new Date(),
         recordsCollected: out.recordsCollected,
         summary: out.summary,
+        // Persist resume state so the next run picks up where this one
+        // stopped. Falls back to the prior cursors when the runner did not
+        // produce any (e.g. ai_tooling has no resumable walk) so we never
+        // accidentally wipe a useful cursor with an empty object.
+        cursors: out.cursors ?? priorCursors,
+        coverage: out.coverage ?? {},
       })
       .where(eq(connectorRunsTable.id, run.id))
       .returning();
@@ -165,9 +255,18 @@ export async function executeConnectorRun(
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     logger.error({ err, connectorId, trigger: opts.trigger }, "connector run failed");
+    // On failure we deliberately keep the previous cursors visible on this
+    // run row. Without this, every failure would zero out the cursor and a
+    // genuinely-truncated previous run would never get its resumption
+    // semantics; the next run would re-walk the same prefix.
     const [updated] = await db
       .update(connectorRunsTable)
-      .set({ status: "failed", finishedAt: new Date(), error: msg })
+      .set({
+        status: "failed",
+        finishedAt: new Date(),
+        error: msg,
+        cursors: priorCursors,
+      })
       .where(eq(connectorRunsTable.id, run.id))
       .returning();
     // Important: do NOT delete or null prior evidence rows. The previous

@@ -164,6 +164,12 @@ export interface Engagement {
   targetDeliveryDate?: string | null;
   status: EngagementStatus;
   modules?: EngagementModulesItem[];
+  /**
+   * Sliding lookback window (days) applied to every connector's "recent" queries (deploys, MRs/PRs, incidents, etc). Defaults to 90 when not set. Range 7–365.
+   * @minimum 7
+   * @maximum 365
+   */
+  connectorLookbackDays?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -212,6 +218,12 @@ export interface UpdateEngagementInput {
   targetDeliveryDate?: string | null;
   status?: EngagementStatus;
   modules?: UpdateEngagementInputModulesItem[];
+  /**
+   * Sliding lookback window (days) for every connector under this engagement. Server clamps to 7..365 and rejects out-of-range values with HTTP 400.
+   * @minimum 7
+   * @maximum 365
+   */
+  connectorLookbackDays?: number;
 }
 
 /**
@@ -480,6 +492,16 @@ export const ConnectorRunStatus = {
 
 export type ConnectorRunSummary = { [key: string]: unknown };
 
+/**
+ * Per-resource opaque resume cursors (e.g. `repos.workflowsIndex`). The next run reads these to pick up where this one stopped when it ran out of wall-clock budget.
+ */
+export type ConnectorRunCursors = { [key: string]: unknown };
+
+/**
+ * Per-resource coverage stats (e.g. `repos.total / sampled / remaining`) so the run-history UI can display "sampled X of Y" without inferring it from the cursor shape.
+ */
+export type ConnectorRunCoverage = { [key: string]: unknown };
+
 export interface ConnectorRun {
   id: string;
   connectorId: string;
@@ -489,6 +511,14 @@ export interface ConnectorRun {
   recordsCollected?: number;
   error?: string | null;
   summary?: ConnectorRunSummary;
+  /** Lookback window (days) actually used by this run, snapshotted from the engagement setting at run start. Null on legacy rows written before the column existed. */
+  lookbackDays?: number | null;
+  /** Wall-clock budget (ms) the run was scheduled with. Null on legacy rows. */
+  wallClockBudgetMs?: number | null;
+  /** Per-resource opaque resume cursors (e.g. `repos.workflowsIndex`). The next run reads these to pick up where this one stopped when it ran out of wall-clock budget. */
+  cursors?: ConnectorRunCursors;
+  /** Per-resource coverage stats (e.g. `repos.total / sampled / remaining`) so the run-history UI can display "sampled X of Y" without inferring it from the cursor shape. */
+  coverage?: ConnectorRunCoverage;
 }
 
 export interface ConnectorSignals {

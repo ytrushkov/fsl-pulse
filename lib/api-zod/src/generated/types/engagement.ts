@@ -20,6 +20,12 @@ export interface Engagement {
   targetDeliveryDate?: string | null;
   status: EngagementStatus;
   modules?: EngagementModulesItem[];
+  /**
+   * Sliding lookback window (days) applied to every connector's "recent" queries (deploys, MRs/PRs, incidents, etc). Defaults to 90 when not set. Range 7–365.
+   * @minimum 7
+   * @maximum 365
+   */
+  connectorLookbackDays?: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -52,6 +52,14 @@ export const engagementsTable = pgTable("engagements", {
   kickoffDate: timestamp("kickoff_date", { withTimezone: true }),
   targetDeliveryDate: timestamp("target_delivery_date", { withTimezone: true }),
   status: text("status").notNull().default("draft"),
+  // Sliding lookback window applied to every connector's "recent" queries
+  // (deploys, MRs/PRs, incidents, etc). Default 90 days; the engagement
+  // settings UI clamps the value to 7..365. Per-engagement (rather than
+  // per-connector) so a single setting controls the freshness/cost tradeoff
+  // across the whole evidence pipeline.
+  connectorLookbackDays: integer("connector_lookback_days")
+    .notNull()
+    .default(90),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
@@ -141,6 +149,25 @@ export const connectorRunsTable = pgTable(
     recordsCollected: integer("records_collected").notNull().default(0),
     error: text("error"),
     summary: jsonb("summary").notNull().default({}),
+    // Opaque per-resource resume cursors (e.g. `{ repos: { workflowsIndex: 7,
+    // doraIndex: 3, total: 42 } }`). The runner reads the most-recent run's
+    // cursors before starting, so a run that hits the wall-clock budget
+    // resumes from where the previous run stopped instead of re-scanning the
+    // same prefix. Persisted on success AND failure so an aborted run never
+    // wipes resume state.
+    cursors: jsonb("cursors").notNull().default({}),
+    // Per-resource coverage stats (e.g. `{ repos: { total: 42, sampled: 7,
+    // remaining: 35 } }`) so the run-history UI can show "completed 7/42
+    // repos this run" and assessors can tell whether a connector finished a
+    // full sweep or only progressed part-way.
+    coverage: jsonb("coverage").notNull().default({}),
+    // Window (in days) actually used for this run. Captured from the
+    // engagement's connectorLookbackDays at run start so historical runs
+    // remain interpretable even if the engagement setting changes later.
+    lookbackDays: integer("lookback_days"),
+    // Wall-clock budget (ms) the run was scheduled with. Captured for the
+    // same historical-interpretability reason as lookbackDays.
+    wallClockBudgetMs: integer("wall_clock_budget_ms"),
   },
   (t) => ({ cIdx: index("connector_runs_connector_idx").on(t.connectorId) }),
 );

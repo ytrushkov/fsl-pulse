@@ -26,6 +26,8 @@ export * from "./connector";
 export * from "./connectorConfig";
 export * from "./connectorKind";
 export * from "./connectorRun";
+export * from "./connectorRunCoverage";
+export * from "./connectorRunCursors";
 export * from "./connectorRunStatus";
 export * from "./connectorRunSummary";
 export * from "./connectorSignals";

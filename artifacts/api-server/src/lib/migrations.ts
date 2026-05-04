@@ -180,6 +180,55 @@ export async function migrateLegacyArtifactBlobs(): Promise<ArtifactBlobMigratio
   };
 }
 
+export interface ConnectorLookbackMigrationSummary {
+  engagementColumnAdded: boolean;
+  runColumnsAdded: boolean;
+}
+
+/**
+ * Adds the configurable-lookback + resumable-cursor columns to existing
+ * Postgres deployments that predate the schema. Idempotent — uses
+ * `IF NOT EXISTS` so re-running on a fresh DB (where drizzle-kit push has
+ * already created the columns) is a no-op. Without this, the first server
+ * boot after the schema change against a long-lived prod DB would crash
+ * every connector run and every engagement read.
+ */
+export async function migrateConnectorLookbackColumns(): Promise<ConnectorLookbackMigrationSummary> {
+  const engCheck = await db.execute(sql`
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'engagements' AND column_name = 'connector_lookback_days'
+    LIMIT 1
+  `);
+  const engagementColumnExisted = (engCheck.rows ?? []).length > 0;
+  if (!engagementColumnExisted) {
+    await db.execute(sql`
+      ALTER TABLE engagements
+      ADD COLUMN IF NOT EXISTS connector_lookback_days INTEGER NOT NULL DEFAULT 90
+    `);
+  }
+
+  const runCheck = await db.execute(sql`
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'connector_runs' AND column_name = 'cursors'
+    LIMIT 1
+  `);
+  const runColumnsExisted = (runCheck.rows ?? []).length > 0;
+  if (!runColumnsExisted) {
+    await db.execute(sql`
+      ALTER TABLE connector_runs
+      ADD COLUMN IF NOT EXISTS cursors JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS coverage JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS lookback_days INTEGER,
+      ADD COLUMN IF NOT EXISTS wall_clock_budget_ms INTEGER
+    `);
+  }
+
+  return {
+    engagementColumnAdded: !engagementColumnExisted,
+    runColumnsAdded: !runColumnsExisted,
+  };
+}
+
 export interface ScoringSnapshotBackfillSummary {
   scoringRows: number;
   inserted: number;

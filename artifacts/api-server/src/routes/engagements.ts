@@ -192,6 +192,19 @@ router.patch(
       set.targetDeliveryDate = b.targetDeliveryDate
         ? new Date(b.targetDeliveryDate)
         : null;
+    // Connector lookback window — clamp to [7, 365] days. We reject (rather
+    // than silently coerce) clearly-invalid input so callers get a 400, but
+    // accept numeric strings since most form libraries submit them that way.
+    if ("connectorLookbackDays" in b) {
+      const raw = Number(b.connectorLookbackDays);
+      if (!Number.isFinite(raw) || raw < 7 || raw > 365) {
+        res.status(400).json({
+          error: "connectorLookbackDays must be an integer between 7 and 365",
+        });
+        return;
+      }
+      set.connectorLookbackDays = Math.floor(raw);
+    }
     const [previous] = await db
       .select()
       .from(engagementsTable)

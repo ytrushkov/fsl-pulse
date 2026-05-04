@@ -638,11 +638,58 @@ function round3(n: number): number {
 }
 
 /**
+ * Default sliding lookback window (in days) when an engagement has not
+ * customised it. Per-engagement override lives in `engagements.connector_
+ * lookback_days` and is clamped to [LOOKBACK_MIN_DAYS, LOOKBACK_MAX_DAYS]
+ * by the engagements PATCH route.
+ */
+export const DEFAULT_CONNECTOR_LOOKBACK_DAYS = 90;
+export const LOOKBACK_MIN_DAYS = 7;
+export const LOOKBACK_MAX_DAYS = 365;
+
+/**
+ * Default wall-clock budget for a single connector run. Replaces the old
+ * hardcoded "first 5/10 repos" sample caps — runners now iterate every
+ * resource and break only when this budget is exhausted, persisting a
+ * resume cursor so the next run picks up where this one stopped.
+ */
+export const DEFAULT_WALL_CLOCK_BUDGET_MS = 5 * 60_000; // 5 minutes
+
+/**
  * Per-request context passed into connector calls so subcall-level logging
  * can be correlated with the originating API call. Routes pass `req.id`
  * here; the connector emits start/end log lines tagged with that id.
+ *
+ * `lookbackDays`, `wallClockBudgetMs`, and `priorCursors` are populated by
+ * the connector runner from the engagement's setting and the previous run
+ * row, respectively. When called from `verifyConnector` they are absent
+ * (verify is a one-shot capability check, not a collection).
  */
-export type ConnectorCtx = { requestId?: string; engagementId?: string };
+export type ConnectorCtx = {
+  requestId?: string;
+  engagementId?: string;
+  lookbackDays?: number;
+  wallClockBudgetMs?: number;
+  priorCursors?: Record<string, unknown>;
+  /**
+   * Optional incremental-checkpoint callback. Runners call this after each
+   * iteration of a long walk so the runner can flush cursors+coverage+
+   * recordsCollected to the connector_runs row before the loop continues.
+   * If a run is killed/crashed mid-walk, the next run reads back the latest
+   * checkpoint and resumes from there instead of restarting the prefix.
+   *
+   * The implementation in connector-runner debounces these calls (so a
+   * tight loop doesn't hammer the DB), so runners can call it freely on
+   * every iteration without worrying about cost. Returns void; failures are
+   * swallowed by the implementation since checkpointing must never break
+   * the run itself.
+   */
+  checkpoint?: (state: {
+    cursors?: Record<string, unknown>;
+    coverage?: Record<string, unknown>;
+    recordsCollected?: number;
+  }) => Promise<void> | void;
+};
 
 // Defense-in-depth: even though connector create/patch validates baseUrl
 // syntactically, we re-check at fetch time *and* resolve DNS so an
@@ -669,6 +716,62 @@ export interface ConnectorRunResult {
   recordsCollected: number;
   summary: Record<string, unknown>;
   evidence: CollectedEvidence[];
+  /**
+   * Per-resource opaque resume cursors. The runner persists this on the
+   * connector_runs row; the next run reads it back as `ctx.priorCursors`.
+   * Shape is connector-specific (e.g. GitHub uses
+   * `{ repos: { workflowsIndex, doraIndex, total } }`).
+   */
+  cursors?: Record<string, unknown>;
+  /**
+   * Per-resource coverage stats so the run-history UI can surface "sampled
+   * 7 of 42 repos this run, 35 remaining" without inferring it from the
+   * cursor shape.
+   */
+  coverage?: Record<string, unknown>;
+}
+
+/**
+ * Returns true while the wall-clock budget for the current run still has
+ * room to start another expensive sub-fetch. Runners check this BEFORE the
+ * call so we never abort partway through writing a record.
+ */
+export function withinBudget(startMs: number, budgetMs: number): boolean {
+  return Date.now() - startMs < budgetMs;
+}
+
+/** Coerce the `priorCursors[key]` slot into a plain object for safe lookups. */
+function readCursor(
+  prior: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, unknown> {
+  const v = prior?.[key];
+  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+}
+
+function readCursorIndex(
+  prior: Record<string, unknown> | undefined,
+  resource: string,
+  field: string,
+): number {
+  const c = readCursor(prior, resource);
+  const v = c[field];
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+}
+
+/**
+ * Resolve the lookback window from the per-call ctx with sane fallbacks.
+ * Centralised so every runner agrees on the same default and clamping.
+ */
+function resolveLookbackDays(ctx: ConnectorCtx): number {
+  const raw = ctx.lookbackDays ?? DEFAULT_CONNECTOR_LOOKBACK_DAYS;
+  if (!Number.isFinite(raw)) return DEFAULT_CONNECTOR_LOOKBACK_DAYS;
+  return Math.min(LOOKBACK_MAX_DAYS, Math.max(LOOKBACK_MIN_DAYS, Math.floor(raw)));
+}
+
+function resolveBudgetMs(ctx: ConnectorCtx): number {
+  const raw = ctx.wallClockBudgetMs ?? DEFAULT_WALL_CLOCK_BUDGET_MS;
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_WALL_CLOCK_BUDGET_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -854,11 +957,20 @@ async function verifyGithub(
 async function runGithub(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const org = String(config.org ?? "");
   const evidence: CollectedEvidence[] = [];
   let recordsCollected = 0;
   const summary: Record<string, unknown> = {};
+  const startMs = Date.now();
+  const lookbackDays = resolveLookbackDays(ctx);
+  const budgetMs = resolveBudgetMs(ctx);
+  // Two independent walks (workflows + DORA) over the same repo list. We
+  // resume each from its own index so the run before us can have completed
+  // workflows fully but stopped mid-DORA — re-running picks up correctly.
+  const cursorWorkflowsStart = readCursorIndex(ctx.priorCursors, "repos", "workflowsIndex");
+  const cursorDoraStart = readCursorIndex(ctx.priorCursors, "repos", "doraIndex");
 
   if (!org) {
     return {
@@ -873,17 +985,56 @@ async function runGithub(
       ],
     };
   }
-  const repos = await ghFetch<Array<{ name: string; default_branch: string; pushed_at: string }>>(
-    token,
-    `https://api.github.com/orgs/${org}/repos?per_page=30&sort=pushed`,
-  );
+  // Paginate the org's repository list. Replaces the old single-page
+  // `per_page=30` call which silently capped discovery to the 30 most
+  // recently pushed repos. We walk every page until empty, breaking only
+  // on the wall-clock budget. For very large orgs (>1000 repos) this
+  // can dominate the budget; that's acceptable because next run resumes
+  // from page 1 (cheap) and the cursor below points into whatever list
+  // we managed to discover.
+  const REPOS_PAGE_SIZE = 100;
+  const repos: Array<{ name: string; default_branch: string; pushed_at: string }> = [];
+  let reposPage = 1;
+  let reposDiscoveryComplete = false;
+  while (withinBudget(startMs, budgetMs)) {
+    const batch = await ghFetch<
+      Array<{ name: string; default_branch: string; pushed_at: string }>
+    >(
+      token,
+      `https://api.github.com/orgs/${org}/repos?per_page=${REPOS_PAGE_SIZE}&sort=pushed&page=${reposPage}`,
+    );
+    if (batch.length === 0) {
+      reposDiscoveryComplete = true;
+      break;
+    }
+    repos.push(...batch);
+    if (batch.length < REPOS_PAGE_SIZE) {
+      reposDiscoveryComplete = true;
+      break;
+    }
+    reposPage += 1;
+  }
   recordsCollected += repos.length;
   summary.repoCount = repos.length;
+  summary.reposDiscoveryComplete = reposDiscoveryComplete;
 
-  // Look for AI-related workflows
+  // Look for AI-related workflows. Iterate every repo (not the old top-10
+  // slice) but break when wall-clock budget is exhausted, persisting the
+  // resume index so the next run continues from there.
   let aiWorkflowRepos = 0;
   let totalWorkflowRepos = 0;
-  for (const r of repos.slice(0, 10)) {
+  let workflowsSampled = 0;
+  let nextWorkflowsIndex = cursorWorkflowsStart;
+  if (repos.length > 0 && cursorWorkflowsStart >= repos.length) {
+    // Cursor wraps once we've walked the whole list — start fresh.
+    nextWorkflowsIndex = 0;
+  }
+  for (let i = nextWorkflowsIndex; i < repos.length; i += 1) {
+    if (!withinBudget(startMs, budgetMs)) {
+      nextWorkflowsIndex = i;
+      break;
+    }
+    const r = repos[i]!;
     try {
       const wf = await ghFetch<{ workflows: Array<{ name: string; path: string }> }>(
         token,
@@ -901,7 +1052,33 @@ async function runGithub(
     } catch {
       // skip repos we can't access
     }
+    workflowsSampled += 1;
+    nextWorkflowsIndex = i + 1;
+    // Incremental checkpoint so a kill/crash mid-walk still leaves the
+    // resume cursor up-to-date in the connector_runs row. Debounced by
+    // the runner so we can call it freely on every iteration.
+    await ctx.checkpoint?.({
+      cursors: {
+        repos: {
+          workflowsIndex: nextWorkflowsIndex,
+          doraIndex: cursorDoraStart,
+          total: repos.length,
+        },
+      },
+      coverage: {
+        repos: {
+          total: repos.length,
+          workflowsSampled,
+          doraSampled: 0,
+          workflowsRemaining: Math.max(0, repos.length - workflowsSampled),
+          doraRemaining: repos.length,
+        },
+      },
+      recordsCollected,
+    });
   }
+  // Wrap when we cleanly walked the entire list this run.
+  if (nextWorkflowsIndex >= repos.length) nextWorkflowsIndex = 0;
   summary.aiWorkflowRepos = aiWorkflowRepos;
   summary.workflowRepos = totalWorkflowRepos;
 
@@ -910,7 +1087,7 @@ async function runGithub(
       dimension: "tooling",
       signalType: "strength",
       stageHint: aiWorkflowRepos >= 3 ? 4 : 3,
-      text: `Detected AI-related GitHub Actions workflows in ${aiWorkflowRepos} of ${Math.min(repos.length, 10)} sampled repos.`,
+      text: `Detected AI-related GitHub Actions workflows in ${aiWorkflowRepos} of ${workflowsSampled} sampled repos.`,
     });
   } else if (totalWorkflowRepos > 0) {
     evidence.push({
@@ -922,10 +1099,11 @@ async function runGithub(
   }
 
   // ---- DORA-style normalized signals ----------------------------------
-  // We sample up to 5 repos and a 30-day window to keep runs cheap. Each
-  // metric gets its own evidence row tagged to the right dimension so the
-  // scoring engine can pick them up consistently across providers.
-  const sinceMs = Date.now() - SC_LOOKBACK_DAYS * 86_400_000;
+  // Each metric gets its own evidence row tagged to the right dimension so
+  // the scoring engine can pick them up consistently across providers. The
+  // lookback window comes from the engagement's connectorLookbackDays so
+  // the same code serves a 7-day spot-check and a 365-day backfill.
+  const sinceMs = Date.now() - lookbackDays * 86_400_000;
   const since = new Date(sinceMs).toISOString();
   let workflowRunsTotal = 0;
   let workflowRunsFailed = 0;
@@ -964,8 +1142,13 @@ async function runGithub(
   let jobRunsSampled = 0;
   let jobsObserved = 0;
   let jobSampleTruncated = false;
+  // Cursor-driven DORA walk so a budget-truncated run resumes from the
+  // next un-walked repo instead of restarting at index 0.
+  let doraSampled = 0;
+  let nextDoraIndex = cursorDoraStart;
+  if (repos.length > 0 && cursorDoraStart >= repos.length) nextDoraIndex = 0;
 
-  // Source-control metric inputs collected across the sampled repos.
+  // Source-control metric inputs collected across the walked repos.
   // Kept separate from the DORA block so the existing summary keys
   // (deploysPerDay, changeFailureRate, leadTimeHoursAvg, prReviewRate)
   // remain backwards-compatible while the new percentile-based block is
@@ -980,9 +1163,14 @@ async function runGithub(
   const authorCommitCounts: Record<string, number> = {};
   let totalCommitsInWindow = 0;
 
-  for (const r of repos.slice(0, 5)) {
+  for (let i = nextDoraIndex; i < repos.length; i += 1) {
+    if (!withinBudget(startMs, budgetMs)) {
+      nextDoraIndex = i;
+      break;
+    }
+    const r = repos[i]!;
     try {
-      // Workflow runs in the last 30 days → deployment frequency proxy +
+      // Workflow runs in the lookback window → deployment frequency proxy +
       // change-failure-rate proxy. We use `created` as an upper bound on
       // both so the same call serves both metrics.
       const wfr = await ghFetch<{
@@ -1164,7 +1352,7 @@ async function runGithub(
     // Repo-level commits in the window — feeds commit frequency + bus
     // factor. One page (100) per repo keeps cost flat; if a repo has more
     // we capture the most recent 100 which is a reasonable activity
-    // sample for a 30-day window. Author identity falls back to
+    // sample for the lookback window. Author identity falls back to
     // commit.author.email when GitHub couldn't link the commit to a user.
     try {
       const commits = await ghFetch<
@@ -1190,7 +1378,29 @@ async function runGithub(
     } catch {
       // ignore — empty/disabled repo
     }
+    doraSampled += 1;
+    nextDoraIndex = i + 1;
+    await ctx.checkpoint?.({
+      cursors: {
+        repos: {
+          workflowsIndex: nextWorkflowsIndex,
+          doraIndex: nextDoraIndex,
+          total: repos.length,
+        },
+      },
+      coverage: {
+        repos: {
+          total: repos.length,
+          workflowsSampled,
+          doraSampled,
+          workflowsRemaining: Math.max(0, repos.length - workflowsSampled),
+          doraRemaining: Math.max(0, repos.length - doraSampled),
+        },
+      },
+      recordsCollected,
+    });
   }
+  if (nextDoraIndex >= repos.length) nextDoraIndex = 0;
 
   // ---- Source-control deep-dive sample (PR detail / reviews / commits)
   // Each sampled PR costs 3 extra REST calls; cap by detailSampleSize +
@@ -1220,21 +1430,22 @@ async function runGithub(
   Object.assign(summary, sc.summary);
   evidence.push(...sc.evidence);
 
-  // Deployment frequency (successful workflow runs / day, last 30 days) —
+  // Deployment frequency (successful workflow runs / day, lookback window) —
   // proxy for DORA "deployment frequency". Only successful runs count as
   // deployments; failed runs feed change-failure-rate instead so the two
-  // metrics stay independent.
-  const deploysPerDay = workflowRunsSucceeded / 30;
-  summary.workflowRuns30d = workflowRunsTotal;
-  summary.workflowRunsSucceeded30d = workflowRunsSucceeded;
-  summary.workflowRunsFailed30d = workflowRunsFailed;
+  // metrics stay independent. Per-day rate uses lookbackDays as denominator
+  // so a 7-day or 365-day window are both expressed as deploys/day.
+  const deploysPerDay = workflowRunsSucceeded / lookbackDays;
+  summary.workflowRunsTotal = workflowRunsTotal;
+  summary.workflowRunsSucceeded = workflowRunsSucceeded;
+  summary.workflowRunsFailed = workflowRunsFailed;
   summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
   if (workflowRunsSucceeded > 0) {
     evidence.push({
       dimension: "process",
       signalType: deploysPerDay >= 1 ? "strength" : "gap",
       stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
-      text: `Deployment frequency: ~${deploysPerDay.toFixed(2)} successful CI runs/day across sampled repos (30d).`,
+      text: `Deployment frequency: ~${deploysPerDay.toFixed(2)} successful CI runs/day across sampled repos (${lookbackDays}d).`,
     });
   }
 
@@ -1246,7 +1457,7 @@ async function runGithub(
       dimension: "measurement",
       signalType: cfr <= 0.15 ? "strength" : "gap",
       stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
-      text: `Change failure rate proxy: ${(cfr * 100).toFixed(1)}% (${workflowRunsFailed}/${workflowRunsTotal} CI runs failed, 30d).`,
+      text: `Change failure rate proxy: ${(cfr * 100).toFixed(1)}% (${workflowRunsFailed}/${workflowRunsTotal} CI runs failed, ${lookbackDays}d).`,
     });
   }
 
@@ -1425,16 +1636,16 @@ async function runGithub(
     summary.mttrHoursP50 = msToHours(dp.p50);
     summary.mttrHoursP95 = msToHours(dp.p95);
     summary.mttrSource = "deployment_failure";
-    summary.deployFailurePairs30d = deployMttrSeries.length;
+    summary.deployFailurePairsInWindow = deployMttrSeries.length;
     evidence.push({
       dimension: "measurement",
       signalType: mttrHours <= 24 ? "strength" : "gap",
       stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
-      text: `MTTR (deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (30d).`,
+      text: `MTTR (deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (${lookbackDays}d).`,
     });
   }
 
-  // Incident-labeled issues closed in the last 30 days. Used as the MTTR
+  // Incident-labeled issues closed in the lookback window. Used as the MTTR
   // signal when no deploy failure→success pairs exist; otherwise it's
   // recorded but not used as the canonical MTTR.
   let mttrSumMs = 0;
@@ -1482,7 +1693,7 @@ async function runGithub(
     // search may fail on tokens without read:org or due to rate limiting;
     // we degrade gracefully to "n/a" below.
   }
-  summary.incidentIssues30d = mttrCount;
+  summary.incidentIssuesInWindow = mttrCount;
   if (deployMttrSeries.length === 0) {
     // No deployment-failure pairs in the window — fall back to the
     // incident-issue proxy so MTTR isn't silently null whenever a window
@@ -1495,7 +1706,7 @@ async function runGithub(
         dimension: "measurement",
         signalType: mttrHours <= 24 ? "strength" : "gap",
         stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
-        text: `MTTR (incident-issue fallback): avg ${mttrHours.toFixed(1)}h to close incident-labeled issues (n=${mttrCount}, 30d). No deploy failure→success pairs available, so this is a proxy.`,
+        text: `MTTR (incident-issue fallback): avg ${mttrHours.toFixed(1)}h to close incident-labeled issues (n=${mttrCount}, ${lookbackDays}d). No deploy failure→success pairs available, so this is a proxy.`,
       });
     } else {
       summary.mttrHoursAvg = null;
@@ -1504,7 +1715,7 @@ async function runGithub(
         dimension: "measurement",
         signalType: "gap",
         stageHint: 1,
-        text: "MTTR n/a — no deploy failure→success pairs and no incident-labeled issues found in the last 30 days. Tag incidents with 'incident', 'outage', 'p0', or 'p1', or ensure failed CI runs are followed by successful reruns to enable MTTR measurement.",
+        text: `MTTR n/a — no deploy failure→success pairs and no incident-labeled issues found in the last ${lookbackDays} days. Tag incidents with 'incident', 'outage', 'p0', or 'p1', or ensure failed CI runs are followed by successful reruns to enable MTTR measurement.`,
       });
     }
   } else if (mttrCount > 0) {
@@ -1515,7 +1726,27 @@ async function runGithub(
     );
   }
 
-  return { recordsCollected, summary, evidence };
+  // Coverage + cursors. The runner persists these so the next run resumes
+  // from `nextWorkflowsIndex` / `nextDoraIndex` instead of re-walking the
+  // same prefix when the wall-clock budget gets exhausted.
+  const coverage = {
+    repos: {
+      total: repos.length,
+      workflowsSampled,
+      doraSampled,
+      workflowsRemaining: Math.max(0, repos.length - workflowsSampled),
+      doraRemaining: Math.max(0, repos.length - doraSampled),
+    },
+  };
+  const cursors = {
+    repos: {
+      workflowsIndex: nextWorkflowsIndex,
+      doraIndex: nextDoraIndex,
+      total: repos.length,
+    },
+  };
+
+  return { recordsCollected, summary, evidence, cursors, coverage };
 }
 
 /**
@@ -1681,20 +1912,45 @@ async function verifyGitlab(
 async function runGitlab(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const baseUrl = String(config.baseUrl ?? "https://gitlab.com").replace(/\/$/, "");
   await assertSafeUrl(baseUrl);
   const group = String(config.group ?? "");
   const evidence: CollectedEvidence[] = [];
+  const startMs = Date.now();
+  const lookbackDays = resolveLookbackDays(ctx);
+  const budgetMs = resolveBudgetMs(ctx);
+  const cursorStart = readCursorIndex(ctx.priorCursors, "projects", "index");
   if (!group)
     return { recordsCollected: 0, summary: { error: "No group configured" }, evidence };
   const headers = { "PRIVATE-TOKEN": token };
-  const r = await fetch(
-    `${baseUrl}/api/v4/groups/${encodeURIComponent(group)}/projects?per_page=30`,
-    { headers },
-  );
-  if (!r.ok) throw new Error(`GitLab ${r.status}`);
-  const projects = (await r.json()) as Array<{ name: string; id: number }>;
+  // Paginate the group's project list. Replaces the old single-page
+  // `per_page=30` call which silently capped discovery to the first 30
+  // projects. We walk every page until empty, breaking only on the
+  // wall-clock budget.
+  const PROJECTS_PAGE_SIZE = 100;
+  const projects: Array<{ name: string; id: number }> = [];
+  let projectsPage = 1;
+  let projectsDiscoveryComplete = false;
+  while (withinBudget(startMs, budgetMs)) {
+    const pr = await fetch(
+      `${baseUrl}/api/v4/groups/${encodeURIComponent(group)}/projects?per_page=${PROJECTS_PAGE_SIZE}&page=${projectsPage}`,
+      { headers },
+    );
+    if (!pr.ok) throw new Error(`GitLab ${pr.status}`);
+    const batch = (await pr.json()) as Array<{ name: string; id: number }>;
+    if (batch.length === 0) {
+      projectsDiscoveryComplete = true;
+      break;
+    }
+    projects.push(...batch);
+    if (batch.length < PROJECTS_PAGE_SIZE) {
+      projectsDiscoveryComplete = true;
+      break;
+    }
+    projectsPage += 1;
+  }
   evidence.push({
     dimension: "tooling",
     signalType: "strength",
@@ -1702,8 +1958,11 @@ async function runGitlab(
     text: `Discovered ${projects.length} GitLab projects in group ${group}.`,
   });
 
-  // ---- DORA-style normalized signals (sample up to 5 projects, 30d) ---
-  const sinceMsGl = Date.now() - SC_LOOKBACK_DAYS * 86_400_000;
+  // ---- DORA-style normalized signals (lookback window, budgeted walk) ---
+  // sinceMsGl is the same instant as `since` but kept as a number so the
+  // SC deep-dive code below can do cheap numeric comparisons against
+  // GitLab's merged_at timestamps without re-parsing the ISO string.
+  const sinceMsGl = Date.now() - lookbackDays * 86_400_000;
   const since = new Date(sinceMsGl).toISOString();
   let pipelinesTotal = 0;
   let pipelinesFailed = 0;
@@ -1716,26 +1975,32 @@ async function runGitlab(
   let mttrCount = 0;
   let recordsCollected = projects.length;
   // CI/CD build-quality series across the GitLab project sample. We pull a
-  // pipeline-detail call per pipeline for the first slice of each project
-  // because the list endpoint doesn't return `duration` or
-  // `queued_duration`. Flaky comes from the per-pipeline jobs endpoint
-  // (`retried: true` + final status `success`).
+  // pipeline-detail call per pipeline because the list endpoint doesn't
+  // return `duration` or `queued_duration`. Flaky comes from the
+  // per-pipeline jobs endpoint (`retried: true` + final status `success`).
   const buildDurationsMs: number[] = [];
   const queueTimesMs: number[] = [];
   let runsWithRetries = 0;
   let flakyRetrySuccesses = 0;
   let totalJobsObserved = 0;
   const deployRunSeries: Array<{ ts: number; ok: boolean; target: string }> = [];
-  // Cap per-project detail/jobs lookups to keep total API calls bounded
-  // (5 projects × 15 pipelines × 2 calls = 150 calls worst case). Jobs
-  // page size is intentionally maxed (per_page=100, GitLab's hard cap) so
-  // even busy pipelines don't get truncated; we still record `truncated`
-  // when the response is at the limit so the UI can disclose the bias.
+  // Cap per-project detail/jobs lookups to keep total API calls bounded.
+  // Jobs page size is intentionally maxed (per_page=100, GitLab's hard
+  // cap) so even busy pipelines don't get truncated; we still record
+  // `truncated` when the response is at the limit so the UI can disclose
+  // the bias.
   const PIPELINE_DETAIL_LIMIT = 15;
   const JOBS_PER_PAGE = 100;
   let jobSampleTruncated = false;
+  // Cursor-driven walk over the discovered projects: every project is
+  // visited across runs, with the wall-clock budget bounding how many we
+  // process per run. The persisted cursor (`projects.index`) lets the next
+  // run resume from the next un-walked project instead of restarting at 0.
+  let projectsSampled = 0;
+  let nextProjectIndex = cursorStart;
+  if (projects.length > 0 && cursorStart >= projects.length) nextProjectIndex = 0;
 
-  // Source-control metric inputs collected across the sampled projects;
+  // Source-control metric inputs collected across the walked projects;
   // mirrors the GitHub runner so buildSourceControlSummary produces
   // identical summary keys regardless of provider.
   const allLeadTimesMs: number[] = [];
@@ -1749,7 +2014,12 @@ async function runGitlab(
   const authorCommitCounts: Record<string, number> = {};
   let totalCommitsInWindow = 0;
 
-  for (const p of projects.slice(0, 5)) {
+  for (let i = nextProjectIndex; i < projects.length; i += 1) {
+    if (!withinBudget(startMs, budgetMs)) {
+      nextProjectIndex = i;
+      break;
+    }
+    const p = projects[i]!;
     let pipelineRows: Array<{
       id: number;
       status: string;
@@ -1954,7 +2224,23 @@ async function runGitlab(
     } catch {
       // ignore — incident label may not exist; MTTR will be n/a.
     }
+    projectsSampled += 1;
+    nextProjectIndex = i + 1;
+    await ctx.checkpoint?.({
+      cursors: {
+        projects: { index: nextProjectIndex, total: projects.length },
+      },
+      coverage: {
+        projects: {
+          total: projects.length,
+          sampled: projectsSampled,
+          remaining: Math.max(0, projects.length - projectsSampled),
+        },
+      },
+      recordsCollected,
+    });
   }
+  if (nextProjectIndex >= projects.length) nextProjectIndex = 0;
 
   // ---- Source-control deep-dive sample (MR detail / notes / commits)
   // See the matching block in runGithub for the cost rationale. We
@@ -1974,10 +2260,11 @@ async function runGitlab(
 
   const summary: Record<string, unknown> = {
     projectCount: projects.length,
-    pipelines30d: pipelinesTotal,
-    pipelinesSucceeded30d: pipelinesSucceeded,
-    pipelinesFailed30d: pipelinesFailed,
-    mrsMerged30d: mrsMerged,
+    projectsDiscoveryComplete,
+    pipelinesTotal,
+    pipelinesSucceeded,
+    pipelinesFailed,
+    mrsMerged,
   };
 
   const sc = buildSourceControlSummary({
@@ -1994,13 +2281,13 @@ async function runGitlab(
   if (pipelinesSucceeded > 0) {
     // Deployment frequency uses successful pipelines only — failed pipelines
     // are not deployments and are accounted for in change-failure-rate.
-    const deploysPerDay = pipelinesSucceeded / 30;
+    const deploysPerDay = pipelinesSucceeded / lookbackDays;
     summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
     evidence.push({
       dimension: "process",
       signalType: deploysPerDay >= 1 ? "strength" : "gap",
       stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
-      text: `Deployment frequency: ~${deploysPerDay.toFixed(2)} successful pipelines/day across sampled GitLab projects (30d).`,
+      text: `Deployment frequency: ~${deploysPerDay.toFixed(2)} successful pipelines/day across sampled GitLab projects (${lookbackDays}d).`,
     });
   }
   if (pipelinesTotal > 0) {
@@ -2010,7 +2297,7 @@ async function runGitlab(
       dimension: "measurement",
       signalType: cfr <= 0.15 ? "strength" : "gap",
       stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
-      text: `Change failure rate proxy: ${(cfr * 100).toFixed(1)}% of GitLab pipelines failed (${pipelinesFailed}/${pipelinesTotal}, 30d).`,
+      text: `Change failure rate proxy: ${(cfr * 100).toFixed(1)}% of GitLab pipelines failed (${pipelinesFailed}/${pipelinesTotal}, ${lookbackDays}d).`,
     });
   }
   if (mrLeadCount > 0) {
@@ -2111,15 +2398,15 @@ async function runGitlab(
     summary.mttrHoursP50 = msToHours(dp.p50);
     summary.mttrHoursP95 = msToHours(dp.p95);
     summary.mttrSource = "deployment_failure";
-    summary.deployFailurePairs30d = deployMttrSeries.length;
+    summary.deployFailurePairsInWindow = deployMttrSeries.length;
     evidence.push({
       dimension: "measurement",
       signalType: mttrHours <= 24 ? "strength" : "gap",
       stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
-      text: `MTTR (deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (30d).`,
+      text: `MTTR (deploy failure → next success): avg ${mttrHours.toFixed(1)}h, p50 ${msToHours(dp.p50)?.toFixed(1)}h / p95 ${msToHours(dp.p95)?.toFixed(1)}h across ${deployMttrSeries.length} pairs (${lookbackDays}d).`,
     });
   }
-  summary.incidentIssues30d = mttrCount;
+  summary.incidentIssuesInWindow = mttrCount;
   if (deployMttrSeries.length === 0) {
     if (mttrCount > 0) {
       const mttrHours = mttrSumMs / mttrCount / 3_600_000;
@@ -2147,7 +2434,18 @@ async function runGitlab(
     );
   }
 
-  return { recordsCollected, summary, evidence };
+  const coverage = {
+    projects: {
+      total: projects.length,
+      sampled: projectsSampled,
+      remaining: Math.max(0, projects.length - projectsSampled),
+    },
+  };
+  const cursors = {
+    projects: { index: nextProjectIndex, total: projects.length },
+  };
+
+  return { recordsCollected, summary, evidence, cursors, coverage };
 }
 
 async function verifyJira(
@@ -2311,6 +2609,7 @@ function readJiraSprints(issue: JiraIssue, sprintField: string): JiraSprintObjec
 async function runJira(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const baseUrl = String(config.baseUrl ?? "").replace(/\/$/, "");
   const email = String(config.email ?? "");
@@ -2318,6 +2617,7 @@ async function runJira(
   if (!baseUrl || !email)
     return { recordsCollected: 0, summary: {}, evidence: [] };
   await assertSafeUrl(baseUrl);
+  const lookbackDays = resolveLookbackDays(ctx);
   const auth = Buffer.from(`${email}:${token}`).toString("base64");
   const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
   const projClause = project ? `project=${project} AND ` : "";
@@ -2326,10 +2626,12 @@ async function runJira(
   const evidence: CollectedEvidence[] = [];
   const summary: Record<string, unknown> = {};
 
-  // ---- 1. Resolved issues with changelog + sprint info (last 30d) --------
+  // ---- 1. Resolved issues with changelog + sprint info -------------------
   // expand=changelog returns the full status transition history per issue,
-  // which we need for flow-efficiency / blocked-time accounting.
-  const resolvedJql = `${projClause}resolved >= -30d ORDER BY resolved DESC`;
+  // which we need for flow-efficiency / blocked-time accounting. JQL
+  // accepts negative durations like `-90d`; we pass the engagement's
+  // configured lookback so a long window picks up older incidents too.
+  const resolvedJql = `${projClause}resolved >= -${lookbackDays}d ORDER BY resolved DESC`;
   const fields = `created,resolutiondate,labels,issuetype,status,${sprintField}`;
   const r = await fetch(
     `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(resolvedJql)}&fields=${encodeURIComponent(fields)}&expand=changelog&maxResults=100`,
@@ -2343,7 +2645,7 @@ async function runJira(
     dimension: "process",
     signalType: "strength",
     stageHint: 2,
-    text: `Jira project has ${data.total} resolved issues in the last 30 days — active planning process.`,
+    text: `Jira project has ${data.total} resolved issues in the last ${lookbackDays} days — active planning process.`,
   });
 
   // ---- 2. Per-issue cycle/lead time + flow buckets + MTTR ----------------
@@ -2643,12 +2945,12 @@ async function runJira(
   if (mttrCount > 0) {
     const mttrHours = mttrSumMs / mttrCount / 3_600_000;
     summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
-    summary.incidentTickets30d = mttrCount;
+    summary.incidentTickets = mttrCount;
     evidence.push({
       dimension: "measurement",
       signalType: mttrHours <= 24 ? "strength" : "gap",
       stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
-      text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to resolve incident/bug tickets (n=${mttrCount}, 30d).`,
+      text: `MTTR proxy: avg ${mttrHours.toFixed(1)} hours to resolve incident/bug tickets (n=${mttrCount}, ${lookbackDays}d).`,
     });
   } else {
     summary.mttrHoursAvg = null;
@@ -2656,14 +2958,26 @@ async function runJira(
       dimension: "measurement",
       signalType: "gap",
       stageHint: 1,
-      text: "No incident-labeled tickets found in the last 30 days — MTTR cannot be measured. Tag incidents with 'incident', 'outage', 'p0', or 'p1' to enable measurement.",
+      text: `No incident-labeled tickets found in the last ${lookbackDays} days — MTTR cannot be measured. Tag incidents with 'incident', 'outage', 'p0', or 'p1' to enable measurement.`,
     });
   }
+
+  // Jira's search call returns a single windowed result set, so there is no
+  // multi-resource walk to resume. Coverage just reports the total vs the
+  // page we examined; cursors are empty.
+  const coverage = {
+    issues: {
+      total: data.total,
+      sampled: data.issues.length,
+      remaining: Math.max(0, data.total - data.issues.length),
+    },
+  };
 
   return {
     recordsCollected,
     summary,
     evidence,
+    coverage,
   };
 }
 
@@ -2869,14 +3183,21 @@ async function countLinearIssues(
 async function runLinear(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   // Batched GraphQL query for the metrics that benefit from co-location
   // (completed issues, in-progress, cycles). Backlog and recent-created
   // counters are fetched separately via `countLinearIssues` so they can
   // paginate up to 1000 items each instead of being silently capped at the
-  // first 250 the inline query would have returned.
-  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const cycleSince = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  // first 250 the inline query would have returned. Lookback is the
+  // engagement-configured window; cycleSince is held at 60 days so we
+  // always have at least a couple of recent cycles to derive completion
+  // rate from regardless of the lookback setting.
+  const lookbackDays = resolveLookbackDays(ctx);
+  const since = new Date(Date.now() - lookbackDays * 86_400_000).toISOString();
+  const cycleSince = new Date(
+    Date.now() - Math.max(60, lookbackDays) * 86_400_000,
+  ).toISOString();
   const statusMapping = readStatusMappingFromConfig(config);
   const r = await fetch("https://api.linear.app/graphql", {
     method: "POST",
@@ -3094,12 +3415,12 @@ async function runLinear(
       dimension: "tooling",
       signalType: "strength",
       stageHint: 3,
-      text: `Linear: ${teams} teams visible, ${issues.length} issues completed in the last 30 days.`,
+      text: `Linear: ${teams} teams visible, ${issues.length} issues completed in the last ${lookbackDays} days.`,
     },
   ];
   const summary: Record<string, unknown> = {
     teams,
-    issuesCompleted30d: issues.length,
+    issuesCompletedInWindow: issues.length,
   };
   if (cycleAvg !== null) summary.cycleTimeHoursAvg = Number(cycleAvg.toFixed(1));
 
@@ -3147,15 +3468,22 @@ async function runLinear(
       dimension: "measurement",
       signalType: mttrHours <= 24 ? "strength" : "gap",
       stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
-      text: `MTTR proxy (Linear): avg ${mttrHours.toFixed(1)} hours to resolve incident-tagged issues (n=${mttrCount}, 30d).`,
+      text: `MTTR proxy (Linear): avg ${mttrHours.toFixed(1)} hours to resolve incident-tagged issues (n=${mttrCount}, ${lookbackDays}d).`,
     });
   }
+
+  // Single GraphQL call with `first: 100` — like Jira there is no multi-
+  // resource walk to resume, so coverage just reports the page we got.
+  const coverage = {
+    issues: { sampled: issues.length },
+  };
 
   return {
     recordsCollected:
       teams + issues.length + wipNodes.length + backlogResult.count,
     summary,
     evidence,
+    coverage,
   };
 }
 
@@ -3188,10 +3516,11 @@ async function verifyCicd(
 async function runCicd(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const provider = String(config.provider ?? "github_actions");
   if (provider === "github_actions") {
-    const out = await runGithub(token, config);
+    const out = await runGithub(token, config, ctx);
     out.evidence.push({
       dimension: "process",
       signalType: "strength",
@@ -3201,15 +3530,15 @@ async function runCicd(
     return out;
   }
   if (provider === "circleci") {
-    return runCircleCi(token, config);
+    return runCircleCi(token, config, ctx);
   }
   if (provider === "gitlab_ci") {
     // GitLab CI shares the same backend as the GitLab connector; reuse the
     // pipeline metrics path so deploy/change-fail come out normalized.
-    return runGitlab(token, config);
+    return runGitlab(token, config, ctx);
   }
   if (provider === "jenkins") {
-    const out = await runJenkins(token, config);
+    const out = await runJenkins(token, config, ctx);
     out.evidence.push({
       dimension: "process",
       signalType: "strength",
@@ -3241,11 +3570,16 @@ async function runCicd(
 async function runCircleCi(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const vcs = String(config.vcs ?? "github");
   const org = String(config.org ?? "");
   const project = String(config.project ?? "");
   const evidence: CollectedEvidence[] = [];
+  const startMs = Date.now();
+  const lookbackDays = resolveLookbackDays(ctx);
+  const budgetMs = resolveBudgetMs(ctx);
+  const cursorStart = readCursorIndex(ctx.priorCursors, "pipelines", "index");
   if (!org || !project) {
     return {
       recordsCollected: 0,
@@ -3261,27 +3595,61 @@ async function runCircleCi(
     };
   }
   const slug = `${vcs}/${org}/${project}`;
-  // CircleCI v2 API: list pipelines for the project (paginated). We pull the
-  // first 100 to keep the call cheap; over a 30-day window most projects
-  // produce well under that.
+  // CircleCI v2 pipelines API uses opaque `next_page_token` cursor pagination
+  // (no page size param — fixed ~25 per page). Walk pages until either we
+  // run out of budget, the page is older than the lookback window (since
+  // results are returned newest-first), or we hit the end of the project's
+  // history. Replaces the old single-page `limit=100` call which silently
+  // capped discovery to the most recent 100 pipelines.
   const headers = { "Circle-Token": token, Accept: "application/json" };
-  const r = await fetch(
-    `https://circleci.com/api/v2/project/${encodeURIComponent(slug)}/pipeline?limit=100`,
-    { headers },
+  const sinceMs = Date.now() - lookbackDays * 86_400_000;
+  const allPipelines: Array<{
+    id: string;
+    created_at: string;
+    state: string;
+    vcs?: { branch?: string | null; revision?: string | null };
+  }> = [];
+  let pageToken: string | null = null;
+  let pipelinesDiscoveryComplete = false;
+  let stoppedOnAge = false;
+  while (withinBudget(startMs, budgetMs)) {
+    const url = pageToken
+      ? `https://circleci.com/api/v2/project/${encodeURIComponent(slug)}/pipeline?page-token=${encodeURIComponent(pageToken)}`
+      : `https://circleci.com/api/v2/project/${encodeURIComponent(slug)}/pipeline`;
+    const r = await fetch(url, { headers });
+    if (!r.ok) throw new Error(`CircleCI ${r.status}`);
+    const data = (await r.json()) as {
+      items: Array<{
+        id: string;
+        created_at: string;
+        state: string;
+        vcs?: { branch?: string | null; revision?: string | null };
+      }>;
+      next_page_token: string | null;
+    };
+    if (data.items.length === 0) {
+      pipelinesDiscoveryComplete = true;
+      break;
+    }
+    allPipelines.push(...data.items);
+    // Pipelines come back newest-first, so once a page's last item is older
+    // than the lookback we know we've gone past the window and can stop.
+    const lastTs = new Date(data.items[data.items.length - 1]!.created_at).getTime();
+    if (lastTs < sinceMs) {
+      stoppedOnAge = true;
+      pipelinesDiscoveryComplete = true;
+      break;
+    }
+    if (!data.next_page_token) {
+      pipelinesDiscoveryComplete = true;
+      break;
+    }
+    pageToken = data.next_page_token;
+  }
+  const recent = allPipelines.filter(
+    (p) => new Date(p.created_at).getTime() >= sinceMs,
   );
-  if (!r.ok) throw new Error(`CircleCI ${r.status}`);
-  const data = (await r.json()) as {
-    items: Array<{
-      id: string;
-      created_at: string;
-      state: string;
-      vcs?: { branch?: string | null };
-    }>;
-  };
-  const since = Date.now() - 30 * 86_400_000;
-  const recent = data.items.filter(
-    (p) => new Date(p.created_at).getTime() >= since,
-  );
+  void stoppedOnAge;
 
   // For each pipeline, fetch its workflows to determine pass/fail and
   // accumulate CI-quality series. CircleCI flags re-runs with `tag:
@@ -3290,6 +3658,10 @@ async function runCircleCi(
   // first CI_JOBS_WORKFLOW_LIMIT workflows to get true job-level build
   // duration and per-job flaky pass-on-retry detection (job_name + the
   // pipeline's commit SHA), matching the GitHub/GitLab approach.
+  //
+  // We walk every pipeline in the lookback window (no longer the old
+  // top-30 slice) and break only on the wall-clock budget, persisting a
+  // cursor so the next run resumes from where we stopped.
   const CI_JOBS_WORKFLOW_LIMIT = 25;
   let workflowsTotal = 0;
   let workflowsFailed = 0;
@@ -3308,7 +3680,16 @@ async function runCircleCi(
   // Pipeline → commit SHA so flaky job grouping can use (job_name, sha)
   // exactly like GitHub. v2 /pipeline already returns vcs.revision.
   const pipelineSha = new Map<string, string>();
-  for (const p of recent.slice(0, 30)) {
+  let pipelinesSampled = 0;
+  let nextPipelineIndex = cursorStart;
+  if (recent.length > 0 && cursorStart >= recent.length) nextPipelineIndex = 0;
+
+  for (let i = nextPipelineIndex; i < recent.length; i += 1) {
+    if (!withinBudget(startMs, budgetMs)) {
+      nextPipelineIndex = i;
+      break;
+    }
+    const p = recent[i]!;
     const sha =
       ((p as { vcs?: { revision?: string | null } }).vcs?.revision ??
         "").toString();
@@ -3431,14 +3812,30 @@ async function runCircleCi(
     } catch {
       // ignore individual pipeline errors
     }
+    pipelinesSampled += 1;
+    nextPipelineIndex = i + 1;
+    await ctx.checkpoint?.({
+      cursors: {
+        pipelines: { index: nextPipelineIndex, total: recent.length },
+      },
+      coverage: {
+        pipelines: {
+          total: recent.length,
+          sampled: pipelinesSampled,
+          remaining: Math.max(0, recent.length - pipelinesSampled),
+        },
+      },
+    });
   }
+  if (nextPipelineIndex >= recent.length) nextPipelineIndex = 0;
 
   const summary: Record<string, unknown> = {
     provider: "circleci",
-    pipelines30d: recent.length,
-    workflows30d: workflowsTotal,
-    workflowsSucceeded30d: workflowsSucceeded,
-    workflowsFailed30d: workflowsFailed,
+    pipelinesInWindow: recent.length,
+    pipelinesDiscoveryComplete,
+    workflowsTotal,
+    workflowsSucceeded,
+    workflowsFailed,
     // CircleCI's v2 API doesn't expose queue time as a first-class field
     // (it's available only via the Insights paid endpoint). We surface
     // n/a + reason so the UI can render a helpful tooltip rather than a
@@ -3454,15 +3851,18 @@ async function runCircleCi(
     leadTimeHoursP95: null,
     leadTimeUnavailableReason:
       "Lead time for changes requires source-control PR/MR data. Add a GitHub or GitLab connector for the same project to populate this.",
+    // CircleCI has no incident-issue concept of its own, so MTTR is n/a from
+    // this connector. Pair with a Jira/Linear/GitHub connector to fill it.
+    mttrHoursAvg: null,
   };
   if (workflowsSucceeded > 0) {
-    const deploysPerDay = workflowsSucceeded / 30;
+    const deploysPerDay = workflowsSucceeded / lookbackDays;
     summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
     evidence.push({
       dimension: "process",
       signalType: deploysPerDay >= 1 ? "strength" : "gap",
       stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
-      text: `Deployment frequency (CircleCI ${slug}): ~${deploysPerDay.toFixed(2)} successful workflows/day (30d).`,
+      text: `Deployment frequency (CircleCI ${slug}): ~${deploysPerDay.toFixed(2)} successful workflows/day (${lookbackDays}d).`,
     });
   }
   if (workflowsTotal > 0) {
@@ -3599,13 +3999,27 @@ async function runCircleCi(
       dimension: "process",
       signalType: "gap",
       stageHint: 1,
-      text: `No CircleCI workflows found in the last 30 days for ${slug}.`,
+      text: `No CircleCI workflows found in the last ${lookbackDays} days for ${slug}.`,
     });
   }
+
+  const coverage = {
+    pipelines: {
+      total: recent.length,
+      sampled: pipelinesSampled,
+      remaining: Math.max(0, recent.length - pipelinesSampled),
+    },
+  };
+  const cursors = {
+    pipelines: { index: nextPipelineIndex, total: recent.length },
+  };
+
   return {
     recordsCollected: workflowsTotal + recent.length,
     summary,
     evidence,
+    cursors,
+    coverage,
   };
 }
 
@@ -3683,6 +4097,7 @@ async function verifyJenkins(
 async function runJenkins(
   token: string,
   config: Record<string, unknown>,
+  ctx: ConnectorCtx = {},
 ): Promise<ConnectorRunResult> {
   const baseUrl = String(config.baseUrl ?? "").replace(/\/$/, "");
   const username = String(config.username ?? "");
@@ -3702,6 +4117,9 @@ async function runJenkins(
     };
   }
   await assertSafeUrl(baseUrl);
+  const startMs = Date.now();
+  const lookbackDays = resolveLookbackDays(ctx);
+  const budgetMs = resolveBudgetMs(ctx);
   let jobFilter: RegExp | null = null;
   if (jobFilterRaw) {
     try {
@@ -3718,16 +4136,40 @@ async function runJenkins(
     Accept: "application/json",
   };
 
-  // Walk jobs (paginating through folders), accumulating real jobs with
-  // their recent builds. Depth is capped to avoid runaway recursion on
-  // pathologically nested folder trees.
-  const collectedJobs: Array<{ fullName: string; builds: JenkinsBuild[] }> = [];
+  // Walk jobs as a BFS folder queue rather than recursive DFS so we can
+  // (a) stop cleanly when the wall-clock budget is exhausted and
+  // (b) persist the *unvisited* folder URLs as a resume cursor so the
+  // next run picks up exactly where we stopped instead of re-walking the
+  // entire tree from the root.
+  type FolderTask = { url: string; prefix: string; depth: number };
   const MAX_DEPTH = 5;
+  const collectedJobs: Array<{ fullName: string; builds: JenkinsBuild[] }> = [];
 
-  async function walk(url: string, prefix: string, depth: number): Promise<void> {
-    if (depth > MAX_DEPTH) return;
+  const priorJobsCursor = readCursor(ctx.priorCursors, "jobs");
+  const priorQueueRaw = priorJobsCursor.queue;
+  const priorQueue: FolderTask[] = Array.isArray(priorQueueRaw)
+    ? (priorQueueRaw as unknown[]).flatMap((v) => {
+        if (typeof v !== "object" || v === null) return [];
+        const t = v as Record<string, unknown>;
+        if (typeof t.url !== "string") return [];
+        return [
+          {
+            url: t.url,
+            prefix: typeof t.prefix === "string" ? t.prefix : "",
+            depth: typeof t.depth === "number" ? t.depth : 0,
+          },
+        ];
+      })
+    : [];
+  const queue: FolderTask[] =
+    priorQueue.length > 0 ? priorQueue : [{ url: baseUrl, prefix: "", depth: 0 }];
+
+  let foldersWalked = 0;
+  while (queue.length > 0 && withinBudget(startMs, budgetMs)) {
+    const task = queue.shift()!;
+    if (task.depth > MAX_DEPTH) continue;
     const r = await fetch(
-      `${url}/api/json?tree=jobs[name,_class,builds[number,result,timestamp,duration]]`,
+      `${task.url}/api/json?tree=jobs[name,_class,builds[number,result,timestamp,duration]]`,
       { headers },
     );
     if (!r.ok) {
@@ -3738,9 +4180,13 @@ async function runJenkins(
     }
     const data = (await r.json()) as { jobs?: JenkinsJobNode[] };
     for (const j of data.jobs ?? []) {
-      const fullName = prefix ? `${prefix}/${j.name}` : j.name;
+      const fullName = task.prefix ? `${task.prefix}/${j.name}` : j.name;
       if (isJenkinsFolder(j._class)) {
-        await walk(`${url}/job/${encodeURIComponent(j.name)}`, fullName, depth + 1);
+        queue.push({
+          url: `${task.url}/job/${encodeURIComponent(j.name)}`,
+          prefix: fullName,
+          depth: task.depth + 1,
+        });
       } else {
         if (jobFilter && !jobFilter.test(fullName)) continue;
         collectedJobs.push({
@@ -3749,13 +4195,28 @@ async function runJenkins(
         });
       }
     }
+    foldersWalked += 1;
+    // Incremental checkpoint so a kill/crash mid-walk leaves the
+    // unvisited-folder queue persisted on the run row. The runner
+    // debounces these writes.
+    await ctx.checkpoint?.({
+      cursors: {
+        jobs: { queue, foldersWalked },
+      },
+      coverage: {
+        jobs: {
+          foldersWalked,
+          foldersPending: queue.length,
+          jobsCollected: collectedJobs.length,
+        },
+      },
+    });
   }
+  const jobsDiscoveryComplete = queue.length === 0;
 
-  await walk(baseUrl, "", 0);
-
-  // Lookback window matches the other providers (30 days). Builds with
-  // `result === null` are still running and excluded from totals.
-  const sinceMs = Date.now() - 30 * 86_400_000;
+  // Lookback window comes from the engagement's connectorLookbackDays.
+  // Builds with `result === null` are still running and excluded from totals.
+  const sinceMs = Date.now() - lookbackDays * 86_400_000;
   let total = 0;
   let succeeded = 0;
   let failed = 0;
@@ -3782,22 +4243,23 @@ async function runJenkins(
   const summary: Record<string, unknown> = {
     provider: "jenkins",
     jobCount: collectedJobs.length,
-    builds30d: total,
-    buildsSucceeded30d: succeeded,
-    buildsFailed30d: failed,
+    jobsDiscoveryComplete,
+    buildsInWindow: total,
+    buildsSucceededInWindow: succeeded,
+    buildsFailedInWindow: failed,
     // Jenkins has no incident concept; MTTR comes from a paired Jira/Linear/
     // GitHub connector.
     mttrHoursAvg: null,
   };
 
   if (succeeded > 0) {
-    const deploysPerDay = succeeded / 30;
+    const deploysPerDay = succeeded / lookbackDays;
     summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
     evidence.push({
       dimension: "process",
       signalType: deploysPerDay >= 1 ? "strength" : "gap",
       stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
-      text: `Deployment frequency (Jenkins): ~${deploysPerDay.toFixed(2)} successful builds/day across ${collectedJobs.length} jobs (30d).`,
+      text: `Deployment frequency (Jenkins): ~${deploysPerDay.toFixed(2)} successful builds/day across ${collectedJobs.length} jobs (${lookbackDays}d).`,
     });
   }
   if (total > 0) {
@@ -3807,7 +4269,7 @@ async function runJenkins(
       dimension: "measurement",
       signalType: cfr <= 0.15 ? "strength" : "gap",
       stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
-      text: `Change failure rate (Jenkins): ${(cfr * 100).toFixed(1)}% (${failed}/${total} builds FAILURE/UNSTABLE, 30d).`,
+      text: `Change failure rate (Jenkins): ${(cfr * 100).toFixed(1)}% (${failed}/${total} builds FAILURE/UNSTABLE, ${lookbackDays}d).`,
     });
   }
   if (durationCount > 0) {
@@ -3821,7 +4283,7 @@ async function runJenkins(
       dimension: "process",
       signalType: avgMin <= 30 ? "strength" : "gap",
       stageHint: avgMin <= 10 ? 5 : avgMin <= 30 ? 4 : avgMin <= 60 ? 3 : 2,
-      text: `Build duration (Jenkins): avg ${avgMin.toFixed(1)} minutes per build (n=${durationCount}, 30d).`,
+      text: `Build duration (Jenkins): avg ${avgMin.toFixed(1)} minutes per build (n=${durationCount}, ${lookbackDays}d).`,
     });
   }
   if (total === 0) {
@@ -3829,14 +4291,30 @@ async function runJenkins(
       dimension: "process",
       signalType: "gap",
       stageHint: 1,
-      text: `No Jenkins builds found in the last 30 days across ${collectedJobs.length} discovered jobs.`,
+      text: `No Jenkins builds found in the last ${lookbackDays} days across ${collectedJobs.length} discovered jobs.`,
     });
   }
+
+  const coverage = {
+    jobs: {
+      foldersWalked,
+      foldersPending: queue.length,
+      jobsCollected: collectedJobs.length,
+    },
+  };
+  // Persist the unvisited-folder queue so the next run resumes from the
+  // exact spot we stopped. When the walk completes (queue empty), we
+  // clear the cursor so the next run starts a fresh BFS from the root.
+  const cursors = jobsDiscoveryComplete
+    ? { jobs: { queue: [] as FolderTask[], foldersWalked } }
+    : { jobs: { queue, foldersWalked } };
 
   return {
     recordsCollected: total + collectedJobs.length,
     summary,
     evidence,
+    cursors,
+    coverage,
   };
 }
 
@@ -5375,19 +5853,19 @@ export async function runConnector(
     let result: ConnectorRunResult;
     switch (kind) {
       case "github":
-        result = await runGithub(token, cfg);
+        result = await runGithub(token, cfg, ctx);
         break;
       case "gitlab":
-        result = await runGitlab(token, cfg);
+        result = await runGitlab(token, cfg, ctx);
         break;
       case "jira":
-        result = await runJira(token, cfg);
+        result = await runJira(token, cfg, ctx);
         break;
       case "linear":
-        result = await runLinear(token, cfg);
+        result = await runLinear(token, cfg, ctx);
         break;
       case "cicd":
-        result = await runCicd(token, cfg);
+        result = await runCicd(token, cfg, ctx);
         break;
       case "ai_tooling":
         result = await runAiTooling(token, cfg, ctx);

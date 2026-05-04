@@ -1370,6 +1370,14 @@ components:
         modules:
           type: array
           items: { type: string, enum: [security, data, platform, design] }
+        connectorLookbackDays:
+          type: integer
+          minimum: 7
+          maximum: 365
+          description: >-
+            Sliding lookback window (days) applied to every connector's
+            "recent" queries (deploys, MRs/PRs, incidents, etc). Defaults to
+            90 when not set. Range 7–365.
         createdAt: { type: string }
         updatedAt: { type: string }
 
@@ -1408,6 +1416,14 @@ components:
         modules:
           type: array
           items: { type: string, enum: [security, data, platform, design] }
+        connectorLookbackDays:
+          type: integer
+          minimum: 7
+          maximum: 365
+          description: >-
+            Sliding lookback window (days) for every connector under this
+            engagement. Server clamps to 7..365 and rejects out-of-range
+            values with HTTP 400.
 
     PortfolioSizeBand:
       type: string
@@ -1775,6 +1791,33 @@ components:
         summary:
           type: object
           additionalProperties: true
+        lookbackDays:
+          type: integer
+          nullable: true
+          description: >-
+            Lookback window (days) actually used by this run, snapshotted
+            from the engagement setting at run start. Null on legacy rows
+            written before the column existed.
+        wallClockBudgetMs:
+          type: integer
+          nullable: true
+          description: >-
+            Wall-clock budget (ms) the run was scheduled with. Null on
+            legacy rows.
+        cursors:
+          type: object
+          additionalProperties: true
+          description: >-
+            Per-resource opaque resume cursors (e.g. `repos.workflowsIndex`).
+            The next run reads these to pick up where this one stopped when
+            it ran out of wall-clock budget.
+        coverage:
+          type: object
+          additionalProperties: true
+          description: >-
+            Per-resource coverage stats (e.g. `repos.total / sampled /
+            remaining`) so the run-history UI can display "sampled X of Y"
+            without inferring it from the cursor shape.
 
     SurveyQuestion:
       type: object

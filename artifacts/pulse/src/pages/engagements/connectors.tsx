@@ -1,15 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "wouter";
 import {
   useListConnectors,
   useDeleteConnector,
   useRunConnector,
+  useGetEngagement,
+  useUpdateEngagement,
   getListConnectorsQueryKey,
+  getGetEngagementQueryKey,
   type Connector,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -173,6 +178,8 @@ export default function ConnectorsList() {
           onOpenChange={setIsCreateOpen}
         />
       </div>
+
+      <CollectionSettingsCard engagementId={id} />
 
       <Card>
         <CardHeader>
@@ -360,4 +367,114 @@ function cadenceLabel(minutes: number): string {
   if (minutes < 1440) return `${Math.round(minutes / 60)}h`;
   if (minutes < 10080) return `${Math.round(minutes / 1440)}d`;
   return `${Math.round(minutes / 10080)}w`;
+}
+
+// Engagement-wide collection settings. Renders above the connectors table
+// so the assessor sees (and can change) the lookback window in the same
+// place where they trigger runs.
+function CollectionSettingsCard({ engagementId }: { engagementId: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: engagement, isLoading } = useGetEngagement(engagementId, {
+    query: {
+      enabled: !!engagementId,
+      queryKey: getGetEngagementQueryKey(engagementId),
+    },
+  });
+  const updateEngagement = useUpdateEngagement();
+
+  // Keep the input controlled but seeded from the server. Local state lets
+  // the assessor type freely (incl. transiently-empty values) while we only
+  // commit on Save.
+  const [draft, setDraft] = useState<string>("");
+  useEffect(() => {
+    if (engagement?.connectorLookbackDays != null) {
+      setDraft(String(engagement.connectorLookbackDays));
+    } else if (engagement) {
+      // Default surfaced to the user matches the server-side default so the
+      // displayed value never differs from what runs would actually use.
+      setDraft("90");
+    }
+  }, [engagement?.connectorLookbackDays, engagement]);
+
+  const parsed = Number(draft);
+  const isValid =
+    Number.isFinite(parsed) && parsed >= 7 && parsed <= 365 && parsed === Math.floor(parsed);
+  const isDirty =
+    engagement != null &&
+    isValid &&
+    parsed !== (engagement.connectorLookbackDays ?? 90);
+
+  const handleSave = () => {
+    if (!isValid || !isDirty) return;
+    updateEngagement.mutate(
+      { id: engagementId, data: { connectorLookbackDays: parsed } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({
+            queryKey: getGetEngagementQueryKey(engagementId),
+          });
+          toast({
+            title: "Lookback window updated",
+            description: `Future connector runs will scan the last ${parsed} days.`,
+          });
+        },
+        onError: (err) => {
+          toast({
+            variant: "destructive",
+            title: "Failed to update setting",
+            description: err instanceof Error ? err.message : "Unknown error",
+          });
+        },
+      },
+    );
+  };
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle>Collection settings</CardTitle>
+        <CardDescription>
+          Sliding window applied to every connector under this engagement.
+          Larger windows surface older incidents and lower-frequency deploys
+          but increase API usage; smaller windows refresh faster.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-end gap-3 max-w-md">
+          <div className="flex-1">
+            <Label htmlFor="lookback-days" className="text-sm">
+              Lookback window (days)
+            </Label>
+            <Input
+              id="lookback-days"
+              data-testid="input-lookback-days"
+              type="number"
+              min={7}
+              max={365}
+              value={draft}
+              disabled={isLoading || updateEngagement.isPending}
+              onChange={(e) => setDraft(e.target.value)}
+              className="mt-1"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Range 7–365. Default is 90.
+              {!isValid && draft !== "" ? (
+                <span className="text-destructive ml-1">
+                  Must be an integer between 7 and 365.
+                </span>
+              ) : null}
+            </p>
+          </div>
+          <Button
+            data-testid="button-save-lookback"
+            onClick={handleSave}
+            disabled={!isDirty || !isValid || updateEngagement.isPending}
+          >
+            {updateEngagement.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }

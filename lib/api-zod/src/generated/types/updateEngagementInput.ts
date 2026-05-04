@@ -19,4 +19,10 @@ export interface UpdateEngagementInput {
   targetDeliveryDate?: string | null;
   status?: EngagementStatus;
   modules?: UpdateEngagementInputModulesItem[];
+  /**
+   * Sliding lookback window (days) for every connector under this engagement. Server clamps to 7..365 and rejects out-of-range values with HTTP 400.
+   * @minimum 7
+   * @maximum 365
+   */
+  connectorLookbackDays?: number;
 }

@@ -85,47 +85,112 @@ export function RunHistoryDialog({
           </p>
         ) : (
           <div className="space-y-2">
-            {runs.map((run) => (
-              <div
-                key={run.id}
-                className="border rounded-md p-3 space-y-1"
-                data-testid={`run-row-${run.id}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={
-                        run.status === "success"
-                          ? "default"
-                          : run.status === "failed"
-                            ? "destructive"
-                            : "secondary"
-                      }
-                      className="capitalize"
-                    >
-                      {run.status}
-                    </Badge>
-                    <span className="text-sm font-medium">
-                      {run.recordsCollected ?? 0} records
+            {runs.map((run) => {
+              // Coverage/cursors are emitted as opaque per-resource maps
+              // (e.g. `repos: { total, workflowsSampled, ... }`). We render
+              // them generically so the dialog stays useful even as new
+              // resource types appear in future connector runners.
+              const coverage =
+                (run.coverage as Record<string, Record<string, unknown>>) ?? {};
+              const cursors =
+                (run.cursors as Record<string, Record<string, unknown>>) ?? {};
+              const coverageEntries = Object.entries(coverage);
+              const cursorEntries = Object.entries(cursors);
+              return (
+                <div
+                  key={run.id}
+                  className="border rounded-md p-3 space-y-1"
+                  data-testid={`run-row-${run.id}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge
+                        variant={
+                          run.status === "success"
+                            ? "default"
+                            : run.status === "failed"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                        className="capitalize"
+                      >
+                        {run.status}
+                      </Badge>
+                      <span className="text-sm font-medium">
+                        {run.recordsCollected ?? 0} records
+                      </span>
+                      {run.lookbackDays ? (
+                        <Badge
+                          variant="outline"
+                          className="text-xs"
+                          title="Lookback window used by this run"
+                        >
+                          {run.lookbackDays}d window
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {formatRelative(run.startedAt)}
                     </span>
                   </div>
-                  <span className="text-xs text-muted-foreground">
-                    {formatRelative(run.startedAt)}
-                  </span>
+                  {run.error ? (
+                    <div className="flex items-start gap-1.5 text-xs text-destructive">
+                      <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span className="break-words">{run.error}</span>
+                    </div>
+                  ) : null}
+                  {coverageEntries.length > 0 ? (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {coverageEntries.map(([resource, stats]) => {
+                        const total = Number(stats.total ?? 0);
+                        // Some resources (GitHub) report two parallel
+                        // sample counts; we surface whichever non-`total`
+                        // numeric fields are present so the badge label is
+                        // self-explanatory.
+                        const parts = Object.entries(stats)
+                          .filter(([k]) => k !== "total")
+                          .map(([k, v]) => `${k}: ${String(v)}`);
+                        return (
+                          <Badge
+                            key={`cov-${run.id}-${resource}`}
+                            variant="secondary"
+                            className="text-xs font-normal"
+                            title={parts.join(", ")}
+                          >
+                            {resource}: {parts.join(" / ")}
+                            {total ? ` of ${total}` : ""}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  {cursorEntries.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {cursorEntries.map(([resource, c]) => {
+                        const parts = Object.entries(c).map(
+                          ([k, v]) => `${k}=${String(v)}`,
+                        );
+                        return (
+                          <Badge
+                            key={`cur-${run.id}-${resource}`}
+                            variant="outline"
+                            className="text-xs font-normal"
+                            title="Resume cursor — next run picks up here"
+                          >
+                            cursor[{resource}] {parts.join(", ")}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  {run.finishedAt ? (
+                    <p className="text-xs text-muted-foreground">
+                      Finished {formatRelative(run.finishedAt)}
+                    </p>
+                  ) : null}
                 </div>
-                {run.error ? (
-                  <div className="flex items-start gap-1.5 text-xs text-destructive">
-                    <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                    <span className="break-words">{run.error}</span>
-                  </div>
-                ) : null}
-                {run.finishedAt ? (
-                  <p className="text-xs text-muted-foreground">
-                    Finished {formatRelative(run.finishedAt)}
-                  </p>
-                ) : null}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
         <div className="flex items-center justify-between pt-2 border-t">

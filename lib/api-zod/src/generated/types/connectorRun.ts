@@ -5,6 +5,8 @@
  * Pulse — Agentic Maturity Assessment Platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { ConnectorRunCoverage } from "./connectorRunCoverage";
+import type { ConnectorRunCursors } from "./connectorRunCursors";
 import type { ConnectorRunStatus } from "./connectorRunStatus";
 import type { ConnectorRunSummary } from "./connectorRunSummary";
 
@@ -17,4 +19,12 @@ export interface ConnectorRun {
   recordsCollected?: number;
   error?: string | null;
   summary?: ConnectorRunSummary;
+  /** Lookback window (days) actually used by this run, snapshotted from the engagement setting at run start. Null on legacy rows written before the column existed. */
+  lookbackDays?: number | null;
+  /** Wall-clock budget (ms) the run was scheduled with. Null on legacy rows. */
+  wallClockBudgetMs?: number | null;
+  /** Per-resource opaque resume cursors (e.g. `repos.workflowsIndex`). The next run reads these to pick up where this one stopped when it ran out of wall-clock budget. */
+  cursors?: ConnectorRunCursors;
+  /** Per-resource coverage stats (e.g. `repos.total / sampled / remaining`) so the run-history UI can display "sampled X of Y" without inferring it from the cursor shape. */
+  coverage?: ConnectorRunCoverage;
 }

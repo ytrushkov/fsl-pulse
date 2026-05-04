@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import {
   migrateLegacyArtifactBlobs,
   migrateLegacyConnectorTokens,
+  migrateConnectorLookbackColumns,
   backfillScoringSnapshots,
 } from "./lib/migrations";
 import { startScheduler } from "./lib/scheduler";
@@ -60,6 +61,20 @@ app.listen(port, (err) => {
       }
     })
     .catch((e) => logger.error({ err: e }, "Artifact blob migration failed"));
+
+  // Add the per-engagement connectorLookbackDays column and the resumable
+  // connector_runs cursor/coverage/lookback columns to long-lived prod DBs
+  // that pre-date the schema change. Idempotent — uses IF NOT EXISTS.
+  // MUST run before any connector route can read/write those columns.
+  migrateConnectorLookbackColumns()
+    .then((summary) => {
+      if (summary.engagementColumnAdded || summary.runColumnsAdded) {
+        logger.info(summary, "Connector lookback/cursor schema migration applied");
+      }
+    })
+    .catch((e) =>
+      logger.error({ err: e }, "Connector lookback migration failed"),
+    );
 
   // Make sure a baseline rubric exists before scoring runs. Idempotent.
   ensureSeedRubric().catch((e) =>
