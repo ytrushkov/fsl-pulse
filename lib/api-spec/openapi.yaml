@@ -1315,7 +1315,7 @@ components:
 
     ConnectorKind:
       type: string
-      enum: [github, gitlab, jira, linear, cicd, ai_tooling]
+      enum: [github, gitlab, jira, linear, cicd, ai_tooling, azure_devops]
 
     AuthedUser:
       type: object

@@ -566,7 +566,15 @@ export const listConnectorsResponseScheduleCadenceMinutesMax = 43200;
 export const ListConnectorsResponseItem = zod.object({
   id: zod.string(),
   engagementId: zod.string(),
-  kind: zod.enum(["github", "gitlab", "jira", "linear", "cicd", "ai_tooling"]),
+  kind: zod.enum([
+    "github",
+    "gitlab",
+    "jira",
+    "linear",
+    "cicd",
+    "ai_tooling",
+    "azure_devops",
+  ]),
   provider: zod.string().optional(),
   label: zod.string(),
   status: zod.enum([
@@ -603,7 +611,15 @@ export const CreateConnectorParams = zod.object({
 });
 
 export const CreateConnectorBody = zod.object({
-  kind: zod.enum(["github", "gitlab", "jira", "linear", "cicd", "ai_tooling"]),
+  kind: zod.enum([
+    "github",
+    "gitlab",
+    "jira",
+    "linear",
+    "cicd",
+    "ai_tooling",
+    "azure_devops",
+  ]),
   provider: zod.string(),
   label: zod.string(),
   token: zod.string().optional(),
@@ -635,7 +651,15 @@ export const updateConnectorResponseScheduleCadenceMinutesMax = 43200;
 export const UpdateConnectorResponse = zod.object({
   id: zod.string(),
   engagementId: zod.string(),
-  kind: zod.enum(["github", "gitlab", "jira", "linear", "cicd", "ai_tooling"]),
+  kind: zod.enum([
+    "github",
+    "gitlab",
+    "jira",
+    "linear",
+    "cicd",
+    "ai_tooling",
+    "azure_devops",
+  ]),
   provider: zod.string().optional(),
   label: zod.string(),
   status: zod.enum([
@@ -681,7 +705,15 @@ export const VerifyConnectorConfigParams = zod.object({
 });
 
 export const VerifyConnectorConfigBody = zod.object({
-  kind: zod.enum(["github", "gitlab", "jira", "linear", "cicd", "ai_tooling"]),
+  kind: zod.enum([
+    "github",
+    "gitlab",
+    "jira",
+    "linear",
+    "cicd",
+    "ai_tooling",
+    "azure_devops",
+  ]),
   provider: zod.string(),
   token: zod.string().optional(),
   config: zod.record(zod.string(), zod.unknown()).optional(),

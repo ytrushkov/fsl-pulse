@@ -2348,6 +2348,347 @@ async function runAiTooling(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Azure DevOps connector
+// ---------------------------------------------------------------------------
+// Auth: Personal Access Token sent as HTTP Basic with empty username, per
+// Microsoft's documented PAT auth scheme. The default base URL is the SaaS
+// host (`https://dev.azure.com`); self-hosted Azure DevOps Server is
+// supported by overriding `baseUrl` in the connector config.
+//
+// We deliberately mirror the GitHub/GitLab connectors so the same
+// dimensions/stage hints come out of the run summary — that way scoring,
+// the heatmap, and DORA panels light up identically for ADO-only orgs
+// without any per-kind branching downstream.
+function adoAuthHeader(token: string): string {
+  return `Basic ${Buffer.from(`:${token}`).toString("base64")}`;
+}
+
+async function adoFetch<T>(
+  token: string,
+  url: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const r = await fetch(url, {
+    ...init,
+    headers: {
+      Authorization: adoAuthHeader(token),
+      Accept: "application/json",
+      "User-Agent": "pulse-assessor",
+      ...(init.headers ?? {}),
+    },
+  });
+  if (!r.ok) throw new Error(`Azure DevOps ${r.status}: ${await r.text()}`);
+  // ADO returns HTML for "sign-in required" with HTTP 200 when the PAT is
+  // missing or invalid against an org that requires SSO; guard against
+  // that by checking the content-type before parsing.
+  const ct = r.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    throw new Error(
+      "Azure DevOps returned a non-JSON response — usually a sign-in / SSO redirect. Confirm the PAT is valid and SSO-authorized for this org.",
+    );
+  }
+  return (await r.json()) as T;
+}
+
+async function verifyAzureDevops(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorVerifyResult> {
+  if (!token) return { ok: false, message: "Token required" };
+  const baseUrl = String(config.baseUrl ?? "https://dev.azure.com").replace(/\/$/, "");
+  const org = String(config.organization ?? "").trim();
+  const project = String(config.project ?? "").trim();
+  if (!org) return { ok: false, message: "organization required in config" };
+  try {
+    await assertSafeUrl(baseUrl);
+    // 1. /_apis/connectionData both authenticates and identifies the user.
+    //    Returns `authenticatedUser.providerDisplayName` (and customDisplayName
+    //    when set) — same shape regardless of MSA, AAD, or PAT auth.
+    const conn = await adoFetch<{
+      authenticatedUser?: {
+        providerDisplayName?: string;
+        customDisplayName?: string;
+      };
+    }>(
+      token,
+      `${baseUrl}/${encodeURIComponent(org)}/_apis/connectionData?api-version=7.1`,
+    );
+    const who =
+      conn.authenticatedUser?.customDisplayName ||
+      conn.authenticatedUser?.providerDisplayName ||
+      "(unknown)";
+    // 2. If a project is configured, confirm the credential can actually see
+    //    it — otherwise verify would falsely report green for a PAT scoped
+    //    to a different project in the same org.
+    if (project) {
+      try {
+        await adoFetch<unknown>(
+          token,
+          `${baseUrl}/${encodeURIComponent(org)}/_apis/projects/${encodeURIComponent(project)}?api-version=7.1`,
+        );
+      } catch {
+        return {
+          ok: false,
+          message: `Authenticated as ${who}, but cannot access project "${project}" in org "${org}".`,
+        };
+      }
+    }
+    return {
+      ok: true,
+      message: `Authenticated as ${who}`,
+      details: { user: who, organization: org, project: project || null },
+    };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Verify failed" };
+  }
+}
+
+async function runAzureDevops(
+  token: string,
+  config: Record<string, unknown>,
+): Promise<ConnectorRunResult> {
+  const baseUrl = String(config.baseUrl ?? "https://dev.azure.com").replace(/\/$/, "");
+  const org = String(config.organization ?? "").trim();
+  const project = String(config.project ?? "").trim();
+  const evidence: CollectedEvidence[] = [];
+  if (!org || !project) {
+    return {
+      recordsCollected: 0,
+      summary: { error: "organization and project required" },
+      evidence: [
+        {
+          dimension: "tooling",
+          signalType: "gap",
+          text: "Azure DevOps connector configured but missing organization or project.",
+        },
+      ],
+    };
+  }
+  await assertSafeUrl(baseUrl);
+  const orgUrl = `${baseUrl}/${encodeURIComponent(org)}`;
+  const projUrl = `${orgUrl}/${encodeURIComponent(project)}`;
+  let recordsCollected = 0;
+  const summary: Record<string, unknown> = { organization: org, project };
+  const since = new Date(Date.now() - 30 * 86_400_000);
+
+  // 1. Repos sample → top-level tooling signal.
+  let repoCount = 0;
+  try {
+    const data = await adoFetch<{
+      value: Array<{ id: string; name: string }>;
+    }>(token, `${projUrl}/_apis/git/repositories?api-version=7.1`);
+    repoCount = data.value.length;
+    recordsCollected += repoCount;
+  } catch {
+    // ignore — project may not have Git repos enabled
+  }
+  summary.repoCount = repoCount;
+  if (repoCount > 0) {
+    evidence.push({
+      dimension: "tooling",
+      signalType: "strength",
+      stageHint: 3,
+      text: `Discovered ${repoCount} Azure DevOps repos in project ${project}.`,
+    });
+  }
+
+  // 2. Pull requests → lead-time-for-changes proxy. We pull recently
+  //    completed PRs and post-filter by closedDate to the 30-day window.
+  let prsSampled = 0;
+  let prsMerged = 0;
+  let prLeadSumMs = 0;
+  let prLeadCount = 0;
+  try {
+    const prs = await adoFetch<{
+      value: Array<{
+        pullRequestId: number;
+        creationDate: string;
+        closedDate: string | null;
+        status: string;
+      }>;
+    }>(
+      token,
+      `${projUrl}/_apis/git/pullrequests?searchCriteria.status=completed&$top=100&api-version=7.1`,
+    );
+    prsSampled = prs.value.length;
+    for (const p of prs.value) {
+      if (!p.closedDate) continue;
+      const closedAt = new Date(p.closedDate).getTime();
+      if (closedAt < since.getTime()) continue;
+      prsMerged += 1;
+      const lead = closedAt - new Date(p.creationDate).getTime();
+      if (lead > 0) {
+        prLeadSumMs += lead;
+        prLeadCount += 1;
+      }
+    }
+    recordsCollected += prsSampled;
+  } catch {
+    // ignore — repo permissions may block PR listing
+  }
+  summary.prsSampled = prsSampled;
+  summary.prsMerged30d = prsMerged;
+  if (prLeadCount > 0) {
+    const avgHours = prLeadSumMs / prLeadCount / 3_600_000;
+    summary.leadTimeHoursAvg = Number(avgHours.toFixed(1));
+    evidence.push({
+      dimension: "process",
+      signalType: avgHours <= 48 ? "strength" : "gap",
+      stageHint: avgHours <= 24 ? 5 : avgHours <= 48 ? 4 : avgHours <= 168 ? 3 : 2,
+      text: `Lead time for changes (Azure DevOps): avg ${avgHours.toFixed(1)} hours from PR open to complete (n=${prLeadCount}, 30d).`,
+    });
+  }
+
+  // 3. Pipelines → deployment frequency + change failure rate. We sample
+  //    the first 5 pipelines (matches the GitHub/GitLab budget) and pull
+  //    recent runs from each, post-filtering to the 30-day window.
+  let pipelineRunsTotal = 0;
+  let pipelineRunsSucceeded = 0;
+  let pipelineRunsFailed = 0;
+  let pipelineCount = 0;
+  try {
+    const pipelines = await adoFetch<{
+      value: Array<{ id: number; name: string }>;
+    }>(token, `${projUrl}/_apis/pipelines?api-version=7.1`);
+    pipelineCount = pipelines.value.length;
+    for (const pipe of pipelines.value.slice(0, 5)) {
+      try {
+        const runs = await adoFetch<{
+          value: Array<{
+            id: number;
+            state: string;
+            result?: string;
+            createdDate: string;
+            finishedDate?: string;
+          }>;
+        }>(token, `${projUrl}/_apis/pipelines/${pipe.id}/runs?api-version=7.1`);
+        for (const r of runs.value) {
+          const created = new Date(r.createdDate).getTime();
+          if (!Number.isFinite(created) || created < since.getTime()) continue;
+          pipelineRunsTotal += 1;
+          if (r.result === "succeeded") pipelineRunsSucceeded += 1;
+          else if (r.result === "failed") pipelineRunsFailed += 1;
+        }
+        recordsCollected += runs.value.length;
+      } catch {
+        // ignore — pipeline may have been deleted between list & fetch
+      }
+    }
+  } catch {
+    // ignore — pipelines may not be enabled
+  }
+  summary.pipelineCount = pipelineCount;
+  summary.pipelineRuns30d = pipelineRunsTotal;
+  summary.pipelineRunsSucceeded30d = pipelineRunsSucceeded;
+  summary.pipelineRunsFailed30d = pipelineRunsFailed;
+  if (pipelineRunsSucceeded > 0) {
+    const deploysPerDay = pipelineRunsSucceeded / 30;
+    summary.deploysPerDay = Number(deploysPerDay.toFixed(2));
+    evidence.push({
+      dimension: "process",
+      signalType: deploysPerDay >= 1 ? "strength" : "gap",
+      stageHint: deploysPerDay >= 5 ? 5 : deploysPerDay >= 1 ? 4 : 2,
+      text: `Deployment frequency (Azure DevOps): ~${deploysPerDay.toFixed(2)} successful pipeline runs/day across sampled pipelines (30d).`,
+    });
+  }
+  if (pipelineRunsTotal > 0) {
+    const cfr = pipelineRunsFailed / pipelineRunsTotal;
+    summary.changeFailureRate = Number(cfr.toFixed(3));
+    evidence.push({
+      dimension: "measurement",
+      signalType: cfr <= 0.15 ? "strength" : "gap",
+      stageHint: cfr <= 0.15 ? 4 : cfr <= 0.3 ? 3 : 2,
+      text: `Change failure rate proxy (Azure DevOps): ${(cfr * 100).toFixed(1)}% (${pipelineRunsFailed}/${pipelineRunsTotal} pipeline runs failed, 30d).`,
+    });
+  }
+
+  // 4. Work items → incident MTTR proxy. Two-step: WIQL returns IDs, then
+  //    we batch-fetch the actual fields. ADO uses Microsoft.VSTS.Common.
+  //    ClosedDate / ResolvedDate when the process template populates them;
+  //    we fall back to System.ChangedDate so MTTR isn't silently zero on
+  //    Basic/Agile templates that don't set ClosedDate.
+  let mttrSumMs = 0;
+  let mttrCount = 0;
+  let workItemTotal = 0;
+  try {
+    const wiql = `SELECT [System.Id] FROM WorkItems
+      WHERE [System.TeamProject] = '${project.replace(/'/g, "''")}'
+        AND [System.State] IN ('Closed', 'Done', 'Resolved', 'Completed')
+        AND ([System.Tags] CONTAINS 'incident'
+          OR [System.Tags] CONTAINS 'outage'
+          OR [System.Tags] CONTAINS 'p0'
+          OR [System.Tags] CONTAINS 'p1')
+        AND [System.ChangedDate] >= @Today - 30`;
+    const ids = await adoFetch<{ workItems: Array<{ id: number }> }>(
+      token,
+      `${projUrl}/_apis/wit/wiql?api-version=7.1`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: wiql }),
+      },
+    );
+    const incidentIds = ids.workItems.slice(0, 100).map((w) => w.id);
+    if (incidentIds.length > 0) {
+      const fields = [
+        "System.CreatedDate",
+        "Microsoft.VSTS.Common.ClosedDate",
+        "Microsoft.VSTS.Common.ResolvedDate",
+        "System.ChangedDate",
+        "System.State",
+      ].join(",");
+      const items = await adoFetch<{
+        value: Array<{ id: number; fields: Record<string, unknown> }>;
+      }>(
+        token,
+        `${orgUrl}/_apis/wit/workitems?ids=${incidentIds.join(",")}&fields=${encodeURIComponent(fields)}&api-version=7.1`,
+      );
+      for (const w of items.value) {
+        const f = w.fields;
+        const created = String(f["System.CreatedDate"] ?? "");
+        const closed =
+          (f["Microsoft.VSTS.Common.ClosedDate"] as string | undefined) ||
+          (f["Microsoft.VSTS.Common.ResolvedDate"] as string | undefined) ||
+          (f["System.ChangedDate"] as string | undefined) ||
+          "";
+        if (!created || !closed) continue;
+        const dur = new Date(closed).getTime() - new Date(created).getTime();
+        if (dur > 0) {
+          mttrSumMs += dur;
+          mttrCount += 1;
+        }
+      }
+      workItemTotal = items.value.length;
+      recordsCollected += workItemTotal;
+    }
+  } catch {
+    // ignore — WIQL may fail on tokens without work-items read; degrades
+    // to an explicit "n/a" gap below.
+  }
+  summary.incidentWorkItems30d = workItemTotal;
+  if (mttrCount > 0) {
+    const mttrHours = mttrSumMs / mttrCount / 3_600_000;
+    summary.mttrHoursAvg = Number(mttrHours.toFixed(1));
+    evidence.push({
+      dimension: "measurement",
+      signalType: mttrHours <= 24 ? "strength" : "gap",
+      stageHint: mttrHours <= 4 ? 5 : mttrHours <= 24 ? 4 : mttrHours <= 72 ? 3 : 2,
+      text: `MTTR proxy (Azure DevOps): avg ${mttrHours.toFixed(1)} hours to close incident-tagged work items (n=${mttrCount}, 30d).`,
+    });
+  } else {
+    summary.mttrHoursAvg = null;
+    evidence.push({
+      dimension: "measurement",
+      signalType: "gap",
+      stageHint: 1,
+      text: "MTTR n/a — no Azure DevOps work items tagged 'incident', 'outage', 'p0', or 'p1' closed in the last 30 days.",
+    });
+  }
+
+  return { recordsCollected, summary, evidence };
+}
+
 export async function verifyConnector(
   kind: string,
   provider: string,
@@ -2378,6 +2719,9 @@ export async function verifyConnector(
         break;
       case "ai_tooling":
         result = await verifyAiTooling(token, cfg);
+        break;
+      case "azure_devops":
+        result = await verifyAzureDevops(token, cfg);
         break;
       default:
         result = { ok: false, message: `Unknown connector kind: ${kind}` };
@@ -2420,6 +2764,9 @@ export async function runConnector(
         break;
       case "ai_tooling":
         result = await runAiTooling(token, cfg);
+        break;
+      case "azure_devops":
+        result = await runAzureDevops(token, cfg);
         break;
       default:
         throw new Error(`Unknown connector kind: ${kind}`);

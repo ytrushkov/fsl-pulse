@@ -267,6 +267,50 @@ const KIND_SPECS: Record<ConnectorKind, KindSpec> = {
       },
     ],
   },
+  [ConnectorKind.azure_devops]: {
+    kind: ConnectorKind.azure_devops,
+    label: "Azure DevOps",
+    defaultProvider: "Azure DevOps",
+    tokenLabel: "Personal access token",
+    tokenPlaceholder: "<PAT>",
+    tokenHelp:
+      "Create a PAT at dev.azure.com → User Settings → Personal Access Tokens. Needs Code (read), Work Items (read), and Build (read) scopes — Read-all also works.",
+    tokenDocsUrl: "https://dev.azure.com/_usersSettings/tokens",
+    fields: [
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        type: "url",
+        placeholder: "https://dev.azure.com",
+        description: "Use the default for SaaS Azure DevOps, or your self-hosted Azure DevOps Server URL.",
+        defaultValue: "https://dev.azure.com",
+        required: true,
+      },
+      {
+        key: "organization",
+        label: "Organization",
+        type: "text",
+        placeholder: "acme-corp",
+        description: "Azure DevOps organization slug (the URL segment after dev.azure.com/).",
+        required: true,
+      },
+      {
+        key: "project",
+        label: "Project",
+        type: "text",
+        placeholder: "Platform",
+        description: "Project name whose repos, PRs, work items, and pipelines this connector should sample.",
+        required: true,
+      },
+      {
+        key: "team",
+        label: "Team",
+        type: "text",
+        placeholder: "Platform Team",
+        description: "Optional. Recorded for context; queries are scoped to the project.",
+      },
+    ],
+  },
 };
 
 const KIND_OPTIONS: Array<{ value: ConnectorKind; label: string }> = (
@@ -284,6 +328,7 @@ const formSchema = z.object({
     ConnectorKind.linear,
     ConnectorKind.cicd,
     ConnectorKind.ai_tooling,
+    ConnectorKind.azure_devops,
   ]),
   provider: z.string().min(1, "Provider is required"),
   label: z.string().min(1, "Label is required"),

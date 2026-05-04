@@ -15,4 +15,5 @@ export const ConnectorKind = {
   linear: "linear",
   cicd: "cicd",
   ai_tooling: "ai_tooling",
+  azure_devops: "azure_devops",
 } as const;
