@@ -473,7 +473,7 @@ function CollectionSettingsCard({ engagementId }: { engagementId: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="flex items-end gap-3 max-w-md">
+        <div className="flex items-end justify-between gap-3 max-w-md">
           <div className="flex-1">
             <Label htmlFor="lookback-days" className="text-sm">
               Lookback window (days)
