@@ -17,4 +17,7 @@ export const ActionItemValueLever = {
   cycle_time: "cycle_time",
   rework: "rework",
   review: "review",
+  onboarding: "onboarding",
+  test_quality: "test_quality",
+  mttr: "mttr",
 } as const;

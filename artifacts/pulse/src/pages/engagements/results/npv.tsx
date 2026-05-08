@@ -112,6 +112,11 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
       discountRate: Math.min(1, Math.max(0, Number(w.inputs.discountRate ?? 0.1))),
       deliveryHourlyRate: Math.max(0, Number(w.inputs.deliveryHourlyRate ?? 250)),
       actionPlanScope: (w.inputs.actionPlanScope as ScopeOption) ?? "all",
+      newHireCount: Math.max(0, Math.round(Number(w.inputs.newHireCount ?? 4))),
+      rampWeeksSaved: Math.max(0, Number(w.inputs.rampWeeksSaved ?? 6)),
+      productionDefectRate: Math.min(1, Math.max(0, Number(w.inputs.productionDefectRate ?? 0.08))),
+      incidentCount: Math.max(0, Math.round(Number(w.inputs.incidentCount ?? 12))),
+      avgIncidentCostK: Math.max(0, Number(w.inputs.avgIncidentCostK ?? 15)),
     };
   }
 
@@ -320,19 +325,67 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
               onChange={(v) => setInput("deliveryHourlyRate", v)}
               hint="FullStack's all-in hourly rate used to estimate implementation cost from effort sizes. Override individual item costs on the Action Plan tab."
             />
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2 border-t">Onboarding, Quality &amp; Reliability</p>
+            <NpvField
+              label="New hires / year"
+              value={data.inputs.newHireCount ?? 4}
+              step={1}
+              disabled={isLocked}
+              onChange={(v) => setInput("newHireCount", v)}
+              hint="New engineers hired per year. Used in Onboarding Acceleration savings."
+            />
+            <NpvField
+              label="Ramp weeks saved / hire"
+              value={data.inputs.rampWeeksSaved ?? 6}
+              step={1}
+              disabled={isLocked}
+              onChange={(v) => setInput("rampWeeksSaved", v)}
+              hint="Weeks of new-hire ramp time saved by AI tooling. Fraction of annual FLC recovered."
+            />
+            <NpvField
+              label="Production defect rate (0-1)"
+              value={data.inputs.productionDefectRate ?? 0.08}
+              step={0.01}
+              disabled={isLocked}
+              onChange={(v) => setInput("productionDefectRate", v)}
+              hint="Fraction of FLC currently spent on production bug fixes. AI-generated tests reduce this."
+            />
+            <NpvField
+              label="Incidents / year"
+              value={data.inputs.incidentCount ?? 12}
+              step={1}
+              disabled={isLocked}
+              onChange={(v) => setInput("incidentCount", v)}
+              hint="Production incidents per year. Used in Incident Resolution (MTTR) savings."
+            />
+            <NpvField
+              label="Avg incident cost ($K)"
+              value={data.inputs.avgIncidentCostK ?? 15}
+              step={1}
+              disabled={isLocked}
+              onChange={(v) => setInput("avgIncidentCostK", v)}
+              hint="Average all-in cost per production incident in thousands of dollars."
+            />
           </div>
         </div>
 
         <div>
           <h3 className="text-lg font-bold mb-4 border-b pb-2">Value Levers</h3>
           {(() => {
-            const segmentColors = ["bg-chart-1", "bg-chart-2", "bg-chart-3"];
+            const LEVER_COLORS: Record<string, string> = {
+              "Cycle time reduction":       "bg-chart-1",
+              "Rework reduction":           "bg-chart-2",
+              "Code review acceleration":   "bg-chart-3",
+              "Onboarding acceleration":    "bg-chart-4",
+              "Test coverage & quality":    "bg-chart-5",
+              "Incident resolution (MTTR)": "bg-primary/60",
+            };
             const total = data.leverBreakdown.reduce(
               (sum, l) => sum + Math.max(0, l.savings),
               0,
             );
             const hasSavings = total > 0;
-            const segments = data.leverBreakdown.map((lever, i) => {
+            const segments = data.leverBreakdown.map((lever) => {
               const value = Math.max(0, lever.savings);
               const share = hasSavings ? value / total : 0;
               return {
@@ -340,7 +393,7 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                 savings: value,
                 share,
                 pct: share * 100,
-                color: segmentColors[i % segmentColors.length],
+                color: LEVER_COLORS[lever.lever] ?? "bg-chart-1",
               };
             });
             const barAriaLabel = hasSavings

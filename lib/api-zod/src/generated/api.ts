@@ -2247,7 +2247,14 @@ export const GetDeliverablesResponse = zod.object({
           "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
         ),
       valueLever: zod
-        .enum(["cycle_time", "rework", "review"])
+        .enum([
+          "cycle_time",
+          "rework",
+          "review",
+          "onboarding",
+          "test_quality",
+          "mttr",
+        ])
         .nullish()
         .describe(
           "Which client-side value lever this initiative primarily moves.",
@@ -2292,6 +2299,30 @@ export const GetDeliverablesResponse = zod.object({
         .describe(
           "Which priority tiers to include in investment and savings calculations.",
         ),
+      newHireCount: zod
+        .number()
+        .optional()
+        .describe("New engineers hired per year. Default 4."),
+      rampWeeksSaved: zod
+        .number()
+        .optional()
+        .describe(
+          "Weeks of ramp time saved per new hire via AI tooling. Default 6.",
+        ),
+      productionDefectRate: zod
+        .number()
+        .optional()
+        .describe(
+          "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08.",
+        ),
+      incidentCount: zod
+        .number()
+        .optional()
+        .describe("Production incidents per year. Default 12."),
+      avgIncidentCostK: zod
+        .number()
+        .optional()
+        .describe("Average cost per production incident in $K. Default 15."),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -2527,7 +2558,14 @@ export const UpdateDeliverablesBody = zod.object({
             "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
           ),
         valueLever: zod
-          .enum(["cycle_time", "rework", "review"])
+          .enum([
+            "cycle_time",
+            "rework",
+            "review",
+            "onboarding",
+            "test_quality",
+            "mttr",
+          ])
           .nullish()
           .describe(
             "Which client-side value lever this initiative primarily moves.",
@@ -2582,6 +2620,30 @@ export const UpdateDeliverablesBody = zod.object({
           .describe(
             "Which priority tiers to include in investment and savings calculations.",
           ),
+        newHireCount: zod
+          .number()
+          .optional()
+          .describe("New engineers hired per year. Default 4."),
+        rampWeeksSaved: zod
+          .number()
+          .optional()
+          .describe(
+            "Weeks of ramp time saved per new hire via AI tooling. Default 6.",
+          ),
+        productionDefectRate: zod
+          .number()
+          .optional()
+          .describe(
+            "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08.",
+          ),
+        incidentCount: zod
+          .number()
+          .optional()
+          .describe("Production incidents per year. Default 12."),
+        avgIncidentCostK: zod
+          .number()
+          .optional()
+          .describe("Average cost per production incident in $K. Default 15."),
       }),
       scenarios: zod.object({
         low: zod.object({
@@ -2794,7 +2856,14 @@ export const UpdateDeliverablesResponse = zod.object({
           "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
         ),
       valueLever: zod
-        .enum(["cycle_time", "rework", "review"])
+        .enum([
+          "cycle_time",
+          "rework",
+          "review",
+          "onboarding",
+          "test_quality",
+          "mttr",
+        ])
         .nullish()
         .describe(
           "Which client-side value lever this initiative primarily moves.",
@@ -2839,6 +2908,30 @@ export const UpdateDeliverablesResponse = zod.object({
         .describe(
           "Which priority tiers to include in investment and savings calculations.",
         ),
+      newHireCount: zod
+        .number()
+        .optional()
+        .describe("New engineers hired per year. Default 4."),
+      rampWeeksSaved: zod
+        .number()
+        .optional()
+        .describe(
+          "Weeks of ramp time saved per new hire via AI tooling. Default 6.",
+        ),
+      productionDefectRate: zod
+        .number()
+        .optional()
+        .describe(
+          "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08.",
+        ),
+      incidentCount: zod
+        .number()
+        .optional()
+        .describe("Production incidents per year. Default 12."),
+      avgIncidentCostK: zod
+        .number()
+        .optional()
+        .describe("Average cost per production incident in $K. Default 15."),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -3068,7 +3161,14 @@ export const DraftDeliverablesResponse = zod.object({
           "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
         ),
       valueLever: zod
-        .enum(["cycle_time", "rework", "review"])
+        .enum([
+          "cycle_time",
+          "rework",
+          "review",
+          "onboarding",
+          "test_quality",
+          "mttr",
+        ])
         .nullish()
         .describe(
           "Which client-side value lever this initiative primarily moves.",
@@ -3113,6 +3213,30 @@ export const DraftDeliverablesResponse = zod.object({
         .describe(
           "Which priority tiers to include in investment and savings calculations.",
         ),
+      newHireCount: zod
+        .number()
+        .optional()
+        .describe("New engineers hired per year. Default 4."),
+      rampWeeksSaved: zod
+        .number()
+        .optional()
+        .describe(
+          "Weeks of ramp time saved per new hire via AI tooling. Default 6.",
+        ),
+      productionDefectRate: zod
+        .number()
+        .optional()
+        .describe(
+          "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08.",
+        ),
+      incidentCount: zod
+        .number()
+        .optional()
+        .describe("Production incidents per year. Default 12."),
+      avgIncidentCostK: zod
+        .number()
+        .optional()
+        .describe("Average cost per production incident in $K. Default 15."),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -3370,7 +3494,14 @@ export const RevertDeliverableResponse = zod.object({
           "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
         ),
       valueLever: zod
-        .enum(["cycle_time", "rework", "review"])
+        .enum([
+          "cycle_time",
+          "rework",
+          "review",
+          "onboarding",
+          "test_quality",
+          "mttr",
+        ])
         .nullish()
         .describe(
           "Which client-side value lever this initiative primarily moves.",
@@ -3415,6 +3546,30 @@ export const RevertDeliverableResponse = zod.object({
         .describe(
           "Which priority tiers to include in investment and savings calculations.",
         ),
+      newHireCount: zod
+        .number()
+        .optional()
+        .describe("New engineers hired per year. Default 4."),
+      rampWeeksSaved: zod
+        .number()
+        .optional()
+        .describe(
+          "Weeks of ramp time saved per new hire via AI tooling. Default 6.",
+        ),
+      productionDefectRate: zod
+        .number()
+        .optional()
+        .describe(
+          "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08.",
+        ),
+      incidentCount: zod
+        .number()
+        .optional()
+        .describe("Production incidents per year. Default 12."),
+      avgIncidentCostK: zod
+        .number()
+        .optional()
+        .describe("Average cost per production incident in $K. Default 15."),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -3616,6 +3771,30 @@ export const RecomputeNpvBody = zod.object({
     .describe(
       "Which priority tiers to include in investment and savings calculations.",
     ),
+  newHireCount: zod
+    .number()
+    .optional()
+    .describe("New engineers hired per year. Default 4."),
+  rampWeeksSaved: zod
+    .number()
+    .optional()
+    .describe(
+      "Weeks of ramp time saved per new hire via AI tooling. Default 6.",
+    ),
+  productionDefectRate: zod
+    .number()
+    .optional()
+    .describe(
+      "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08.",
+    ),
+  incidentCount: zod
+    .number()
+    .optional()
+    .describe("Production incidents per year. Default 12."),
+  avgIncidentCostK: zod
+    .number()
+    .optional()
+    .describe("Average cost per production incident in $K. Default 15."),
 });
 
 export const RecomputeNpvResponse = zod.object({
@@ -3639,6 +3818,30 @@ export const RecomputeNpvResponse = zod.object({
       .describe(
         "Which priority tiers to include in investment and savings calculations.",
       ),
+    newHireCount: zod
+      .number()
+      .optional()
+      .describe("New engineers hired per year. Default 4."),
+    rampWeeksSaved: zod
+      .number()
+      .optional()
+      .describe(
+        "Weeks of ramp time saved per new hire via AI tooling. Default 6.",
+      ),
+    productionDefectRate: zod
+      .number()
+      .optional()
+      .describe(
+        "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08.",
+      ),
+    incidentCount: zod
+      .number()
+      .optional()
+      .describe("Production incidents per year. Default 12."),
+    avgIncidentCostK: zod
+      .number()
+      .optional()
+      .describe("Average cost per production incident in $K. Default 15."),
   }),
   scenarios: zod.object({
     low: zod.object({

@@ -2465,7 +2465,7 @@ components:
         valueLever:
           type: string
           nullable: true
-          enum: [cycle_time, rework, review]
+          enum: [cycle_time, rework, review, onboarding, test_quality, mttr]
           description: "Which client-side value lever this initiative primarily moves."
         expectedImpact:
           type: number
@@ -2516,6 +2516,21 @@ components:
           type: string
           enum: [p0, p0_p1, all]
           description: "Which priority tiers to include in investment and savings calculations."
+        newHireCount:
+          type: integer
+          description: "New engineers hired per year. Default 4."
+        rampWeeksSaved:
+          type: number
+          description: "Weeks of ramp time saved per new hire via AI tooling. Default 6."
+        productionDefectRate:
+          type: number
+          description: "Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08."
+        incidentCount:
+          type: integer
+          description: "Production incidents per year. Default 12."
+        avgIncidentCostK:
+          type: number
+          description: "Average cost per production incident in $K. Default 15."
 
     NpvScenario:
       type: object

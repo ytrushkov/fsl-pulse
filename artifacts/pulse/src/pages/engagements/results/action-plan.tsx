@@ -50,6 +50,9 @@ const VALUE_LEVER_LABELS: Record<string, string> = {
   cycle_time: "Cycle Time Reduction",
   rework: "Rework Reduction",
   review: "Code Review Acceleration",
+  onboarding: "Onboarding Acceleration",
+  test_quality: "Test Coverage & Quality",
+  mttr: "Incident Resolution (MTTR)",
 };
 
 const IMPACT_PRESETS = [
@@ -734,6 +737,9 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
                                   <SelectItem value="cycle_time">Cycle Time Reduction</SelectItem>
                                   <SelectItem value="rework">Rework Reduction</SelectItem>
                                   <SelectItem value="review">Code Review Acceleration</SelectItem>
+                                  <SelectItem value="onboarding">Onboarding Acceleration</SelectItem>
+                                  <SelectItem value="test_quality">Test Coverage & Quality</SelectItem>
+                                  <SelectItem value="mttr">Incident Resolution (MTTR)</SelectItem>
                                 </SelectContent>
                               </Select>
                             )}

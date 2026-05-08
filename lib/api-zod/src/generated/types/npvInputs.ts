@@ -18,4 +18,14 @@ export interface NpvInputs {
   deliveryHourlyRate?: number;
   /** Which priority tiers to include in investment and savings calculations. */
   actionPlanScope?: NpvInputsActionPlanScope;
+  /** New engineers hired per year. Default 4. */
+  newHireCount?: number;
+  /** Weeks of ramp time saved per new hire via AI tooling. Default 6. */
+  rampWeeksSaved?: number;
+  /** Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08. */
+  productionDefectRate?: number;
+  /** Production incidents per year. Default 12. */
+  incidentCount?: number;
+  /** Average cost per production incident in $K. Default 15. */
+  avgIncidentCostK?: number;
 }

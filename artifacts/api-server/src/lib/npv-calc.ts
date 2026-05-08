@@ -4,6 +4,10 @@
  * recompute live as the assessor edits the inputs without re-running AI.
  */
 
+export type LeverKey = "cycle_time" | "rework" | "review" | "onboarding" | "test_quality" | "mttr";
+
+const LEVER_KEYS: LeverKey[] = ["cycle_time", "rework", "review", "onboarding", "test_quality", "mttr"];
+
 export interface NpvInputs {
   fullyLoadedCost: number;
   teamCount: number;
@@ -17,6 +21,16 @@ export interface NpvInputs {
   deliveryHourlyRate?: number;
   /** Which priority tiers to include in investment and savings. Default "all". */
   actionPlanScope?: "p0" | "p0_p1" | "all";
+  /** New engineers hired per year. Default 4. */
+  newHireCount?: number;
+  /** Weeks of ramp time saved per new hire via AI tooling. Default 6. */
+  rampWeeksSaved?: number;
+  /** Fraction of FLC currently spent on production bug fixes (0–1). Default 0.08. */
+  productionDefectRate?: number;
+  /** Production incidents per year. Default 12. */
+  incidentCount?: number;
+  /** Average cost per production incident in $K. Default 15. */
+  avgIncidentCostK?: number;
 }
 
 export interface NpvScenario {
@@ -52,11 +66,11 @@ export interface ActionItemSummary {
   effort: "S" | "M" | "L" | "XL";
   dimension?: string;
   costEstimate?: number | null;
-  valueLever?: "cycle_time" | "rework" | "review" | null;
+  valueLever?: LeverKey | null;
   expectedImpact?: number | null;
 }
 
-const DEFAULTS: NpvInputs = {
+const DEFAULTS = {
   fullyLoadedCost: 200_000,
   teamCount: 8,
   baselineCycleTimeDays: 14,
@@ -65,7 +79,12 @@ const DEFAULTS: NpvInputs = {
   discountRate: 0.1,
   horizonYears: 3,
   deliveryHourlyRate: 250,
-  actionPlanScope: "all",
+  actionPlanScope: "all" as const,
+  newHireCount: 4,
+  rampWeeksSaved: 6,
+  productionDefectRate: 0.08,
+  incidentCount: 12,
+  avgIncidentCostK: 15,
 };
 
 /** Hours per effort t-shirt size. */
@@ -93,12 +112,17 @@ export function normalizeNpvInputs(raw: Partial<NpvInputs> | null | undefined): 
     aiAcceptanceRate: Math.min(1, Math.max(0, num(r.aiAcceptanceRate, DEFAULTS.aiAcceptanceRate))),
     reworkRate: Math.min(1, Math.max(0, num(r.reworkRate, DEFAULTS.reworkRate))),
     discountRate: Math.min(1, Math.max(0, num(r.discountRate, DEFAULTS.discountRate))),
-    horizonYears: Math.max(1, Math.min(10, Math.floor(num(r.horizonYears, DEFAULTS.horizonYears!)))),
-    deliveryHourlyRate: Math.max(0, num(r.deliveryHourlyRate, DEFAULTS.deliveryHourlyRate!)),
+    horizonYears: Math.max(1, Math.min(10, Math.floor(num(r.horizonYears, DEFAULTS.horizonYears)))),
+    deliveryHourlyRate: Math.max(0, num(r.deliveryHourlyRate, DEFAULTS.deliveryHourlyRate)),
     actionPlanScope:
       r.actionPlanScope === "p0" || r.actionPlanScope === "p0_p1" || r.actionPlanScope === "all"
         ? r.actionPlanScope
         : "all",
+    newHireCount: Math.max(0, Math.floor(num(r.newHireCount, DEFAULTS.newHireCount))),
+    rampWeeksSaved: Math.max(0, num(r.rampWeeksSaved, DEFAULTS.rampWeeksSaved)),
+    productionDefectRate: Math.min(1, Math.max(0, num(r.productionDefectRate, DEFAULTS.productionDefectRate))),
+    incidentCount: Math.max(0, Math.floor(num(r.incidentCount, DEFAULTS.incidentCount))),
+    avgIncidentCostK: Math.max(0, num(r.avgIncidentCostK, DEFAULTS.avgIncidentCostK)),
   };
 }
 
@@ -167,50 +191,55 @@ export function computeNpv(
   const scope = inputs.actionPlanScope ?? "all";
   const items = actionItems ?? [];
 
+  const newHireCount = inputs.newHireCount ?? DEFAULTS.newHireCount;
+  const rampWeeksSaved = inputs.rampWeeksSaved ?? DEFAULTS.rampWeeksSaved;
+  const productionDefectRate = inputs.productionDefectRate ?? DEFAULTS.productionDefectRate;
+  const incidentCount = inputs.incidentCount ?? DEFAULTS.incidentCount;
+  const avgIncidentCost = (inputs.avgIncidentCostK ?? DEFAULTS.avgIncidentCostK) * 1000;
+
   // Investment computation
   const { investment, count: actionItemCount, hasOverrides } = computeInvestment(items, scope, rate);
   const dimensionImpact = computeDimensionImpact(items, scope);
 
   // Determine lever savings approach
   const scopedItems = filterByScope(items, scope);
-  // Key off presence of a lever tag, not strictly-positive impact; missing impacts are treated as 0
-  // so that a tagged item without expectedImpact still engages the action_plan savings path.
   const taggedItems = scopedItems.filter((i) => !!i.valueLever);
   const leverSource: "action_plan" | "global_assumptions" =
     taggedItems.length > 0 ? "action_plan" : "global_assumptions";
 
-  // The three driver-specific savings buckets. Pulled out of `scenario()`
-  // so the lever breakdown can reuse the *same* numbers the base scenario
-  // uses, instead of re-splitting the total with hard-coded weights
-  // (which made the bars insensitive to the assumption sliders).
-  function leverSavings(multiplier: number): { cycle: number; rework: number; review: number } {
+  const leverBase: Record<LeverKey, number> = {
+    cycle_time:   fl * tc,
+    rework:       fl * tc,
+    review:       fl * tc,
+    onboarding:   fl * newHireCount,
+    test_quality: fl * tc,
+    mttr:         incidentCount * avgIncidentCost,
+  };
+
+  function leverSavings(multiplier: number): Record<LeverKey, number> {
     if (leverSource === "action_plan") {
-      // Sum expectedImpact fractions per lever, multiply by fl × tc, then apply scenario multiplier
-      const cycleImpact = taggedItems
-        .filter((i) => i.valueLever === "cycle_time")
-        .reduce((s, i) => s + (i.expectedImpact ?? 0), 0);
-      const reworkImpact = taggedItems
-        .filter((i) => i.valueLever === "rework")
-        .reduce((s, i) => s + (i.expectedImpact ?? 0), 0);
-      const reviewImpact = taggedItems
-        .filter((i) => i.valueLever === "review")
-        .reduce((s, i) => s + (i.expectedImpact ?? 0), 0);
-      return {
-        cycle: fl * tc * cycleImpact * multiplier,
-        rework: fl * tc * reworkImpact * multiplier,
-        review: fl * tc * reviewImpact * multiplier,
-      };
+      const result = {} as Record<LeverKey, number>;
+      for (const lever of LEVER_KEYS) {
+        const impact = taggedItems
+          .filter((i) => i.valueLever === lever)
+          .reduce((s, i) => s + (i.expectedImpact ?? 0), 0);
+        result[lever] = leverBase[lever] * impact * multiplier;
+      }
+      return result;
     }
-    // Global assumption fallback
-    const cycle = fl * tc * accept * 0.15 * multiplier;
-    const reworkSav = fl * tc * rework * 0.5 * multiplier;
-    const review = fl * tc * 0.05 * multiplier;
-    return { cycle, rework: reworkSav, review };
+    return {
+      cycle_time:   leverBase.cycle_time * accept * 0.15 * multiplier,
+      rework:       leverBase.rework * rework * 0.50 * multiplier,
+      review:       leverBase.review * 0.05 * multiplier,
+      onboarding:   leverBase.onboarding * (rampWeeksSaved / 52) * multiplier,
+      test_quality: leverBase.test_quality * productionDefectRate * 0.40 * multiplier,
+      mttr:         leverBase.mttr * 0.30 * multiplier,
+    };
   }
 
   function scenario(multiplier: number): NpvScenario {
-    const { cycle, rework: reworkSavings, review } = leverSavings(multiplier);
-    const annualBase = cycle + reworkSavings + review;
+    const levers = leverSavings(multiplier);
+    const annualBase = LEVER_KEYS.reduce((s, k) => s + levers[k], 0);
     const annualSavings = Array.from(
       { length: horizon },
       (_, y) => annualBase * (1 + 0.1 * y),
@@ -219,7 +248,6 @@ export function computeNpv(
     for (let y = 0; y < horizon; y++) {
       npv += (annualSavings[y] ?? 0) / Math.pow(1 + r, y + 1);
     }
-    // Use action-plan-driven investment when available; otherwise fall back to heuristic
     const effectiveInvestment = actionItemCount > 0 ? investment : fl * 0.5;
     npv -= effectiveInvestment;
     const monthly = annualBase / 12;
@@ -243,13 +271,16 @@ export function computeNpv(
   const baseLevers = leverSavings(1);
 
   return {
-    modelVersion: "1.1.0",
+    modelVersion: "1.2.0",
     inputs,
     scenarios: { low: scenario(0.6), base, high: scenario(1.4) },
     leverBreakdown: [
-      { lever: "Cycle time reduction", savings: Math.round(baseLevers.cycle) },
-      { lever: "Rework reduction", savings: Math.round(baseLevers.rework) },
-      { lever: "Code review acceleration", savings: Math.round(baseLevers.review) },
+      { lever: "Cycle time reduction",       savings: Math.round(baseLevers.cycle_time) },
+      { lever: "Rework reduction",           savings: Math.round(baseLevers.rework) },
+      { lever: "Code review acceleration",   savings: Math.round(baseLevers.review) },
+      { lever: "Onboarding acceleration",    savings: Math.round(baseLevers.onboarding) },
+      { lever: "Test coverage & quality",    savings: Math.round(baseLevers.test_quality) },
+      { lever: "Incident resolution (MTTR)", savings: Math.round(baseLevers.mttr) },
     ],
   };
 }
