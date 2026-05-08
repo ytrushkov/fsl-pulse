@@ -36,6 +36,28 @@ const EFFORT_WEEKS: Record<ActionItemEffort, number> = {
   XL: 16,
 };
 
+// FullStack delivery hours per t-shirt size, used to pre-populate costEstimate.
+const EFFORT_HOURS: Record<ActionItemEffort, number> = {
+  S: 80,
+  M: 240,
+  L: 480,
+  XL: 640,
+};
+
+const DEFAULT_DELIVERY_RATE = 250;
+
+const VALUE_LEVER_LABELS: Record<string, string> = {
+  cycle_time: "Cycle Time Reduction",
+  rework: "Rework Reduction",
+  review: "Code Review Acceleration",
+};
+
+const IMPACT_PRESETS = [
+  { label: "Low", value: 0.05 },
+  { label: "Medium", value: 0.10 },
+  { label: "High", value: 0.20 },
+] as const;
+
 const PRIORITY_RANK: Record<ActionItemPriority, number> = {
   P0: 0,
   P1: 1,
@@ -106,7 +128,7 @@ function buildMonthSegments(totalWeeks: number, today: Date): MonthSegment[] {
   return segments;
 }
 
-function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
+function ActionPlanTimeline({ items, deliveryRate }: { items: ActionItem[]; deliveryRate: number }) {
   const today = useMemo(() => new Date(), []);
   const derived = useMemo(() => deriveTimeline(items), [items]);
   const totalWeeks = useMemo(() => {
@@ -221,6 +243,24 @@ function ActionPlanTimeline({ items }: { items: ActionItem[] }) {
                         <span className="text-muted-foreground">Owner: </span>
                         {item.ownerRole || "Unassigned"}
                       </div>
+                      <div>
+                        <span className="text-muted-foreground">Cost est.: </span>
+                        <span className="font-mono">
+                          ${((item.costEstimate ?? EFFORT_HOURS[item.effort] * deliveryRate) / 1000).toFixed(0)}k
+                        </span>
+                        {item.costEstimate == null && (
+                          <span className="text-muted-foreground ml-1">(formula)</span>
+                        )}
+                        {item.costEstimate != null && (
+                          <span className="text-amber-600 dark:text-amber-400 ml-1">(overridden)</span>
+                        )}
+                      </div>
+                      {item.valueLever && (
+                        <div>
+                          <span className="text-muted-foreground">Lever: </span>
+                          <span>↑ {VALUE_LEVER_LABELS[item.valueLever] ?? item.valueLever}</span>
+                        </div>
+                      )}
                     </div>
                   </TooltipContent>
                 </Tooltip>
@@ -272,6 +312,13 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
     return <div className="p-8 text-center text-muted-foreground">No action plan available.</div>;
   }
 
+  // Use the live delivery rate from NPV inputs so cost display is consistent with
+  // the Business Case tab. Falls back to DEFAULT_DELIVERY_RATE when NPV hasn't been set.
+  const currentRate: number =
+    typeof deliverables.npv?.inputs?.deliveryHourlyRate === "number"
+      ? deliverables.npv.inputs.deliveryHourlyRate
+      : DEFAULT_DELIVERY_RATE;
+
   const isLocked = deliverables.statuses.actionPlan === "locked";
   const dirty = JSON.stringify(items) !== JSON.stringify(deliverables.actionPlan);
 
@@ -294,6 +341,8 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
         ownerRole: "",
         successMetric: "",
         dependencies: [],
+        // costEstimate intentionally omitted: the formula provides the default display;
+        // a stored value means the assessor explicitly overrode it.
       },
     ]);
 
@@ -356,7 +405,7 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
         </div>
       )}
 
-      <ActionPlanTimeline items={items} />
+      <ActionPlanTimeline items={items} deliveryRate={currentRate} />
 
       <div className="border rounded-md shadow-sm overflow-hidden">
         <Table className="table-fixed">
@@ -465,7 +514,22 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
                           {item.effort}
                         </Badge>
                       ) : (
-                        <Select value={item.effort} onValueChange={(v) => setItem(item.id, { effort: v as ActionItemEffort })}>
+                        <Select
+                          value={item.effort}
+                          onValueChange={(v) => {
+                            const newEffort = v as ActionItemEffort;
+                            const patch: Partial<ActionItem> = { effort: newEffort };
+                            // If the assessor hasn't set a manual override, the formula
+                            // display updates automatically (costEstimate stays null/undefined).
+                            // If they DID override, clear it when effort changes so the new
+                            // effort's formula applies (they can re-override if needed).
+                            if (item.costEstimate != null) {
+                              // Clear the stored override so the new effort's formula applies.
+                              patch.costEstimate = undefined;
+                            }
+                            setItem(item.id, patch);
+                          }}
+                        >
                           <SelectTrigger className="h-8 w-16 font-mono"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {SIZES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -587,6 +651,151 @@ export default function ActionPlanView({ engagementId, deliverables }: ViewProps
                                 className="min-h-[120px] resize-y"
                                 placeholder="How will success be measured?"
                               />
+                            )}
+                          </div>
+                          {/* FullStack cost estimate */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label
+                                htmlFor={`${panelId}-cost-estimate`}
+                                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                              >
+                                FullStack cost estimate
+                                {item.costEstimate != null && (
+                                  <span className="ml-1.5 text-amber-600 dark:text-amber-400">(overridden)</span>
+                                )}
+                              </label>
+                              {!isLocked && item.costEstimate != null && (
+                                <button
+                                  type="button"
+                                  onClick={() => setItem(item.id, { costEstimate: undefined })}
+                                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                                >
+                                  Reset to formula
+                                </button>
+                              )}
+                            </div>
+                            {isLocked ? (
+                              <p className="text-sm text-foreground font-mono">
+                                ${(item.costEstimate ?? EFFORT_HOURS[item.effort] * currentRate).toLocaleString()}
+                                {item.costEstimate == null && <span className="text-muted-foreground ml-1">(formula)</span>}
+                              </p>
+                            ) : (
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                                <Input
+                                  id={`${panelId}-cost-estimate`}
+                                  type="number"
+                                  min={0}
+                                  step={1000}
+                                  value={item.costEstimate ?? EFFORT_HOURS[item.effort] * currentRate}
+                                  onChange={(e) => {
+                                    const n = Number(e.target.value);
+                                    if (Number.isFinite(n)) {
+                                      const formulaDefault = EFFORT_HOURS[item.effort] * currentRate;
+                                      // Store as override only if it differs from the current formula default
+                                      setItem(item.id, { costEstimate: n === formulaDefault ? undefined : n });
+                                    }
+                                  }}
+                                  className="pl-7 font-mono"
+                                />
+                              </div>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                              FullStack's estimated delivery cost. Pre-filled from effort × ${currentRate}/hr (from Business Case); adjust as needed.
+                            </p>
+                          </div>
+                          {/* Value lever */}
+                          <div className="space-y-2">
+                            <label
+                              htmlFor={`${panelId}-value-lever`}
+                              className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                            >
+                              Value lever
+                            </label>
+                            {isLocked ? (
+                              <p className="text-sm text-foreground">
+                                {item.valueLever ? (VALUE_LEVER_LABELS[item.valueLever] ?? item.valueLever) : "None"}
+                              </p>
+                            ) : (
+                              <Select
+                                value={item.valueLever ?? "none"}
+                                onValueChange={(v) =>
+                                  setItem(item.id, {
+                                    valueLever: v === "none" ? undefined : (v as ActionItem["valueLever"]),
+                                  })
+                                }
+                              >
+                                <SelectTrigger id={`${panelId}-value-lever`} className="w-full">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">None</SelectItem>
+                                  <SelectItem value="cycle_time">Cycle Time Reduction</SelectItem>
+                                  <SelectItem value="rework">Rework Reduction</SelectItem>
+                                  <SelectItem value="review">Code Review Acceleration</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                              Which client benefit lever does this initiative primarily move?
+                            </p>
+                            {/* Expected impact — shown when a lever is selected */}
+                            {item.valueLever && (
+                              <div className="space-y-2 pt-2 border-t mt-2">
+                                <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  Expected impact
+                                </label>
+                                {isLocked ? (
+                                  <p className="text-sm text-foreground font-mono">
+                                    {item.expectedImpact != null
+                                      ? `${(item.expectedImpact * 100).toFixed(0)}%`
+                                      : "—"}
+                                  </p>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <div className="flex gap-2">
+                                      {IMPACT_PRESETS.map((preset) => (
+                                        <Button
+                                          key={preset.label}
+                                          type="button"
+                                          size="sm"
+                                          variant={item.expectedImpact === preset.value ? "default" : "outline"}
+                                          onClick={() => setItem(item.id, { expectedImpact: preset.value })}
+                                          className="text-xs"
+                                        >
+                                          {preset.label} ({(preset.value * 100).toFixed(0)}%)
+                                        </Button>
+                                      ))}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground">Custom:</span>
+                                      <div className="relative w-24">
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          max={100}
+                                          step={1}
+                                          value={
+                                            item.expectedImpact != null
+                                              ? Number((item.expectedImpact * 100).toFixed(1))
+                                              : ""
+                                          }
+                                          placeholder="0"
+                                          onChange={(e) => {
+                                            const pct = Number(e.target.value);
+                                            if (Number.isFinite(pct) && pct >= 0 && pct <= 100) {
+                                              setItem(item.id, { expectedImpact: pct / 100 });
+                                            }
+                                          }}
+                                          className="pr-6 font-mono text-sm"
+                                        />
+                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>

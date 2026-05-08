@@ -2459,6 +2459,17 @@ components:
         dependencies:
           type: array
           items: { type: string }
+        costEstimate:
+          type: number
+          description: "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable."
+        valueLever:
+          type: string
+          nullable: true
+          enum: [cycle_time, rework, review]
+          description: "Which client-side value lever this initiative primarily moves."
+        expectedImpact:
+          type: number
+          description: "Expected impact fraction (0–1) for the tagged lever."
 
     EntryPointRecommendation:
       type: object
@@ -2498,6 +2509,13 @@ components:
         aiAcceptanceRate: { type: number }
         reworkRate: { type: number }
         discountRate: { type: number }
+        deliveryHourlyRate:
+          type: number
+          description: "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250."
+        actionPlanScope:
+          type: string
+          enum: [p0, p0_p1, all]
+          description: "Which priority tiers to include in investment and savings calculations."
 
     NpvScenario:
       type: object
@@ -2509,6 +2527,32 @@ components:
         annualSavings:
           type: array
           items: { type: number }
+        investment:
+          type: number
+          description: "FullStack delivery cost for in-scope action items."
+        actionItemCount:
+          type: integer
+          description: "Number of action items in scope."
+        hasOverrides:
+          type: boolean
+          description: "True when any in-scope item has a manual costEstimate override."
+        leverSource:
+          type: string
+          enum: [action_plan, global_assumptions]
+          description: "Whether savings are driven by lever-tagged action items or global assumption formulas."
+        taggedItemCount:
+          type: integer
+          description: "Number of in-scope action items that have a valueLever tag."
+        dimensionImpact:
+          type: array
+          description: "Aggregate expectedImpact per rubric dimension for in-scope items."
+          items:
+            type: object
+            required: [dimension, totalImpact, itemCount]
+            properties:
+              dimension: { type: string }
+              totalImpact: { type: number }
+              itemCount: { type: integer }
 
     NpvResult:
       type: object

@@ -5,10 +5,24 @@
  * Pulse — Agentic Maturity Assessment Platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { NpvScenarioDimensionImpactItem } from "./npvScenarioDimensionImpactItem";
+import type { NpvScenarioLeverSource } from "./npvScenarioLeverSource";
 
 export interface NpvScenario {
   npv3yr: number;
   paybackMonths: number;
   irr: number;
   annualSavings?: number[];
+  /** FullStack delivery cost for in-scope action items. */
+  investment?: number;
+  /** Number of action items in scope. */
+  actionItemCount?: number;
+  /** True when any in-scope item has a manual costEstimate override. */
+  hasOverrides?: boolean;
+  /** Whether savings are driven by lever-tagged action items or global assumption formulas. */
+  leverSource?: NpvScenarioLeverSource;
+  /** Number of in-scope action items that have a valueLever tag. */
+  taggedItemCount?: number;
+  /** Aggregate expectedImpact per rubric dimension for in-scope items. */
+  dimensionImpact?: NpvScenarioDimensionImpactItem[];
 }

@@ -18,6 +18,15 @@ import { DeliverableToolbar } from "@/components/deliverables/deliverable-toolba
 import { LockBadge } from "@/components/deliverables/lock-badge";
 import { Calculator, Info, Save } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+
+type ScopeOption = "p0" | "p0_p1" | "all";
+
+const SCOPE_OPTIONS: { value: ScopeOption; label: string }[] = [
+  { value: "p0", label: "P0 only" },
+  { value: "p0_p1", label: "P0 + P1" },
+  { value: "all", label: "All" },
+];
 
 /**
  * NPV view: shows the headline scenarios + lever breakdown plus an
@@ -66,14 +75,7 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
   useEffect(() => {
     if (!pendingInputs || isLocked || !working) return;
     const handle = setTimeout(() => {
-      const inputs: NpvInputs = {
-        fullyLoadedCost: Math.max(0, Number(working.inputs.fullyLoadedCost ?? 200000)),
-        teamCount: Math.max(1, Math.round(Number(working.inputs.teamCount ?? 8))),
-        baselineCycleTimeDays: Math.max(1, Number(working.inputs.baselineCycleTimeDays ?? 14)),
-        aiAcceptanceRate: Math.min(1, Math.max(0, Number(working.inputs.aiAcceptanceRate ?? 0.35))),
-        reworkRate: Math.min(1, Math.max(0, Number(working.inputs.reworkRate ?? 0.18))),
-        discountRate: Math.min(1, Math.max(0, Number(working.inputs.discountRate ?? 0.1))),
-      };
+      const inputs: NpvInputs = buildInputsFromWorking(working);
       recompute.mutate(
         { id: engagementId, data: inputs },
         {
@@ -100,26 +102,27 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
   const base = data.scenarios.base;
   const dirty = JSON.stringify(working) !== JSON.stringify(deliverables.npv);
 
-  // Map editable snapshot keys to the server's NpvInputs shape (the
-  // OpenAPI body). All six fields are required so we clamp/round here and
-  // never forward optional/legacy keys.
-  const buildInputsBody = (): NpvInputs => ({
-    fullyLoadedCost: Math.max(0, Number(data.inputs.fullyLoadedCost ?? 200000)),
-    teamCount: Math.max(1, Math.round(Number(data.inputs.teamCount ?? 8))),
-    baselineCycleTimeDays: Math.max(1, Number(data.inputs.baselineCycleTimeDays ?? 14)),
-    aiAcceptanceRate: Math.min(1, Math.max(0, Number(data.inputs.aiAcceptanceRate ?? 0.35))),
-    reworkRate: Math.min(1, Math.max(0, Number(data.inputs.reworkRate ?? 0.18))),
-    discountRate: Math.min(1, Math.max(0, Number(data.inputs.discountRate ?? 0.1))),
-  });
+  function buildInputsFromWorking(w: NpvResult): NpvInputs {
+    return {
+      fullyLoadedCost: Math.max(0, Number(w.inputs.fullyLoadedCost ?? 200000)),
+      teamCount: Math.max(1, Math.round(Number(w.inputs.teamCount ?? 8))),
+      baselineCycleTimeDays: Math.max(1, Number(w.inputs.baselineCycleTimeDays ?? 14)),
+      aiAcceptanceRate: Math.min(1, Math.max(0, Number(w.inputs.aiAcceptanceRate ?? 0.35))),
+      reworkRate: Math.min(1, Math.max(0, Number(w.inputs.reworkRate ?? 0.18))),
+      discountRate: Math.min(1, Math.max(0, Number(w.inputs.discountRate ?? 0.1))),
+      deliveryHourlyRate: Math.max(0, Number(w.inputs.deliveryHourlyRate ?? 250)),
+      actionPlanScope: (w.inputs.actionPlanScope as ScopeOption) ?? "all",
+    };
+  }
 
-  const setInput = (key: keyof NpvInputs, value: number) => {
+  const setInput = (key: keyof NpvInputs, value: number | string) => {
     setWorking((w) => (w ? { ...w, inputs: { ...w.inputs, [key]: value } } : w));
     setPendingInputs((p) => ({ ...(p ?? {}), [key]: value }));
   };
 
   const handleRecompute = () => {
     recompute.mutate(
-      { id: engagementId, data: buildInputsBody() },
+      { id: engagementId, data: buildInputsFromWorking(data) },
       {
         onSuccess: (res) => setWorking(res),
         onError: () => toast({ variant: "destructive", title: "Recompute failed" }),
@@ -140,6 +143,17 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
     );
   };
 
+  const currentScope = (data.inputs.actionPlanScope as ScopeOption) ?? "all";
+  const investmentAmount = base.investment ?? 0;
+  const actionItemCount = base.actionItemCount ?? 0;
+  const hasOverrides = base.hasOverrides ?? false;
+  const leverSource = base.leverSource ?? "global_assumptions";
+  const taggedItemCount = base.taggedItemCount ?? 0;
+  const dimensionImpact = base.dimensionImpact ?? [];
+
+  const scopeLabel =
+    currentScope === "p0" ? "P0 only" : currentScope === "p0_p1" ? "P0 + P1" : "All initiatives";
+
   return (
     <div className="p-8">
       <div className="flex justify-between items-center mb-8">
@@ -153,7 +167,8 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
         </div>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-6 mb-8">
+      {/* Headline cards */}
+      <div className="grid md:grid-cols-4 gap-6 mb-8">
         <Card className="bg-primary text-primary-foreground">
           <CardHeader className="pb-2">
             <CardTitle className="text-primary-foreground/80 text-sm uppercase tracking-wider font-medium">3-Year NPV (Base Case)</CardTitle>
@@ -178,6 +193,59 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
             <div className="text-4xl font-bold font-mono text-foreground">{Math.round(base.irr * 100)}<span className="text-xl text-muted-foreground">%</span></div>
           </CardContent>
         </Card>
+        {/* FullStack Investment card */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-1.5">
+              <CardTitle className="text-muted-foreground text-sm uppercase tracking-wider font-medium">FullStack Investment</CardTitle>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" aria-label="About FullStack Investment" className="inline-flex shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground">
+                    <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs text-xs">
+                  Sum of per-initiative delivery cost estimates, scoped to {scopeLabel}. Based on ${data.inputs.deliveryHourlyRate ?? 250}/hr × effort hours unless overridden on the Action Plan tab.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold font-mono text-foreground">
+              {formatCurrency(investmentAmount)}
+            </div>
+            {actionItemCount > 0 && (
+              <p className="text-sm text-muted-foreground mt-1">{actionItemCount} {actionItemCount === 1 ? "initiative" : "initiatives"}</p>
+            )}
+            {hasOverrides && (
+              <p className="text-xs text-muted-foreground/80 mt-0.5 italic">Includes custom cost estimates.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Priority scope filter */}
+      <div className="mb-6 flex items-center gap-3">
+        <span className="text-sm text-muted-foreground font-medium">Scope:</span>
+        <div className="flex rounded-md border overflow-hidden">
+          {SCOPE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={isLocked}
+              onClick={() => setInput("actionPlanScope", opt.value)}
+              className={cn(
+                "px-3 py-1.5 text-sm font-medium transition-colors border-r last:border-r-0",
+                currentScope === opt.value
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-background text-muted-foreground hover:bg-muted disabled:opacity-50",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-muted-foreground">Priority tiers included in investment and savings calculations.</span>
       </div>
 
       <div className="grid md:grid-cols-2 gap-8">
@@ -244,6 +312,14 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                   <p>Typical: 0.08–0.12 (your company's WACC or hurdle rate).</p>
                 </div>
               } />
+            <NpvField
+              label="FullStack delivery rate ($/hr)"
+              value={data.inputs.deliveryHourlyRate ?? 250}
+              step={25}
+              disabled={isLocked}
+              onChange={(v) => setInput("deliveryHourlyRate", v)}
+              hint="FullStack's all-in hourly rate used to estimate implementation cost from effort sizes. Override individual item costs on the Action Plan tab."
+            />
           </div>
         </div>
 
@@ -267,11 +343,6 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                 color: segmentColors[i % segmentColors.length],
               };
             });
-            // Build a concise text summary so assistive tech announces the
-            // breakdown the same way a sighted user reads the bar. The
-            // segments themselves are aria-hidden so they don't produce a
-            // separate stream of announcements alongside the legend list
-            // below.
             const barAriaLabel = hasSavings
               ? `Annual savings split: ${segments
                   .map((s) => `${s.lever} ${s.pct.toFixed(0)}%`)
@@ -307,6 +378,12 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                     contributions.
                   </p>
                 ) : null}
+                {/* Lever source badge */}
+                <p className="text-xs text-muted-foreground mt-2">
+                  {leverSource === "action_plan"
+                    ? `Derived from Action Plan lever tags (${taggedItemCount} tagged ${taggedItemCount === 1 ? "item" : "items"})`
+                    : "Based on global assumptions — tag initiatives to tailor"}
+                </p>
                 <ul className="mt-4 space-y-2">
                   {segments.map((s) => (
                     <li
@@ -330,6 +407,41 @@ export default function NpvView({ engagementId, deliverables }: ViewProps) {
                     </li>
                   ))}
                 </ul>
+
+                {/* Dimension impact breakdown */}
+                {dimensionImpact.length > 0 && (
+                  <div className="mt-6">
+                    <h4 className="text-sm font-semibold text-foreground mb-2 border-b pb-1">
+                      Dimension impact (in-scope initiatives)
+                    </h4>
+                    <ul className="space-y-1.5">
+                      {dimensionImpact
+                        .sort((a, b) => b.totalImpact - a.totalImpact)
+                        .map((d) => (
+                          <li key={d.dimension} className="flex items-center gap-2 text-xs">
+                            <span className="capitalize font-medium text-foreground w-28 truncate">{d.dimension}</span>
+                            <div className="flex-1 bg-muted rounded h-1.5 overflow-hidden">
+                              <div
+                                className="bg-chart-1 h-full"
+                                style={{
+                                  width: `${Math.min(100, d.totalImpact * 200)}%`,
+                                }}
+                              />
+                            </div>
+                            <span className="font-mono text-muted-foreground tabular-nums w-10 text-right">
+                              {(d.totalImpact * 100).toFixed(0)}%
+                            </span>
+                            <span className="text-muted-foreground/70 w-16 text-right">
+                              {d.itemCount} {d.itemCount === 1 ? "item" : "items"}
+                            </span>
+                          </li>
+                        ))}
+                    </ul>
+                    <p className="text-xs text-muted-foreground/70 mt-2">
+                      Aggregate expected impact of lever-tagged initiatives per dimension.
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })()}

@@ -8,6 +8,7 @@
 import type { ActionItemEffort } from "./actionItemEffort";
 import type { ActionItemImpact } from "./actionItemImpact";
 import type { ActionItemPriority } from "./actionItemPriority";
+import type { ActionItemValueLever } from "./actionItemValueLever";
 import type { Dimension } from "./dimension";
 
 export interface ActionItem {
@@ -20,4 +21,10 @@ export interface ActionItem {
   ownerRole?: string;
   successMetric?: string;
   dependencies?: string[];
+  /** FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable. */
+  costEstimate?: number;
+  /** Which client-side value lever this initiative primarily moves. */
+  valueLever?: ActionItemValueLever;
+  /** Expected impact fraction (0–1) for the tagged lever. */
+  expectedImpact?: number;
 }

@@ -105,17 +105,20 @@ function fallbackGapAnalysis(byDimension: DimScore[], evidence: EvidenceLite[]) 
 function fallbackActionPlan(byDimension: DimScore[]) {
   return byDimension.flatMap((d, idx) => {
     const target = Math.min(5, d.stage + 1);
+    const effort = "M" as const;
     return [
       {
         id: `${d.dimension}-1`,
         initiative: `Stand up ${d.dimension} working group to reach stage ${target}`,
         dimension: d.dimension as Dimension,
         priority: (idx === 0 ? "P0" : idx < 3 ? "P1" : "P2") as "P0" | "P1" | "P2",
-        effort: "M" as const,
+        effort,
         impact: "L" as const,
         ownerRole: "Engineering Director",
         successMetric: `${d.dimension} stage advances to ${target} within 90 days`,
         dependencies: [] as string[],
+        // costEstimate intentionally omitted: formula-derived items have no stored
+        // override so the server always recomputes from effort × deliveryHourlyRate
       },
     ];
   });
@@ -181,11 +184,13 @@ export async function draftDeliverablesAi(input: DraftInput, ctx: AiCtx = {}) {
     "initiative": string,
     "dimension": "tooling"|"measurement"|"process"|"people"|"governance"|"culture",
     "priority": "P0"|"P1"|"P2",
-    "effort": "S"|"M"|"L"|"XL",
+    "effort": "S"|"M"|"L"|"XL",         // cost = effort × deliveryHourlyRate (server-computed, do NOT include here)
     "impact": "S"|"M"|"L"|"XL",
     "ownerRole": string,
     "successMetric": string,
-    "dependencies": string[]
+    "dependencies": string[],
+    "valueLever": "cycle_time"|"rework"|"review"|null,
+    "expectedImpact": number             // 0-1 fraction; 0.05=Low, 0.10=Medium, 0.20=High
   }>,
   "entryPoint": {
     "recommendedStage": "strategy"|"design"|"build"|"ship"|"run",
@@ -222,7 +227,18 @@ Return ONE valid JSON object. Do not wrap in markdown fences. Do not include any
     }>;
     if (parsed.gapAnalysis && Array.isArray(parsed.gapAnalysis))
       gapAnalysis = parsed.gapAnalysis;
-    if (parsed.actionPlan && Array.isArray(parsed.actionPlan)) actionPlan = parsed.actionPlan;
+    if (parsed.actionPlan && Array.isArray(parsed.actionPlan)) {
+      // Strip any formula-derived costEstimate the AI may have included — only
+      // explicit manual overrides belong in stored data. Formula cost is always
+      // recomputed server-side using the current deliveryHourlyRate.
+      actionPlan = parsed.actionPlan.map(
+        (item: typeof actionPlan[number] & { costEstimate?: number }) => {
+          const { costEstimate: _drop, ...rest } = item as typeof item & { costEstimate?: number };
+          void _drop;
+          return rest;
+        },
+      );
+    }
     if (parsed.entryPoint) entryPoint = parsed.entryPoint;
   } catch (e) {
     // Keep fallbacks. Tag with requestId so the failure can be correlated to

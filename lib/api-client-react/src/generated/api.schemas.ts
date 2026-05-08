@@ -1097,6 +1097,19 @@ export const ActionItemImpact = {
   XL: "XL",
 } as const;
 
+/**
+ * Which client-side value lever this initiative primarily moves.
+ */
+export type ActionItemValueLever =
+  | (typeof ActionItemValueLever)[keyof typeof ActionItemValueLever]
+  | null;
+
+export const ActionItemValueLever = {
+  cycle_time: "cycle_time",
+  rework: "rework",
+  review: "review",
+} as const;
+
 export interface ActionItem {
   id: string;
   initiative: string;
@@ -1107,6 +1120,12 @@ export interface ActionItem {
   ownerRole?: string;
   successMetric?: string;
   dependencies?: string[];
+  /** FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable. */
+  costEstimate?: number;
+  /** Which client-side value lever this initiative primarily moves. */
+  valueLever?: ActionItemValueLever;
+  /** Expected impact fraction (0–1) for the tagged lever. */
+  expectedImpact?: number;
 }
 
 export type EntryPointRecommendationRecommendedStage =
@@ -1132,6 +1151,18 @@ export interface EntryPointRecommendation {
   evidenceIds?: string[];
 }
 
+/**
+ * Which priority tiers to include in investment and savings calculations.
+ */
+export type NpvInputsActionPlanScope =
+  (typeof NpvInputsActionPlanScope)[keyof typeof NpvInputsActionPlanScope];
+
+export const NpvInputsActionPlanScope = {
+  p0: "p0",
+  p0_p1: "p0_p1",
+  all: "all",
+} as const;
+
 export interface NpvInputs {
   fullyLoadedCost: number;
   teamCount: number;
@@ -1139,13 +1170,46 @@ export interface NpvInputs {
   aiAcceptanceRate: number;
   reworkRate: number;
   discountRate: number;
+  /** FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250. */
+  deliveryHourlyRate?: number;
+  /** Which priority tiers to include in investment and savings calculations. */
+  actionPlanScope?: NpvInputsActionPlanScope;
 }
+
+/**
+ * Whether savings are driven by lever-tagged action items or global assumption formulas.
+ */
+export type NpvScenarioLeverSource =
+  (typeof NpvScenarioLeverSource)[keyof typeof NpvScenarioLeverSource];
+
+export const NpvScenarioLeverSource = {
+  action_plan: "action_plan",
+  global_assumptions: "global_assumptions",
+} as const;
+
+export type NpvScenarioDimensionImpactItem = {
+  dimension: string;
+  totalImpact: number;
+  itemCount: number;
+};
 
 export interface NpvScenario {
   npv3yr: number;
   paybackMonths: number;
   irr: number;
   annualSavings?: number[];
+  /** FullStack delivery cost for in-scope action items. */
+  investment?: number;
+  /** Number of action items in scope. */
+  actionItemCount?: number;
+  /** True when any in-scope item has a manual costEstimate override. */
+  hasOverrides?: boolean;
+  /** Whether savings are driven by lever-tagged action items or global assumption formulas. */
+  leverSource?: NpvScenarioLeverSource;
+  /** Number of in-scope action items that have a valueLever tag. */
+  taggedItemCount?: number;
+  /** Aggregate expectedImpact per rubric dimension for in-scope items. */
+  dimensionImpact?: NpvScenarioDimensionImpactItem[];
 }
 
 export type NpvResultScenarios = {

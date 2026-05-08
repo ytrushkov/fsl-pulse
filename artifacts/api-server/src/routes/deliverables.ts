@@ -11,7 +11,7 @@ import {
 import { paramId } from "../lib/util";
 import { draftDeliverablesAi } from "../lib/ai-deliverables";
 import { recordActivity } from "../lib/audit";
-import { computeNpv, normalizeNpvInputs, type NpvInputs } from "../lib/npv-calc";
+import { computeNpv, normalizeNpvInputs, type NpvInputs, type ActionItemSummary } from "../lib/npv-calc";
 
 const router: IRouter = Router();
 
@@ -291,7 +291,15 @@ router.post("/engagements/:id/deliverables/draft", async (req, res): Promise<voi
   // NPV: regenerate only when not locked AND assessor hasn't supplied
   // custom inputs. Otherwise we recompute under the existing inputs so the
   // model stays aligned with their assumptions.
-  if (!isLocked("npv")) updates.npv = drafted.npv;
+  if (!isLocked("npv")) {
+    // Recompute NPV using the freshly-drafted action plan items so the
+    // Business Case is aligned with the new action plan from the start.
+    const draftedActionItems = resolveActionItems(
+      { actionPlan: (updates.actionPlan ?? existing?.actionPlan) } as typeof deliverablesTable.$inferSelect,
+    );
+    const prevInputs = (existing?.npv as { inputs?: Partial<NpvInputs> } | null)?.inputs ?? {};
+    updates.npv = computeNpv(prevInputs, draftedActionItems);
+  }
 
   const [d] = await db
     .update(deliverablesTable)
@@ -406,6 +414,36 @@ router.post(
   },
 );
 
+/** Extract and normalize action items from a stored deliverables row. */
+function resolveActionItems(
+  existing: typeof deliverablesTable.$inferSelect | undefined,
+): ActionItemSummary[] {
+  if (!existing?.actionPlan) return [];
+  const raw = existing.actionPlan as unknown[];
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const i = item as Record<string, unknown>;
+    const priority = i.priority as "P0" | "P1" | "P2" | undefined;
+    const effort = i.effort as "S" | "M" | "L" | "XL" | undefined;
+    if (!priority || !effort) return [];
+    return [
+      {
+        id: String(i.id ?? ""),
+        priority,
+        effort,
+        dimension: typeof i.dimension === "string" ? i.dimension : undefined,
+        costEstimate: typeof i.costEstimate === "number" ? i.costEstimate : undefined,
+        valueLever:
+          i.valueLever === "cycle_time" || i.valueLever === "rework" || i.valueLever === "review"
+            ? i.valueLever
+            : undefined,
+        expectedImpact: typeof i.expectedImpact === "number" ? i.expectedImpact : undefined,
+      } satisfies ActionItemSummary,
+    ];
+  });
+}
+
 // ─── NPV recompute ───────────────────────────────────────────────────────
 
 router.post(
@@ -428,7 +466,11 @@ router.post(
     // wrapper for older clients.
     const raw = (req.body?.inputs ?? req.body ?? {}) as Partial<NpvInputs>;
     const inputs = normalizeNpvInputs(raw);
-    const next = computeNpv(inputs);
+
+    // Server always re-reads action plan items — the client never sends them.
+    const actionItems = resolveActionItems(existing);
+
+    const next = computeNpv(inputs, actionItems);
     // Pure recompute: this endpoint is read-only and does NOT persist or
     // snapshot a new version. The client splices the returned NpvResult
     // into its working state and only PATCH /deliverables (or finalize)

@@ -2240,6 +2240,22 @@ export const GetDeliverablesResponse = zod.object({
       ownerRole: zod.string().optional(),
       successMetric: zod.string().optional(),
       dependencies: zod.array(zod.string()).optional(),
+      costEstimate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
+        ),
+      valueLever: zod
+        .enum(["cycle_time", "rework", "review"])
+        .nullish()
+        .describe(
+          "Which client-side value lever this initiative primarily moves.",
+        ),
+      expectedImpact: zod
+        .number()
+        .optional()
+        .describe("Expected impact fraction (0–1) for the tagged lever."),
     }),
   ),
   entryPoint: zod.object({
@@ -2264,6 +2280,18 @@ export const GetDeliverablesResponse = zod.object({
       aiAcceptanceRate: zod.number(),
       reworkRate: zod.number(),
       discountRate: zod.number(),
+      deliveryHourlyRate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250.",
+        ),
+      actionPlanScope: zod
+        .enum(["p0", "p0_p1", "all"])
+        .optional()
+        .describe(
+          "Which priority tiers to include in investment and savings calculations.",
+        ),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -2271,18 +2299,132 @@ export const GetDeliverablesResponse = zod.object({
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       base: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       high: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
     }),
     leverBreakdown: zod.array(
@@ -2378,6 +2520,22 @@ export const UpdateDeliverablesBody = zod.object({
         ownerRole: zod.string().optional(),
         successMetric: zod.string().optional(),
         dependencies: zod.array(zod.string()).optional(),
+        costEstimate: zod
+          .number()
+          .optional()
+          .describe(
+            "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
+          ),
+        valueLever: zod
+          .enum(["cycle_time", "rework", "review"])
+          .nullish()
+          .describe(
+            "Which client-side value lever this initiative primarily moves.",
+          ),
+        expectedImpact: zod
+          .number()
+          .optional()
+          .describe("Expected impact fraction (0–1) for the tagged lever."),
       }),
     )
     .optional(),
@@ -2412,6 +2570,18 @@ export const UpdateDeliverablesBody = zod.object({
         aiAcceptanceRate: zod.number(),
         reworkRate: zod.number(),
         discountRate: zod.number(),
+        deliveryHourlyRate: zod
+          .number()
+          .optional()
+          .describe(
+            "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250.",
+          ),
+        actionPlanScope: zod
+          .enum(["p0", "p0_p1", "all"])
+          .optional()
+          .describe(
+            "Which priority tiers to include in investment and savings calculations.",
+          ),
       }),
       scenarios: zod.object({
         low: zod.object({
@@ -2419,18 +2589,132 @@ export const UpdateDeliverablesBody = zod.object({
           paybackMonths: zod.number(),
           irr: zod.number(),
           annualSavings: zod.array(zod.number()).optional(),
+          investment: zod
+            .number()
+            .optional()
+            .describe("FullStack delivery cost for in-scope action items."),
+          actionItemCount: zod
+            .number()
+            .optional()
+            .describe("Number of action items in scope."),
+          hasOverrides: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when any in-scope item has a manual costEstimate override.",
+            ),
+          leverSource: zod
+            .enum(["action_plan", "global_assumptions"])
+            .optional()
+            .describe(
+              "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+            ),
+          taggedItemCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Number of in-scope action items that have a valueLever tag.",
+            ),
+          dimensionImpact: zod
+            .array(
+              zod.object({
+                dimension: zod.string(),
+                totalImpact: zod.number(),
+                itemCount: zod.number(),
+              }),
+            )
+            .optional()
+            .describe(
+              "Aggregate expectedImpact per rubric dimension for in-scope items.",
+            ),
         }),
         base: zod.object({
           npv3yr: zod.number(),
           paybackMonths: zod.number(),
           irr: zod.number(),
           annualSavings: zod.array(zod.number()).optional(),
+          investment: zod
+            .number()
+            .optional()
+            .describe("FullStack delivery cost for in-scope action items."),
+          actionItemCount: zod
+            .number()
+            .optional()
+            .describe("Number of action items in scope."),
+          hasOverrides: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when any in-scope item has a manual costEstimate override.",
+            ),
+          leverSource: zod
+            .enum(["action_plan", "global_assumptions"])
+            .optional()
+            .describe(
+              "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+            ),
+          taggedItemCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Number of in-scope action items that have a valueLever tag.",
+            ),
+          dimensionImpact: zod
+            .array(
+              zod.object({
+                dimension: zod.string(),
+                totalImpact: zod.number(),
+                itemCount: zod.number(),
+              }),
+            )
+            .optional()
+            .describe(
+              "Aggregate expectedImpact per rubric dimension for in-scope items.",
+            ),
         }),
         high: zod.object({
           npv3yr: zod.number(),
           paybackMonths: zod.number(),
           irr: zod.number(),
           annualSavings: zod.array(zod.number()).optional(),
+          investment: zod
+            .number()
+            .optional()
+            .describe("FullStack delivery cost for in-scope action items."),
+          actionItemCount: zod
+            .number()
+            .optional()
+            .describe("Number of action items in scope."),
+          hasOverrides: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when any in-scope item has a manual costEstimate override.",
+            ),
+          leverSource: zod
+            .enum(["action_plan", "global_assumptions"])
+            .optional()
+            .describe(
+              "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+            ),
+          taggedItemCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Number of in-scope action items that have a valueLever tag.",
+            ),
+          dimensionImpact: zod
+            .array(
+              zod.object({
+                dimension: zod.string(),
+                totalImpact: zod.number(),
+                itemCount: zod.number(),
+              }),
+            )
+            .optional()
+            .describe(
+              "Aggregate expectedImpact per rubric dimension for in-scope items.",
+            ),
         }),
       }),
       leverBreakdown: zod.array(
@@ -2503,6 +2787,22 @@ export const UpdateDeliverablesResponse = zod.object({
       ownerRole: zod.string().optional(),
       successMetric: zod.string().optional(),
       dependencies: zod.array(zod.string()).optional(),
+      costEstimate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
+        ),
+      valueLever: zod
+        .enum(["cycle_time", "rework", "review"])
+        .nullish()
+        .describe(
+          "Which client-side value lever this initiative primarily moves.",
+        ),
+      expectedImpact: zod
+        .number()
+        .optional()
+        .describe("Expected impact fraction (0–1) for the tagged lever."),
     }),
   ),
   entryPoint: zod.object({
@@ -2527,6 +2827,18 @@ export const UpdateDeliverablesResponse = zod.object({
       aiAcceptanceRate: zod.number(),
       reworkRate: zod.number(),
       discountRate: zod.number(),
+      deliveryHourlyRate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250.",
+        ),
+      actionPlanScope: zod
+        .enum(["p0", "p0_p1", "all"])
+        .optional()
+        .describe(
+          "Which priority tiers to include in investment and savings calculations.",
+        ),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -2534,18 +2846,132 @@ export const UpdateDeliverablesResponse = zod.object({
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       base: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       high: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
     }),
     leverBreakdown: zod.array(
@@ -2635,6 +3061,22 @@ export const DraftDeliverablesResponse = zod.object({
       ownerRole: zod.string().optional(),
       successMetric: zod.string().optional(),
       dependencies: zod.array(zod.string()).optional(),
+      costEstimate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
+        ),
+      valueLever: zod
+        .enum(["cycle_time", "rework", "review"])
+        .nullish()
+        .describe(
+          "Which client-side value lever this initiative primarily moves.",
+        ),
+      expectedImpact: zod
+        .number()
+        .optional()
+        .describe("Expected impact fraction (0–1) for the tagged lever."),
     }),
   ),
   entryPoint: zod.object({
@@ -2659,6 +3101,18 @@ export const DraftDeliverablesResponse = zod.object({
       aiAcceptanceRate: zod.number(),
       reworkRate: zod.number(),
       discountRate: zod.number(),
+      deliveryHourlyRate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250.",
+        ),
+      actionPlanScope: zod
+        .enum(["p0", "p0_p1", "all"])
+        .optional()
+        .describe(
+          "Which priority tiers to include in investment and savings calculations.",
+        ),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -2666,18 +3120,132 @@ export const DraftDeliverablesResponse = zod.object({
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       base: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       high: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
     }),
     leverBreakdown: zod.array(
@@ -2795,6 +3363,22 @@ export const RevertDeliverableResponse = zod.object({
       ownerRole: zod.string().optional(),
       successMetric: zod.string().optional(),
       dependencies: zod.array(zod.string()).optional(),
+      costEstimate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's estimated delivery cost in USD. Pre-populated from effort × deliveryHourlyRate; overridable.",
+        ),
+      valueLever: zod
+        .enum(["cycle_time", "rework", "review"])
+        .nullish()
+        .describe(
+          "Which client-side value lever this initiative primarily moves.",
+        ),
+      expectedImpact: zod
+        .number()
+        .optional()
+        .describe("Expected impact fraction (0–1) for the tagged lever."),
     }),
   ),
   entryPoint: zod.object({
@@ -2819,6 +3403,18 @@ export const RevertDeliverableResponse = zod.object({
       aiAcceptanceRate: zod.number(),
       reworkRate: zod.number(),
       discountRate: zod.number(),
+      deliveryHourlyRate: zod
+        .number()
+        .optional()
+        .describe(
+          "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250.",
+        ),
+      actionPlanScope: zod
+        .enum(["p0", "p0_p1", "all"])
+        .optional()
+        .describe(
+          "Which priority tiers to include in investment and savings calculations.",
+        ),
     }),
     scenarios: zod.object({
       low: zod.object({
@@ -2826,18 +3422,132 @@ export const RevertDeliverableResponse = zod.object({
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       base: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
       high: zod.object({
         npv3yr: zod.number(),
         paybackMonths: zod.number(),
         irr: zod.number(),
         annualSavings: zod.array(zod.number()).optional(),
+        investment: zod
+          .number()
+          .optional()
+          .describe("FullStack delivery cost for in-scope action items."),
+        actionItemCount: zod
+          .number()
+          .optional()
+          .describe("Number of action items in scope."),
+        hasOverrides: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when any in-scope item has a manual costEstimate override.",
+          ),
+        leverSource: zod
+          .enum(["action_plan", "global_assumptions"])
+          .optional()
+          .describe(
+            "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+          ),
+        taggedItemCount: zod
+          .number()
+          .optional()
+          .describe(
+            "Number of in-scope action items that have a valueLever tag.",
+          ),
+        dimensionImpact: zod
+          .array(
+            zod.object({
+              dimension: zod.string(),
+              totalImpact: zod.number(),
+              itemCount: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Aggregate expectedImpact per rubric dimension for in-scope items.",
+          ),
       }),
     }),
     leverBreakdown: zod.array(
@@ -2894,6 +3604,18 @@ export const RecomputeNpvBody = zod.object({
   aiAcceptanceRate: zod.number(),
   reworkRate: zod.number(),
   discountRate: zod.number(),
+  deliveryHourlyRate: zod
+    .number()
+    .optional()
+    .describe(
+      "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250.",
+    ),
+  actionPlanScope: zod
+    .enum(["p0", "p0_p1", "all"])
+    .optional()
+    .describe(
+      "Which priority tiers to include in investment and savings calculations.",
+    ),
 });
 
 export const RecomputeNpvResponse = zod.object({
@@ -2905,6 +3627,18 @@ export const RecomputeNpvResponse = zod.object({
     aiAcceptanceRate: zod.number(),
     reworkRate: zod.number(),
     discountRate: zod.number(),
+    deliveryHourlyRate: zod
+      .number()
+      .optional()
+      .describe(
+        "FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250.",
+      ),
+    actionPlanScope: zod
+      .enum(["p0", "p0_p1", "all"])
+      .optional()
+      .describe(
+        "Which priority tiers to include in investment and savings calculations.",
+      ),
   }),
   scenarios: zod.object({
     low: zod.object({
@@ -2912,18 +3646,132 @@ export const RecomputeNpvResponse = zod.object({
       paybackMonths: zod.number(),
       irr: zod.number(),
       annualSavings: zod.array(zod.number()).optional(),
+      investment: zod
+        .number()
+        .optional()
+        .describe("FullStack delivery cost for in-scope action items."),
+      actionItemCount: zod
+        .number()
+        .optional()
+        .describe("Number of action items in scope."),
+      hasOverrides: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when any in-scope item has a manual costEstimate override.",
+        ),
+      leverSource: zod
+        .enum(["action_plan", "global_assumptions"])
+        .optional()
+        .describe(
+          "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+        ),
+      taggedItemCount: zod
+        .number()
+        .optional()
+        .describe(
+          "Number of in-scope action items that have a valueLever tag.",
+        ),
+      dimensionImpact: zod
+        .array(
+          zod.object({
+            dimension: zod.string(),
+            totalImpact: zod.number(),
+            itemCount: zod.number(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Aggregate expectedImpact per rubric dimension for in-scope items.",
+        ),
     }),
     base: zod.object({
       npv3yr: zod.number(),
       paybackMonths: zod.number(),
       irr: zod.number(),
       annualSavings: zod.array(zod.number()).optional(),
+      investment: zod
+        .number()
+        .optional()
+        .describe("FullStack delivery cost for in-scope action items."),
+      actionItemCount: zod
+        .number()
+        .optional()
+        .describe("Number of action items in scope."),
+      hasOverrides: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when any in-scope item has a manual costEstimate override.",
+        ),
+      leverSource: zod
+        .enum(["action_plan", "global_assumptions"])
+        .optional()
+        .describe(
+          "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+        ),
+      taggedItemCount: zod
+        .number()
+        .optional()
+        .describe(
+          "Number of in-scope action items that have a valueLever tag.",
+        ),
+      dimensionImpact: zod
+        .array(
+          zod.object({
+            dimension: zod.string(),
+            totalImpact: zod.number(),
+            itemCount: zod.number(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Aggregate expectedImpact per rubric dimension for in-scope items.",
+        ),
     }),
     high: zod.object({
       npv3yr: zod.number(),
       paybackMonths: zod.number(),
       irr: zod.number(),
       annualSavings: zod.array(zod.number()).optional(),
+      investment: zod
+        .number()
+        .optional()
+        .describe("FullStack delivery cost for in-scope action items."),
+      actionItemCount: zod
+        .number()
+        .optional()
+        .describe("Number of action items in scope."),
+      hasOverrides: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when any in-scope item has a manual costEstimate override.",
+        ),
+      leverSource: zod
+        .enum(["action_plan", "global_assumptions"])
+        .optional()
+        .describe(
+          "Whether savings are driven by lever-tagged action items or global assumption formulas.",
+        ),
+      taggedItemCount: zod
+        .number()
+        .optional()
+        .describe(
+          "Number of in-scope action items that have a valueLever tag.",
+        ),
+      dimensionImpact: zod
+        .array(
+          zod.object({
+            dimension: zod.string(),
+            totalImpact: zod.number(),
+            itemCount: zod.number(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Aggregate expectedImpact per rubric dimension for in-scope items.",
+        ),
     }),
   }),
   leverBreakdown: zod.array(

@@ -5,6 +5,7 @@
  * Pulse — Agentic Maturity Assessment Platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { NpvInputsActionPlanScope } from "./npvInputsActionPlanScope";
 
 export interface NpvInputs {
   fullyLoadedCost: number;
@@ -13,4 +14,8 @@ export interface NpvInputs {
   aiAcceptanceRate: number;
   reworkRate: number;
   discountRate: number;
+  /** FullStack's all-in hourly rate for estimating implementation cost from effort sizes. Default 250. */
+  deliveryHourlyRate?: number;
+  /** Which priority tiers to include in investment and savings calculations. */
+  actionPlanScope?: NpvInputsActionPlanScope;
 }
