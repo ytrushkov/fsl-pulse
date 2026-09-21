@@ -1,5 +1,17 @@
 # See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
+# secrets & local env (never commit)
+.env
+.env.*
+!.env.example
+*.key
+*.secret
+*.pem
+
+# local Claude Code config
+.claude/settings.local.json
+CLAUDE.local.md
+
 # compiled output
 dist
 tmp
