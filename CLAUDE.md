@@ -16,11 +16,12 @@ Full PRD: see `docs/PRD.md`.
 - Backend: **Express 5** (`artifacts/api-server`), routes mounted at `/api`; esbuild bundle
 - Frontend: **React 19 + Vite** (`artifacts/pulse`), Tailwind, shadcn-style UI; **Clerk** for auth
 - Data: **PostgreSQL + Drizzle ORM** (`lib/db`); schema in `lib/db/src/schema/pulse.ts`
+- Storage: **S3-compatible** (AWS S3 in prod, MinIO in dev) via `objectStorage.ts` (`S3_*` env)
 - Validation: **Zod** (`zod/v4`), `drizzle-zod`
 - API contract: **OpenAPI** (`lib/api-spec`) → Orval-generated Zod (`lib/api-zod`) + React Query
   hooks (`lib/api-client-react`). The spec is the source of truth; regenerate, don't hand-edit.
-- LLM: Anthropic, via `lib/integrations-anthropic-ai`. **Target state:** route through an
-  `llm-gateway` that strips PII before any provider call (migrating off the Replit-managed proxy).
+- LLM: Anthropic via `lib/integrations-anthropic-ai` — the `createMessage` gateway strips PII from
+  all outgoing prompt text before every provider call (`ANTHROPIC_API_KEY`; no Replit proxy).
 - Tests: **vitest**
 
 ## Repo layout
@@ -53,6 +54,8 @@ artifacts, scoring, rubrics, deliverables, exports, portfolio, ai. Per-engagemen
 globally in `routes/index.ts`. Security posture documented in `artifacts/api-server/THREAT_MODEL.md`.
 
 ## Key commands
+- Local dev bootstrap: `docker compose up -d` (Postgres + MinIO), `cp .env.example .env`,
+  then `pnpm --filter @workspace/db run push` to create the schema
 - `pnpm install` — install workspace
 - `pnpm run typecheck` — full typecheck across all packages (run before committing)
 - `pnpm run build` — typecheck + build all packages
@@ -71,18 +74,18 @@ globally in `routes/index.ts`. Security posture documented in `artifacts/api-ser
 - The OpenAPI spec drives generated types — change the spec + regenerate; don't hand-edit generated
   packages (`lib/api-zod`, `lib/api-client-react`).
 - Prefer composition over inheritance; keep modules a reasonable size.
-- Secrets come from env (`SESSION_SECRET`, `PULSE_TOKEN_KEY`, `PULSE_EXPORT_KEY`, DB URL, Anthropic).
-  Never commit `.env` or keys. (`.gitignore` still needs an `.env` rule added — see below.)
+- Secrets come from env (`SESSION_SECRET`, `PULSE_TOKEN_KEY`, `PULSE_EXPORT_KEY`, DB URL, Anthropic,
+  Clerk). Never commit `.env` or keys — both are gitignored. See `.env.example` for the full surface.
 
 ## In-flight / not yet established
+- **De-Replit-ify** (per `REPLIT_MIGRATION_ASSESSMENT.md`): storage → S3/MinIO ✅, Anthropic →
+  PII-stripping gateway ✅, Replit deploy config/vite plugins/CORS removed ✅, local-dev
+  docker-compose ✅. **Remaining:** production Dockerfiles for api-server + pulse, and IaC.
 - **eslint** config, **CI**, and a coverage gate are not set up yet on this stack (the Python-era
-  CI was archived). To be established.
-- **De-Replit-ify** (per `REPLIT_MIGRATION_ASSESSMENT.md`): object storage → S3/MinIO behind an
-  interface; Anthropic proxy → `llm-gateway` with PII stripping; drop `.replit`/deploy config, add
-  portable Docker + IaC.
+  CI was archived). To be established (Phase D).
 - Deferred hardening: KMS key rotation, rate-limiting the public magic-link endpoint, DNS-rebinding
   defense on connector egress, fail-closed on missing `SESSION_SECRET` in prod.
 
 ## Repository conventions
-`.gitignore` excludes local Claude settings, `CLAUDE.local.md`, build artifacts, and `node_modules`.
-Note: the inherited `.gitignore` does **not** yet exclude `.env` / `*.key` / `*.secret` — add these.
+`.gitignore` excludes local Claude settings, `CLAUDE.local.md`, build artifacts, `node_modules`,
+and secrets (`.env`, `*.key`, `*.secret`, `*.pem`).
