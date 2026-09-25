@@ -1,4 +1,4 @@
-import { anthropic } from "@workspace/integrations-anthropic-ai";
+import { createMessage } from "@workspace/integrations-anthropic-ai";
 import { DIMENSIONS, RUBRIC, STAGE_LABELS, type Dimension } from "./rubric";
 
 interface DimScore {
@@ -212,7 +212,7 @@ ${evidenceCsv || "(no evidence yet — produce hypothesis-only narratives and le
 
 Return ONE valid JSON object. Do not wrap in markdown fences. Do not include any commentary.`;
 
-    const message = await anthropic.messages.create({
+    const message = await createMessage({
       model: MODEL,
       max_tokens: 8192,
       messages: [{ role: "user", content: prompt }],
@@ -280,7 +280,7 @@ Respond ONLY with strict JSON: { "suggestions": Array<{text, dimension, signalTy
 Notes:
 ${notes.slice(0, 6000)}`;
 
-    const message = await anthropic.messages.create({
+    const message = await createMessage({
       model: MODEL,
       max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
