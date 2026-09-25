@@ -1,0 +1,55 @@
+# Local development backing services for Pulse (off Replit).
+# Bring these up, copy .env.example -> .env, then run the app with pnpm:
+#   docker compose up -d
+#   pnpm --filter @workspace/db run push          # create schema
+#   pnpm --filter @workspace/api-server run dev
+#   PORT=5173 BASE_PATH=/ pnpm --filter @workspace/pulse run dev
+#
+# Defaults here match the values in .env.example so it works out of the box.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: pulse
+      POSTGRES_DB: pulse
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulse -d pulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # S3-compatible object storage. API on :9000, web console on :9001.
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: pulse
+      MINIO_ROOT_PASSWORD: pulse-dev-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  # One-shot: wait for MinIO, then create the artifacts bucket. Idempotent.
+  createbucket:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 pulse pulse-dev-secret; do
+        echo 'waiting for minio...'; sleep 1;
+      done;
+      mc mb --ignore-existing local/pulse-artifacts;
+      echo 'bucket ready: pulse-artifacts';
+      "
+
+volumes:
+  pgdata:
+  miniodata:
