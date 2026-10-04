@@ -44,6 +44,14 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    // Dev: proxy same-origin /api calls to the local api-server (prod uses the
+    // nginx reverse proxy). Override target with API_PROXY_TARGET.
+    proxy: {
+      "/api": {
+        target: process.env.API_PROXY_TARGET || "http://localhost:8080",
+        changeOrigin: true,
+      },
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],
