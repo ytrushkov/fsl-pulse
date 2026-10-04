@@ -70,6 +70,11 @@ services:
     build:
       context: .
       dockerfile: artifacts/pulse/Dockerfile
+      args:
+        # Clerk publishable key is the same value used by the api; baked into
+        # the SPA bundle at build time.
+        VITE_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
+        VITE_CLERK_PROXY_URL: ${VITE_CLERK_PROXY_URL:-}
     ports:
       - "3000:80"
     depends_on:
