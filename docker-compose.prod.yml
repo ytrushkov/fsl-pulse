@@ -1,0 +1,79 @@
+# Production-style stack: builds the app images and runs web (nginx, public) +
+# api (node) + Postgres. The web container is the single entrypoint and proxies
+# /api to the api service.
+#
+#   cp .env.example .env    # fill ANTHROPIC_API_KEY, CLERK_*, SESSION_SECRET, …
+#   docker compose -f docker-compose.prod.yml up --build -d
+#   docker compose -f docker-compose.prod.yml run --rm migrate   # create schema
+#   open http://localhost:3000
+#
+# For real object storage, point S3_* at AWS S3 (unset S3_ENDPOINT /
+# S3_FORCE_PATH_STYLE and provide real credentials or an instance role).
+name: pulse-prod
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: pulse
+      POSTGRES_DB: pulse
+    volumes:
+      - pgdata-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulse -d pulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: artifacts/api-server/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      DATABASE_URL: postgres://pulse:pulse@postgres:5432/pulse
+      S3_BUCKET: ${S3_BUCKET:-pulse-artifacts}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      SESSION_SECRET: ${SESSION_SECRET:-change-me}
+      PULSE_WEB_ORIGIN: ${PULSE_WEB_ORIGIN:-http://localhost:3000}
+      PULSE_ADMIN_EMAILS: ${PULSE_ADMIN_EMAILS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot schema push (drizzle). Uses the builder stage, which has the full
+  # workspace + drizzle-kit + schema. Run on first boot / after schema changes:
+  #   docker compose -f docker-compose.prod.yml run --rm migrate
+  migrate:
+    build:
+      context: .
+      dockerfile: artifacts/api-server/Dockerfile
+      target: builder
+    working_dir: /repo
+    environment:
+      DATABASE_URL: postgres://pulse:pulse@postgres:5432/pulse
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["tools"]
+    command: ["pnpm", "--filter", "@workspace/db", "run", "push"]
+
+  web:
+    build:
+      context: .
+      dockerfile: artifacts/pulse/Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata-prod:

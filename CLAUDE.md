@@ -78,9 +78,10 @@ globally in `routes/index.ts`. Security posture documented in `artifacts/api-ser
   Clerk). Never commit `.env` or keys — both are gitignored. See `.env.example` for the full surface.
 
 ## In-flight / not yet established
-- **De-Replit-ify** (per `REPLIT_MIGRATION_ASSESSMENT.md`): storage → S3/MinIO ✅, Anthropic →
+- **De-Replit-ify** (per `REPLIT_MIGRATION_ASSESSMENT.md`): storage → S3/s3mock ✅, Anthropic →
   PII-stripping gateway ✅, Replit deploy config/vite plugins/CORS removed ✅, local-dev
-  docker-compose ✅. **Remaining:** production Dockerfiles for api-server + pulse, and IaC.
+  docker-compose ✅, production Dockerfiles (api + nginx web) + `docker-compose.prod.yml` ✅
+  (web proxies `/api` → api-server). **Remaining:** cloud IaC for a chosen platform.
 - **eslint** config, **CI**, and a coverage gate are not set up yet on this stack (the Python-era
   CI was archived). To be established (Phase D).
 - Deferred hardening: KMS key rotation, rate-limiting the public magic-link endpoint, DNS-rebinding
