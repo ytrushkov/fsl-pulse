@@ -23,33 +23,28 @@ services:
       timeout: 5s
       retries: 10
 
-  # S3-compatible object storage. API on :9000, web console on :9001.
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: pulse
-      MINIO_ROOT_PASSWORD: pulse-dev-secret
+  # S3-compatible object storage for local dev (HTTP API on :9090).
+  # Accepts any access key/secret. Data is in-memory (uploads reset on restart)
+  # — fine for development.
+  # (MinIO's public Docker images were locked down in 2025, so we use s3mock.)
+  s3mock:
+    image: adobe/s3mock:latest
     ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - miniodata:/data
+      - "9090:9090"
 
-  # One-shot: wait for MinIO, then create the artifacts bucket. Idempotent.
+  # One-shot: wait for s3mock, then create the artifacts bucket. Idempotent
+  # (PUT on an existing bucket is a no-op). Uses curl since s3mock bundles no CLI.
   createbucket:
-    image: minio/mc
+    image: curlimages/curl:latest
     depends_on:
-      - minio
+      - s3mock
     entrypoint: >
       /bin/sh -c "
-      until mc alias set local http://minio:9000 pulse pulse-dev-secret; do
-        echo 'waiting for minio...'; sleep 1;
+      until curl -sf -o /dev/null http://s3mock:9090/; do
+        echo 'waiting for s3mock...'; sleep 1;
       done;
-      mc mb --ignore-existing local/pulse-artifacts;
-      echo 'bucket ready: pulse-artifacts';
+      curl -sf -X PUT http://s3mock:9090/pulse-artifacts && echo 'bucket ready: pulse-artifacts';
       "
 
 volumes:
   pgdata:
-  miniodata:

@@ -16,7 +16,7 @@ Full PRD: see `docs/PRD.md`.
 - Backend: **Express 5** (`artifacts/api-server`), routes mounted at `/api`; esbuild bundle
 - Frontend: **React 19 + Vite** (`artifacts/pulse`), Tailwind, shadcn-style UI; **Clerk** for auth
 - Data: **PostgreSQL + Drizzle ORM** (`lib/db`); schema in `lib/db/src/schema/pulse.ts`
-- Storage: **S3-compatible** (AWS S3 in prod, MinIO in dev) via `objectStorage.ts` (`S3_*` env)
+- Storage: **S3-compatible** (AWS S3 in prod, s3mock in dev) via `objectStorage.ts` (`S3_*` env)
 - Validation: **Zod** (`zod/v4`), `drizzle-zod`
 - API contract: **OpenAPI** (`lib/api-spec`) → Orval-generated Zod (`lib/api-zod`) + React Query
   hooks (`lib/api-client-react`). The spec is the source of truth; regenerate, don't hand-edit.
@@ -54,7 +54,7 @@ artifacts, scoring, rubrics, deliverables, exports, portfolio, ai. Per-engagemen
 globally in `routes/index.ts`. Security posture documented in `artifacts/api-server/THREAT_MODEL.md`.
 
 ## Key commands
-- Local dev bootstrap: `docker compose up -d` (Postgres + MinIO), `cp .env.example .env`,
+- Local dev bootstrap: `docker compose up -d` (Postgres + s3mock), `cp .env.example .env`,
   then `pnpm --filter @workspace/db run push` to create the schema
 - `pnpm install` — install workspace
 - `pnpm run typecheck` — full typecheck across all packages (run before committing)
