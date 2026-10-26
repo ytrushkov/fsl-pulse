@@ -11,8 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3",
+    "@aws-sdk/s3-request-presigner": "^3",
     "@clerk/express": "^2.1.4",
-    "@google-cloud/storage": "^7.19.0",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "@workspace/integrations-anthropic-ai": "workspace:*",
@@ -21,7 +22,6 @@
     "docx": "^9.6.1",
     "drizzle-orm": "catalog:",
     "express": "^5",
-    "google-auth-library": "^10.6.2",
     "http-proxy-middleware": "^3.0.5",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",

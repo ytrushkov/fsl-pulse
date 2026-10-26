@@ -1,0 +1,18 @@
+# Keep the Docker build context small and secret-free.
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+.git
+.github
+.env
+.env.*
+!.env.example
+*.log
+.claude
+.vscode
+.idea
+# large non-build assets
+attached_assets/*.png
+attached_assets/*.txt
+attached_assets/screenshots

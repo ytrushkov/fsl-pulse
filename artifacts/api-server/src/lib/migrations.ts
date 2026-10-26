@@ -135,7 +135,6 @@ export async function migrateLegacyArtifactBlobs(): Promise<ArtifactBlobMigratio
   }
 
   const objectStorage = new ObjectStorageService();
-  const privateDir = objectStorage.getPrivateObjectDir();
 
   type LegacyRow = { id: string; data_base64: string; mime_type: string };
   const result = await db.execute<LegacyRow>(sql`
@@ -147,29 +146,18 @@ export async function migrateLegacyArtifactBlobs(): Promise<ArtifactBlobMigratio
 
   let migrated = 0;
   let failed = 0;
-  // Defer to require so we don't drag GCS into the bundle when there's
-  // nothing to migrate.
-  const { objectStorageClient } = await import("./objectStorage");
   for (const row of rows) {
     try {
       const buffer = Buffer.from(row.data_base64, "base64");
       const objectId = randomUUID();
       const objectPath = `/objects/uploads/${objectId}`;
-      // Map `/objects/uploads/<id>` to its full GCS path the same way
-      // ObjectStorageService.getObjectEntityFile does, so the existing
-      // download streaming logic finds it.
-      let entityDir = privateDir;
-      if (!entityDir.endsWith("/")) entityDir = `${entityDir}/`;
-      const fullPath = `${entityDir}uploads/${objectId}`;
-      const parts = fullPath.replace(/^\//, "").split("/");
-      const bucketName = parts[0];
-      const objectName = parts.slice(1).join("/");
-      if (!bucketName) throw new Error("Invalid PRIVATE_OBJECT_DIR");
-      const file = objectStorageClient.bucket(bucketName).file(objectName);
-      await file.save(buffer, {
-        contentType: row.mime_type || "application/octet-stream",
-        resumable: false,
-      });
+      // Uses the same `/objects/uploads/<id>` scheme as fresh uploads, so the
+      // existing download/streaming logic finds these backfilled objects.
+      await objectStorage.uploadObject(
+        objectPath,
+        buffer,
+        row.mime_type || "application/octet-stream",
+      );
       await db
         .update(artifactDocsTable)
         .set({ objectKey: objectPath })

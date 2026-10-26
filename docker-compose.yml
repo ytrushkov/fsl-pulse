@@ -1,0 +1,50 @@
+# Local development backing services for Pulse (off Replit).
+# Bring these up, copy .env.example -> .env, then run the app with pnpm:
+#   docker compose up -d
+#   pnpm --filter @workspace/db run push          # create schema
+#   pnpm --filter @workspace/api-server run dev
+#   PORT=5173 BASE_PATH=/ pnpm --filter @workspace/pulse run dev
+#
+# Defaults here match the values in .env.example so it works out of the box.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: pulse
+      POSTGRES_DB: pulse
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulse -d pulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # S3-compatible object storage for local dev (HTTP API on :9090).
+  # Accepts any access key/secret. Data is in-memory (uploads reset on restart)
+  # — fine for development.
+  # (MinIO's public Docker images were locked down in 2025, so we use s3mock.)
+  s3mock:
+    image: adobe/s3mock:latest
+    ports:
+      - "9090:9090"
+
+  # One-shot: wait for s3mock, then create the artifacts bucket. Idempotent
+  # (PUT on an existing bucket is a no-op). Uses curl since s3mock bundles no CLI.
+  createbucket:
+    image: curlimages/curl:latest
+    depends_on:
+      - s3mock
+    entrypoint: >
+      /bin/sh -c "
+      until curl -sf -o /dev/null http://s3mock:9090/; do
+        echo 'waiting for s3mock...'; sleep 1;
+      done;
+      curl -sf -X PUT http://s3mock:9090/pulse-artifacts && echo 'bucket ready: pulse-artifacts';
+      "
+
+volumes:
+  pgdata:
